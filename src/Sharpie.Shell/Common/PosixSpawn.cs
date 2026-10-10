@@ -28,6 +28,10 @@ internal static unsafe class PosixSpawn
 	/// <param name="input">The open file the program reads as standard input, or -1 to share the shell's.</param>
 	/// <param name="output">The open file the program writes as standard output, or -1 to share the shell's.</param>
 	/// <param name="error">The open file the program writes as standard error, or -1 to share the shell's.</param>
+	/// <param name="newSession">
+	/// <see langword="true" /> to start the program in a new session with no controlling terminal, so it can't read,
+	/// draw on or take over the shell's terminal. <paramref name="processGroup" /> must be -1 then.
+	/// </param>
 	/// <returns>
 	/// The new process id.
 	/// </returns>
@@ -38,7 +42,7 @@ internal static unsafe class PosixSpawn
 	/// changes the shell made with <see cref="Environment.SetEnvironmentVariable(string, string)" /> that the C
 	/// library's own copy doesn't.
 	/// </remarks>
-	public static int Start(string path, IReadOnlyList<string> arguments, int processGroup, int input = -1, int output = -1, int error = -1)
+	public static int Start(string path, IReadOnlyList<string> arguments, int processGroup, int input = -1, int output = -1, int error = -1, bool newSession = false)
 	{
 		var fileActions = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
 		var attributes = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
@@ -67,6 +71,11 @@ internal static unsafe class PosixSpawn
 			{
 				flags |= NativeMethods.SpawnSetProcessGroup;
 				_ = NativeMethods.AttributesSetProcessGroup(attributes, processGroup);
+			}
+
+			if (newSession)
+			{
+				flags |= NativeMethods.SpawnSetSession;
 			}
 
 			_ = NativeMethods.AttributesSetFlags(attributes, flags);

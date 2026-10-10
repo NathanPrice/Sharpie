@@ -94,6 +94,15 @@ internal static unsafe partial class NativeMethods
 	internal static int SignalTerminalOutput => 22;
 
 	/// <summary>
+	/// Gets posix_spawnattr_setflags' <c>POSIX_SPAWN_SETSID</c> flag, which starts the child in a new session with no
+	/// controlling terminal.
+	/// </summary>
+	/// <value>
+	/// The value for the current OS.
+	/// </value>
+	internal static short SpawnSetSession => OperatingSystem.IsMacOS() ? (short)0x400 : (short)0x80;
+
+	/// <summary>
 	/// Gets the number of waitpid's WCONTINUED option.
 	/// </summary>
 	/// <value>

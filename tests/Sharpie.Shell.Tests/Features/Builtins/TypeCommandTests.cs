@@ -12,6 +12,7 @@ public sealed class TypeCommandTests : IDisposable
 {
 	private readonly ShellEnvironment environment = new();
 	private readonly Dictionary<string, ICommand> builtins = new() { ["echo"] = new EchoCommand() };
+	private readonly Dictionary<string, string> aliases = [];
 	private readonly string folder;
 	private readonly TypeCommand sut;
 
@@ -23,7 +24,7 @@ public sealed class TypeCommandTests : IDisposable
 	{
 		this.folder = this.environment.CreateFolder();
 		ShellEnvironment.SetPath(this.folder);
-		this.sut = new TypeCommand(this.builtins);
+		this.sut = new TypeCommand(this.builtins, this.aliases);
 	}
 
 	/// <summary>
@@ -137,13 +138,42 @@ public sealed class TypeCommandTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that an alias is reported with its value, ahead of a builtin of the same name.
+	/// </summary>
+	[Fact]
+	public void Run_WithAliasName_ReportsAliasValue()
+	{
+		// Arrange
+		this.aliases["echo"] = "echo -n";
+
+		// Act
+		this.sut.Run(["echo"]);
+
+		// Assert
+		_ = this.environment.Output.Should().Be($"echo is an alias for echo -n{Environment.NewLine}");
+	}
+
+	/// <summary>
+	/// Checks that the Spargine guard rejects a missing alias table when the command is created.
+	/// </summary>
+	[Fact]
+	public void Constructor_WithNullAliases_ThrowsArgumentNullException()
+	{
+		// Act
+		var act = () => new TypeCommand(this.builtins, null!);
+
+		// Assert
+		_ = act.Should().Throw<ArgumentNullException>();
+	}
+
+	/// <summary>
 	/// Checks that the Spargine guard rejects a missing builtin table when the command is created.
 	/// </summary>
 	[Fact]
 	public void Constructor_WithNullBuiltins_ThrowsArgumentNullException()
 	{
 		// Act
-		var act = () => new TypeCommand(null!);
+		var act = () => new TypeCommand(null!, this.aliases);
 
 		// Assert
 		_ = act.Should().Throw<ArgumentNullException>();

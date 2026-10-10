@@ -45,6 +45,32 @@ public sealed class ShellProcessTests
 	}
 
 	/// <summary>
+	/// Checks that an alias defined at the prompt runs its value with the arguments typed after it.
+	/// </summary>
+	[Fact]
+	public void Shell_WithAlias_RunsAliasValue()
+	{
+		// Arrange
+		var startInfo = new ProcessStartInfo(ShellPath)
+		{
+			RedirectStandardInput = true,
+			RedirectStandardOutput = true,
+		};
+
+		// Act
+		using var shell = Process.Start(startInfo)!;
+
+		shell.StandardInput.Write("alias greet='echo hello'\ngreet world\nexit\n");
+
+		var output = shell.StandardOutput.ReadToEnd();
+		var exited = shell.WaitForExit(TimeSpan.FromSeconds(10));
+
+		// Assert
+		_ = output.Should().Be("$ $ hello world\n$ ");
+		_ = exited.Should().BeTrue();
+	}
+
+	/// <summary>
 	/// Checks that an empty file name after a redirect or a history flag prints an error and the shell keeps running,
 	/// instead of ending on the exception .NET throws for an empty path.
 	/// </summary>

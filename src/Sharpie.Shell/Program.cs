@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Aliases;
 using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Features.Completion;
 using Sharpie.Shell.Features.History;
@@ -34,6 +35,16 @@ internal static class Program
 	internal const string HistoryVariable = "SHARPIE_HISTORY";
 
 	/// <summary>
+	/// The environment variable that, set to <c>0</c>, keeps the shell from copying the variables and aliases of the
+	/// user's own shell even in the window.
+	/// </summary>
+	/// <remarks>
+	/// The window's own tests run a real shell in window mode. Without this, an alias in the user's startup files
+	/// could change what the commands they type print.
+	/// </remarks>
+	internal const string ImportVariable = "SHARPIE_IMPORT";
+
+	/// <summary>
 	/// The start of the private OSC sequence the shell writes, followed by a base64 command line and BEL, to have the
 	/// terminal window show a man page in its own reader.
 	/// </summary>
@@ -51,23 +62,29 @@ internal static class Program
 	/// <returns>
 	/// The builtins, not yet added to <paramref name="commands" />.
 	/// </returns>
-	internal static ICommand[] CreateBuiltins(Dictionary<string, ICommand> commands) =>
-	[
-		new EchoCommand(),
-		new ExitCommand(),
-		new PwdCommand(),
-		new CdCommand(),
-		new ClearCommand(),
-		new CompleteCommand(),
-		new JobsCommand(),
-		new FgCommand(),
-		new BgCommand(),
-		new HistoryCommand(),
-		new DeclareCommand(),
+	internal static ICommand[] CreateBuiltins(Dictionary<string, ICommand> commands)
+	{
+		var alias = new AliasCommand();
 
-		// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
-		new TypeCommand(commands)
-	];
+		return
+		[
+			alias,
+			new EchoCommand(),
+			new ExitCommand(),
+			new PwdCommand(),
+			new CdCommand(),
+			new ClearCommand(),
+			new CompleteCommand(),
+			new JobsCommand(),
+			new FgCommand(),
+			new BgCommand(),
+			new HistoryCommand(),
+			new DeclareCommand(),
+
+			// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
+			new TypeCommand(commands, alias.Aliases)
+		];
+	}
 
 	/// <summary>
 	/// Registers the builtins, then reads and runs one command line at a time until <c>exit</c> ends the process or
@@ -78,8 +95,18 @@ internal static class Program
 	/// edits lines itself with <see cref="LineEditor" />. Otherwise it reads plain lines after a <c>$ </c> prompt, which
 	/// is how its own process tests drive it.
 	/// </remarks>
-	private static void Main()
+	/// <param name="args">
+	/// Empty, or <see cref="ShellImport.PrintEnvironmentOption" /> alone to print the environment and exit.
+	/// </param>
+	private static void Main(string[] args)
 	{
+		if (args is [ShellImport.PrintEnvironmentOption])
+		{
+			ShellImport.PrintEnvironment();
+
+			return;
+		}
+
 		var commands = new Dictionary<string, ICommand>();
 		var interactive = !Console.IsInputRedirected && !Console.IsErrorRedirected;
 
@@ -101,15 +128,22 @@ internal static class Program
 		}
 
 		var variables = ((DeclareCommand)commands["declare"]).Variables;
+		var aliases = (AliasCommand)commands["alias"];
 
 		// The window features below are off when the variable is unset, so the shell's own process tests never touch
 		// the keyring. TryRun prints nothing when fastfetch isn't installed.
 		var inWindow = Environment.GetEnvironmentVariable(WindowVariable) == "1";
 		var bannerShown = inWindow && ExternalProgram.TryRun("fastfetch", []);
 
+		// After the banner, so the window isn't blank while the user's shell starts up.
+		if (inWindow && Environment.GetEnvironmentVariable(ImportVariable) != "0")
+		{
+			ShellImport.Run(Environment.GetEnvironmentVariable("SHELL"), Environment.ProcessPath!, aliases, commands.Keys);
+		}
+
 		var historyCommand = (HistoryCommand)commands["history"];
 		var history = HistorySession.Start(historyCommand, useEncryptedFile: inWindow && Environment.GetEnvironmentVariable(HistoryVariable) != "0");
-		var editor = interactive ? CreateEditor(commands, historyCommand) : null;
+		var editor = interactive ? CreateEditor(commands, aliases, historyCommand) : null;
 
 		if (interactive && OperatingSystem.IsWindows())
 		{
@@ -154,7 +188,7 @@ internal static class Program
 
 			var clock = Stopwatch.StartNew();
 
-			RunLine(commands, variables, line);
+			RunLine(commands, aliases, variables, line);
 			took = clock.Elapsed;
 			blankLine = line.Trim() != "clear";
 		}
@@ -241,32 +275,35 @@ internal static class Program
 	/// Creates the line editor for an interactive shell, reading keys from the terminal.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="aliases">The <c>alias</c> builtin, whose names are completed and colored like the builtins'.</param>
 	/// <param name="history">The <c>history</c> builtin, whose lines Up and Down step through.</param>
 	/// <returns>
 	/// The editor.
 	/// </returns>
-	private static LineEditor CreateEditor(Dictionary<string, ICommand> commands, HistoryCommand history)
+	private static LineEditor CreateEditor(Dictionary<string, ICommand> commands, AliasCommand aliases, HistoryCommand history)
 	{
 		var completions = (CompleteCommand)commands["complete"];
+		var names = new CommandNames(commands, aliases.Aliases);
 
 		return new LineEditor(
 			() => Console.ReadKey(intercept: true),
 			Console.Out,
 			() => Console.WindowWidth,
-			new TabCompleter(commands.Keys, completions.FindCompleter),
+			new TabCompleter(names, completions.FindCompleter),
 			history.Lines,
-			commands.Keys);
+			names);
 	}
 
 	/// <summary>
 	/// Splits one command line and runs it as a pipeline, a builtin, or a program on <c>PATH</c>.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
 	/// <param name="variables">The shell variables that <c>$NAME</c> expands to.</param>
 	/// <param name="line">The line the user entered.</param>
-	private static void RunLine(Dictionary<string, ICommand> commands, IReadOnlyDictionary<string, string> variables, string line)
+	private static void RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, IReadOnlyDictionary<string, string> variables, string line)
 	{
-		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(CommandLine.Split(line, variables));
+		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(aliases.Expand(CommandLine.Split(line, variables), variables));
 
 		// A trailing & runs an external program in the background. Builtins still run in the foreground.
 		var background = words is [.., "&"];
@@ -414,5 +451,22 @@ internal static class Program
 				Console.SetError(terminalError);
 			}
 		}
+	}
+
+	/// <summary>
+	/// A live list of the builtin and alias names, which the line editor completes and colors as commands.
+	/// </summary>
+	/// <param name="builtins">The builtins, by name.</param>
+	/// <param name="aliases">The aliases, by name.</param>
+	private sealed class CommandNames(IReadOnlyDictionary<string, ICommand> builtins, IReadOnlyDictionary<string, string> aliases) : IReadOnlyCollection<string>
+	{
+		/// <inheritdoc />
+		public int Count => builtins.Count + aliases.Count;
+
+		/// <inheritdoc />
+		public IEnumerator<string> GetEnumerator() => builtins.Keys.Concat(aliases.Keys).GetEnumerator();
+
+		/// <inheritdoc />
+		System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();
 	}
 }
