@@ -143,6 +143,27 @@ public sealed class TerminalWindowTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that one wheel event with an enormous delta scrolls at most a screen's worth and returns at once,
+	/// instead of looping once per notch and freezing the window.
+	/// </summary>
+	[AvaloniaFact]
+	public void MouseWheel_WithHugeDelta_ReturnsQuickly()
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+
+		var view = this.window.View;
+		var point = view.TranslatePoint(new Point(TerminalView.Padding + 1, TerminalView.Padding + 1), this.window)!.Value;
+		var clock = Stopwatch.StartNew();
+
+		// Act
+		this.window.MouseWheel(point, new Vector(0, 1e9), RawInputModifiers.None);
+
+		// Assert
+		_ = clock.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1));
+	}
+
+	/// <summary>
 	/// Checks that when everything fits, as the fastfetch banner and first prompt do in the real window, nothing has
 	/// scrolled off the top.
 	/// </summary>

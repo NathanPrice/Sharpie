@@ -266,7 +266,10 @@ internal sealed partial class TerminalView
 		base.OnPointerWheelChanged(e);
 		e.Handled = true;
 
-		var notches = (int)Math.Round(e.Delta.Y);
+		// One bad wheel event from X11 once kept this loop going for minutes and froze a new window. No real event
+		// needs more notches than the screen has rows.
+		var rows = Math.Max(1, this.Screen.Rows);
+		var notches = (int)Math.Clamp(Math.Round(e.Delta.Y), -rows, rows);
 		var up = notches > 0;
 
 		for (var i = 0; i < Math.Abs(notches); i++)
