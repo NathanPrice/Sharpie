@@ -9,11 +9,12 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <!-- The window and the tests call internal helpers like PromptHeader, CommandLine, PathFinder and ExternalProgram
-       directly. -->
+  <!-- The window, the tests and the benchmarks call internal helpers like PromptHeader, CommandLine, PathFinder and
+       ExternalProgram directly. -->
   <ItemGroup>
     <InternalsVisibleTo Include="Sharpie" />
     <InternalsVisibleTo Include="Sharpie.Tests" />
+    <InternalsVisibleTo Include="Sharpie.Benchmarks" />
     <InternalsVisibleTo Include="Sharpie.Shell.Tests" />
   </ItemGroup>
 

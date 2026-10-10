@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Sharpie.Tests" />
+    <InternalsVisibleTo Include="Sharpie.Benchmarks" />
   </ItemGroup>
 
   <!-- Builds the shell and copies it next to the window app, which starts it as a child process. -->
