@@ -1,8 +1,10 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Media.TextFormatting;
 using Avalonia.Threading;
 using Sharpie.Features.Ansi;
 using Sharpie.Features.Vt;
@@ -48,6 +50,10 @@ internal sealed partial class TerminalView : Control
 	private readonly DispatcherTimer blink;
 	private readonly double cellWidth;
 	private readonly double cellHeight;
+	private readonly RowCache rows = new();
+
+	// One pen per text color, which stays small because Palette hands out the same brush for the same color.
+	private readonly Dictionary<IBrush, IPen> underlinePens = [];
 
 	private bool cursorOn = true;
 
@@ -164,6 +170,8 @@ internal sealed partial class TerminalView : Control
 
 		var first = this.Screen.LineCount - this.Screen.Rows - this.ScrollOffset;
 
+		this.rows.NextFrame();
+
 		for (var row = 0; row < this.Screen.Rows; row++)
 		{
 			var line = first + row;
@@ -272,18 +280,49 @@ internal sealed partial class TerminalView : Control
 	}
 
 	/// <summary>
-	/// Draws one row's characters.
+	/// Draws one row's characters, laying them out again only when the row changed since the last frame.
 	/// </summary>
 	/// <param name="context">Where to draw.</param>
 	/// <param name="line">The row's cells.</param>
 	/// <param name="row">The row's place in the view.</param>
 	private void DrawText(DrawingContext context, TerminalLine line, int row)
 	{
-		var cells = line.Cells;
-		var count = Math.Min(cells.Length, this.Screen.Columns);
+		var cells = line.Cells.AsSpan(0, Math.Min(line.Cells.Length, this.Screen.Columns));
+		var runs = this.rows.Find(line, cells);
+
+		if (runs is null)
+		{
+			runs = this.Shape(cells);
+			this.rows.Add(line, cells, runs);
+		}
+
+		for (var index = 0; index < runs.Count; index++)
+		{
+			var run = runs[index];
+			var rect = this.CellRect(row, run.Column, run.Width);
+
+			run.Text.Draw(context, rect.TopLeft);
+
+			if (run.Underline is { } pen)
+			{
+				context.DrawLine(pen, new Point(rect.Left, rect.Bottom - 1.5), new Point(rect.Right, rect.Bottom - 1.5));
+			}
+		}
+	}
+
+	/// <summary>
+	/// Lays out one row's characters.
+	/// </summary>
+	/// <param name="cells">The row's cells.</param>
+	/// <returns>
+	/// The text to draw, leaving out blank stretches that have no underline.
+	/// </returns>
+	private List<ShapedRun> Shape(ReadOnlySpan<Cell> cells)
+	{
+		var runs = new List<ShapedRun>();
 		var run = new StringBuilder();
 
-		for (var column = 0; column < count;)
+		for (var column = 0; column < cells.Length;)
 		{
 			var style = this.Screen.GetStyle(cells[column].Style);
 
@@ -291,18 +330,20 @@ internal sealed partial class TerminalView : Control
 			if (cells[column].Character is >= ' ' and < '\x7F')
 			{
 				var end = column;
+				var blank = true;
 
 				_ = run.Clear();
 
-				while (end < count && cells[end].Style == cells[column].Style && cells[end].Character is >= ' ' and < '\x7F')
+				while (end < cells.Length && cells[end].Style == cells[column].Style && cells[end].Character is >= ' ' and < '\x7F')
 				{
+					blank &= cells[end].Character == ' ';
 					_ = run.Append(cells[end].Character);
 					end++;
 				}
 
-				if (run.ToString().Trim().Length > 0 || style.Underline)
+				if (!blank || style.Underline)
 				{
-					this.DrawRun(context, run.ToString(), style, row, column, end - column);
+					this.AddRun(runs, run.ToString(), style, column, end - column);
 				}
 
 				column = end;
@@ -311,39 +352,54 @@ internal sealed partial class TerminalView : Control
 			{
 				if (cells[column].Width > 0)
 				{
-					this.DrawRun(context, cells[column].Text(), style, row, column, cells[column].Width);
+					this.AddRun(runs, cells[column].Text(), style, column, cells[column].Width);
 				}
 
 				column++;
 			}
 		}
+
+		return runs;
 	}
 
 	/// <summary>
-	/// Draws text in a style starting at a cell.
+	/// Lays out text in a style starting at a cell and adds it to a row's runs, unless the style hides it.
 	/// </summary>
-	/// <param name="context">Where to draw.</param>
+	/// <param name="runs">The row's runs so far.</param>
 	/// <param name="text">The text.</param>
 	/// <param name="style">The style.</param>
-	/// <param name="row">The row in the view.</param>
 	/// <param name="column">The first column.</param>
 	/// <param name="width">How many columns the text covers, for the underline.</param>
-	private void DrawRun(DrawingContext context, string text, AnsiStyle style, int row, int column, int width)
+	[SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The layout goes into the row's runs, and RowCache disposes it when it drops the row.")]
+	private void AddRun(List<ShapedRun> runs, string text, AnsiStyle style, int column, int width)
 	{
 		if (style.Hidden)
 		{
 			return;
 		}
 
-		var rect = this.CellRect(row, column, width);
 		var foreground = this.Colors(style).Foreground;
+		var underline = style.Underline ? this.UnderlinePen(foreground) : null;
 
-		context.DrawText(this.Format(text, style.Bold ? this.bold : this.regular, foreground), rect.TopLeft);
+		runs.Add(new ShapedRun(new TextLayout(text, style.Bold ? this.bold : this.regular, FontSize, foreground), column, width, underline));
+	}
 
-		if (style.Underline)
+	/// <summary>
+	/// Gets the pen that underlines text drawn with <paramref name="brush" />, making it the first time.
+	/// </summary>
+	/// <param name="brush">The text color.</param>
+	/// <returns>
+	/// A one-pixel pen in that color.
+	/// </returns>
+	private IPen UnderlinePen(IBrush brush)
+	{
+		if (!this.underlinePens.TryGetValue(brush, out var pen))
 		{
-			context.DrawLine(new Pen(foreground), new Point(rect.Left, rect.Bottom - 1.5), new Point(rect.Right, rect.Bottom - 1.5));
+			pen = new Pen(brush);
+			this.underlinePens[brush] = pen;
 		}
+
+		return pen;
 	}
 
 	/// <summary>
