@@ -25,3 +25,11 @@ dotnet test Sharpie.slnx
 
 Each project is organized by feature: `Features/<Feature>/` holds everything for one feature, and `Common/` holds what
 several features share. Tests mirror the same folders.
+
+## License
+
+Copyright (C) 2026 Nathan Price
+
+Sharpie is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3
+of the License, or (at your option) any later version. See [LICENSE](LICENSE).
