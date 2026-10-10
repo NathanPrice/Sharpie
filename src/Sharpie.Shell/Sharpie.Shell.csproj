@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The source generator behind [LibraryImport] in NativeMethods emits unsafe marshalling code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- The window and the tests call internal helpers like PromptHeader, CommandLine, PathFinder and ExternalProgram
+       directly. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sharpie" />
+    <InternalsVisibleTo Include="Sharpie.Tests" />
+    <InternalsVisibleTo Include="Sharpie.Shell.Tests" />
+  </ItemGroup>
+
+  <!-- User-facing text lives here so it can be translated (CA1303). The build generates the Resources class. -->
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>MSBuild:Compile</Generator>
+      <StronglyTypedFileName>$(IntermediateOutputPath)Resources.Designer.cs</StronglyTypedFileName>
+      <StronglyTypedLanguage>CSharp</StronglyTypedLanguage>
+      <StronglyTypedNamespace>Sharpie.Shell.Properties</StronglyTypedNamespace>
+      <StronglyTypedClassName>Resources</StronglyTypedClassName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- contentFiles excluded: Spargine adds its icon (SPARGINE-ICON-GRAPHIC-SMALL.ico) to every project that references it. -->
+    <PackageReference Include="DotNetTips.Spargine.10.Core" Version="2026.10.10.1" ExcludeAssets="contentFiles" />
+    <!-- Spargine Core pulls in System.Security.Cryptography.Xml 10.0.0, which has known high severity
+         vulnerabilities (NU1903). Pinned to the patched version Spargine's own Tester package uses. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
+  </ItemGroup>
+
+</Project>

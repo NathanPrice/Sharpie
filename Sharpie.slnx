@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Sharpie.Shell/Sharpie.Shell.csproj" />
+    <Project Path="src/Sharpie/Sharpie.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Sharpie.Shell.Tests/Sharpie.Shell.Tests.csproj" />
+    <Project Path="tests/Sharpie.Tests/Sharpie.Tests.csproj" />
+  </Folder>
+</Solution>

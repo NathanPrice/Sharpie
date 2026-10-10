@@ -1,0 +1,219 @@
+using System.Security.Cryptography;
+using System.Text;
+using FluentAssertions;
+using Sharpie.Shell.Features.History;
+
+namespace Sharpie.Shell.Tests.Features.History;
+
+/// <summary>
+/// Tests for <see cref="HistoryFile" />.
+/// </summary>
+[Collection(GlobalState.Name)]
+public sealed class HistoryFileTests : IDisposable
+{
+	private readonly ShellEnvironment environment = new();
+	private readonly byte[] key = RandomNumberGenerator.GetBytes(32);
+	private readonly string path;
+
+	/// <summary>
+	/// Initializes a new instance of the <see cref="HistoryFileTests" /> class with an empty history folder.
+	/// </summary>
+	public HistoryFileTests() => this.path = Path.Combine(this.environment.CreateFolder(), "history");
+
+	/// <summary>
+	/// Checks that saved lines load back unchanged and in order.
+	/// </summary>
+	[Fact]
+	public void Load_AfterSave_ReturnsSameLines()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["echo one", "echo two"]);
+
+		// Act
+		var lines = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = lines.Should().Equal("echo one", "echo two");
+	}
+
+	/// <summary>
+	/// Checks that the saved file doesn't contain the command text.
+	/// </summary>
+	[Fact]
+	public void Save_WritesNoPlaintext()
+	{
+		// Act
+		_ = HistoryFile.Save(this.path, this.key, ["echo secret-value"]);
+
+		// Assert
+		_ = Encoding.UTF8.GetString(File.ReadAllBytes(this.path)).Should().NotContain("secret-value");
+	}
+
+	/// <summary>
+	/// Checks that encrypting the same text twice gives different bytes, because each save uses a fresh nonce.
+	/// </summary>
+	[Fact]
+	public void Encrypt_SameTextTwice_DiffersEachTime()
+	{
+		// Arrange
+		var plaintext = Encoding.UTF8.GetBytes("echo hi");
+
+		// Act
+		var first = HistoryFile.Encrypt(this.key, plaintext);
+		var second = HistoryFile.Encrypt(this.key, plaintext);
+
+		// Assert
+		_ = first.Should().NotEqual(second);
+	}
+
+	/// <summary>
+	/// Checks that loading with a different key fails instead of returning garbage.
+	/// </summary>
+	[Fact]
+	public void Load_WithWrongKey_ReturnsNull()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["echo hi"]);
+
+		// Act
+		var lines = HistoryFile.Load(this.path, RandomNumberGenerator.GetBytes(32));
+
+		// Assert
+		_ = lines.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that changing any byte of the file, including the version byte, fails authentication.
+	/// </summary>
+	/// <param name="index">The byte to flip: 0 is the version, 1 is in the nonce, and -1 is the last tag byte.</param>
+	[Theory]
+	[InlineData(0)]
+	[InlineData(1)]
+	[InlineData(-1)]
+	public void Load_AfterByteChanged_ReturnsNull(int index)
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["echo hi"]);
+		var bytes = File.ReadAllBytes(this.path);
+		bytes[index < 0 ? bytes.Length + index : index] ^= 1;
+		File.WriteAllBytes(this.path, bytes);
+
+		// Act
+		var lines = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = lines.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that a missing file loads as empty history.
+	/// </summary>
+	[Fact]
+	public void Load_WhenFileMissing_ReturnsEmpty()
+	{
+		// Act
+		var lines = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = lines.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that a file holding more than <see cref="HistoryCommand.MaxLines" /> lines loads only the newest ones.
+	/// </summary>
+	[Fact]
+	public void Load_OverMaxLines_KeepsNewest()
+	{
+		// Arrange
+		var saved = Enumerable.Range(0, HistoryCommand.MaxLines + 5).Select(i => $"echo {i}").ToList();
+		_ = HistoryFile.Save(this.path, this.key, saved);
+
+		// Act
+		var lines = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = lines.Should().Equal(saved.Skip(5));
+	}
+
+	/// <summary>
+	/// Checks that the saved file can be read and written only by its owner.
+	/// </summary>
+	[Fact]
+	public void Save_SetsOwnerOnlyMode()
+	{
+		// Act
+		_ = HistoryFile.Save(this.path, this.key, ["echo hi"]);
+
+		// Assert
+		_ = File.GetUnixFileMode(this.path).Should().Be(UnixFileMode.UserRead | UnixFileMode.UserWrite);
+	}
+
+	/// <summary>
+	/// Checks that a missing folder is created with owner-only access.
+	/// </summary>
+	[Fact]
+	public void PrepareFolder_WhenMissing_CreatesOwnerOnlyFolder()
+	{
+		// Arrange
+		var folder = Path.Combine(this.environment.CreateFolder(), "history");
+
+		// Act
+		var prepared = HistoryFile.PrepareFolder(folder);
+
+		// Assert
+		_ = prepared.Should().BeTrue();
+		_ = File.GetUnixFileMode(folder).Should().Be(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+	}
+
+	/// <summary>
+	/// Checks that a symlinked folder is refused, so nothing is read from or written to wherever it points.
+	/// </summary>
+	[Fact]
+	public void PrepareFolder_WhenSymlink_ReturnsFalse()
+	{
+		// Arrange
+		var link = Path.Combine(this.environment.CreateFolder(), "history");
+		_ = Directory.CreateSymbolicLink(link, this.environment.CreateFolder());
+
+		// Act
+		var prepared = HistoryFile.PrepareFolder(link);
+
+		// Assert
+		_ = prepared.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that a folder other users can write to is refused.
+	/// </summary>
+	[Fact]
+	public void PrepareFolder_WhenGroupWritable_ReturnsFalse()
+	{
+		// Arrange
+		var folder = this.environment.CreateFolder();
+		File.SetUnixFileMode(folder, File.GetUnixFileMode(folder) | UnixFileMode.GroupWrite);
+
+		// Act
+		var prepared = HistoryFile.PrepareFolder(folder);
+
+		// Assert
+		_ = prepared.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that the Spargine guard rejects an empty history path before any file is touched.
+	/// </summary>
+	[Fact]
+	public void Load_WithEmptyPath_ThrowsArgumentException()
+	{
+		// Act
+		var act = () => HistoryFile.Load(string.Empty, new byte[32]);
+
+		// Assert
+		_ = act.Should().Throw<ArgumentException>();
+	}
+
+	/// <summary>
+	/// Restores the console and working directory after each test.
+	/// </summary>
+	public void Dispose() => this.environment.Dispose();
+}

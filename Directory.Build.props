@@ -1,0 +1,13 @@
+<Project>
+
+  <!-- Applies to every project in the repo. Turns analyzer and NuGetAudit vulnerable-package warnings into build
+       failures, as the OWASP .NET Security Cheat Sheet recommends. EnforceCodeStyleInBuild runs the .editorconfig
+       style rules on every build too, not only in the IDE, and GenerateDocumentationFile lets the build report unused
+       usings (IDE0005). -->
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>
