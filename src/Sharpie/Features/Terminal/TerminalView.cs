@@ -270,8 +270,9 @@ internal sealed partial class TerminalView : Control
 			return;
 		}
 
-		var from = line == startLine ? startColumn : 0;
-		var to = line == endLine ? endColumn : this.Screen.Columns;
+		// The ends keep the columns they were picked at, which lie past the right edge once the window gets narrower.
+		var from = Math.Min(line == startLine ? startColumn : 0, this.Screen.Columns);
+		var to = Math.Min(line == endLine ? endColumn : this.Screen.Columns, this.Screen.Columns);
 
 		if (to > from)
 		{
