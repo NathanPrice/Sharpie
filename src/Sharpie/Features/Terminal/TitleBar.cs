@@ -59,7 +59,7 @@ internal sealed class TitleBar : Panel
 	/// <returns>
 	/// The button.
 	/// </returns>
-	private static Button CreateCaptionButton(string glyph, Action click, IBrush? hover)
+	internal static Button CreateCaptionButton(string glyph, Action click, IBrush? hover)
 	{
 		var button = new Button
 		{

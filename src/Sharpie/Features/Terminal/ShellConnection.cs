@@ -43,15 +43,19 @@ internal sealed class ShellConnection : IDisposable
 	/// </summary>
 	/// <param name="onOutput">Called on the UI thread with each chunk the terminal prints.</param>
 	/// <param name="useSavedHistory">
-	/// <see langword="false" /> to keep the shell away from the saved history file and its key, so tests never read
-	/// or write the user's history.
+	/// <see langword="false" /> to keep the shell away from the saved history file and its key and from the user's own
+	/// shell settings, so tests never read or write the user's history or depend on their aliases.
 	/// </param>
 	/// <param name="columns">The terminal's width in columns.</param>
 	/// <param name="rows">The terminal's height in rows.</param>
+	/// <param name="workingDirectory">
+	/// The folder the shell starts in, or <see langword="null" /> for the user's home folder. A folder that no longer
+	/// exists falls back to the home folder too.
+	/// </param>
 	/// <returns>
 	/// The connection to the running shell.
 	/// </returns>
-	public static ShellConnection Start(Action<string> onOutput, bool useSavedHistory, int columns, int rows)
+	public static ShellConnection Start(Action<string> onOutput, bool useSavedHistory, int columns, int rows, string? workingDirectory)
 	{
 		_ = onOutput.ArgumentNotNull();
 
@@ -66,6 +70,7 @@ internal sealed class ShellConnection : IDisposable
 		if (!useSavedHistory)
 		{
 			environment[Shell.Program.HistoryVariable] = "0";
+			environment[Shell.Program.ImportVariable] = "0";
 		}
 
 		var options = new PtyOptions
@@ -73,7 +78,7 @@ internal sealed class ShellConnection : IDisposable
 			Name = "Sharpie",
 			App = Path.Combine(AppContext.BaseDirectory, fileName),
 			CommandLine = [],
-			Cwd = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+			Cwd = Directory.Exists(workingDirectory) ? workingDirectory : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
 			Cols = columns,
 			Rows = rows,
 			Environment = environment,

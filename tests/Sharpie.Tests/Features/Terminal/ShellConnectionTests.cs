@@ -20,7 +20,7 @@ public sealed class ShellConnectionTests
 	{
 		// Arrange
 		var output = new StringBuilder();
-		using var shell = ShellConnection.Start(text => output.Append(text), useSavedHistory: false, 80, 24);
+		using var shell = ShellConnection.Start(text => output.Append(text), useSavedHistory: false, 80, 24, workingDirectory: null);
 
 		// Act
 		shell.Write("echo hi-from-test\r");
@@ -45,7 +45,7 @@ public sealed class ShellConnectionTests
 	public void Constructor_WithNullCallback_ThrowsArgumentNullException()
 	{
 		// Act
-		var act = () => ShellConnection.Start(null!, useSavedHistory: false, 80, 24);
+		var act = () => ShellConnection.Start(null!, useSavedHistory: false, 80, 24, workingDirectory: null);
 
 		// Assert
 		_ = act.Should().Throw<ArgumentNullException>();

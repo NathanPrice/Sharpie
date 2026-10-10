@@ -191,6 +191,102 @@ public sealed class TerminalWindowTests : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// Checks that Ctrl+T opens a second tab, shows the tab strip, and starts the new shell in the first tab's folder.
+	/// </summary>
+	[AvaloniaFact]
+	public void CtrlT_OpensTabInActiveTabsFolder()
+	{
+		// Arrange
+		var folder = Path.TrimEndingDirectorySeparator(Path.GetTempPath());
+
+		this.ShowAndWaitForPrompt();
+		this.Enter($"cd '{folder}'");
+
+		// Act
+		this.OpenSecondTab();
+
+		// Assert
+		_ = this.window.Tabs.Should().HaveCount(2);
+		_ = this.window.View.Should().BeSameAs(this.window.Tabs[1].View);
+		_ = this.Strip.IsVisible.Should().BeTrue();
+		_ = this.window.View.Screen.WorkingDirectory.Should().Be(folder);
+	}
+
+	/// <summary>
+	/// Checks that <c>exit</c> in the second tab closes just that tab, leaving the window open on the first.
+	/// </summary>
+	[AvaloniaFact]
+	public void Exit_InSecondTab_ClosesOnlyThatTab()
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+		this.OpenSecondTab();
+
+		var first = this.window.Tabs[0];
+
+		// Act
+		this.Type("exit");
+		this.Press(Key.Enter, PhysicalKey.Enter, null);
+		WaitFor(() => this.window.Tabs.Count == 1, "the second tab should have closed");
+
+		// Assert
+		_ = this.window.IsVisible.Should().BeTrue();
+		_ = this.window.View.Should().BeSameAs(first.View);
+		_ = this.Strip.IsVisible.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that Ctrl+Shift+W closes the active tab and shows the one left.
+	/// </summary>
+	[AvaloniaFact]
+	public void CtrlShiftW_ClosesActiveTab()
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+		this.OpenSecondTab();
+
+		var first = this.window.Tabs[0];
+
+		// Act
+		this.Press(Key.W, PhysicalKey.W, null, RawInputModifiers.Control | RawInputModifiers.Shift);
+
+		// Assert
+		_ = this.window.Tabs.Should().ContainSingle().Which.Should().BeSameAs(first);
+		_ = this.window.View.Should().BeSameAs(first.View);
+	}
+
+	/// <summary>
+	/// Checks that each tab key, pressed on the second of two tabs, goes to the first.
+	/// </summary>
+	/// <param name="key">The key.</param>
+	/// <param name="physical">Where the key sits on a QWERTY keyboard.</param>
+	/// <param name="modifiers">The modifier keys held.</param>
+	[AvaloniaTheory]
+	[InlineData(Key.Tab, PhysicalKey.Tab, RawInputModifiers.Control)]
+	[InlineData(Key.Tab, PhysicalKey.Tab, RawInputModifiers.Control | RawInputModifiers.Shift)]
+	[InlineData(Key.D1, PhysicalKey.Digit1, RawInputModifiers.Alt)]
+	public void TabKey_OnSecondOfTwoTabs_SelectsFirst(Key key, PhysicalKey physical, RawInputModifiers modifiers)
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+		this.OpenSecondTab();
+
+		// Act
+		this.Press(key, physical, null, modifiers);
+
+		// Assert
+		_ = this.window.View.Should().BeSameAs(this.window.Tabs[0].View);
+		_ = this.window.Tabs[1].IsVisible.Should().BeFalse();
+	}
+
+	// Presses Ctrl+T and waits for the new tab's first prompt.
+	private void OpenSecondTab()
+	{
+		this.Press(Key.T, PhysicalKey.T, null, RawInputModifiers.Control);
+		WaitFor(() => this.window.Tabs.Count == 2 && this.CountPrompts() > 0, "the second tab's prompt should have shown");
+	}
+
 	// Types man ls, waits for the page, quits it, and waits for the screen to come back with the shell's next prompt.
 	private void OpenAndQuit(Key key, PhysicalKey physical, string? text)
 	{
@@ -215,6 +311,8 @@ public sealed class TerminalWindowTests : IDisposable
 	}
 
 	private string ScreenText => this.window.View.Screen.GetText();
+
+	private TabStrip Strip => this.window.GetVisualDescendants().OfType<TabStrip>().First();
 
 	private ManPager Pager => this.window.GetVisualDescendants().OfType<ManPager>().First();
 
@@ -242,16 +340,16 @@ public sealed class TerminalWindowTests : IDisposable
 		Dispatcher.UIThread.RunJobs();
 	}
 
-	private void Press(Key key, PhysicalKey physical, string? text)
+	private void Press(Key key, PhysicalKey physical, string? text, RawInputModifiers modifiers = RawInputModifiers.None)
 	{
-		this.window.KeyPress(key, RawInputModifiers.None, physical, text);
+		this.window.KeyPress(key, modifiers, physical, text);
 
 		if (text is not null)
 		{
 			this.window.KeyTextInput(text);
 		}
 
-		this.window.KeyRelease(key, RawInputModifiers.None, physical, text);
+		this.window.KeyRelease(key, modifiers, physical, text);
 		Dispatcher.UIThread.RunJobs();
 	}
 

@@ -6,7 +6,7 @@ namespace Sharpie.Features.Terminal;
 /// <content>
 /// Shows the man pages the shell hands over in the window's own <see cref="ManPager" /> reader.
 /// </content>
-internal sealed partial class TerminalWindow
+internal sealed partial class TerminalTab
 {
 	/// <summary>
 	/// Opens the page for a <c>man</c> line the shell sent instead of running it.

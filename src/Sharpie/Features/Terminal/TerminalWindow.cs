@@ -1,42 +1,35 @@
+using System.Diagnostics.CodeAnalysis;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
-using Avalonia.Layout;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform;
-using Avalonia.Threading;
-using Sharpie.Features.ManPages;
-using Sharpie.Shell.Features.LineEditing;
 
 namespace Sharpie.Features.Terminal;
 
 /// <summary>
-/// Shows the shell in a dark, translucent window, as a real terminal: keys go to the shell's pseudo-terminal, and the
-/// terminal's output is drawn on a character grid.
+/// Shows shells in a dark, translucent window, one per <see cref="TerminalTab" />, with a <see cref="TabStrip" /> to
+/// switch between them once there are two or more.
 /// </summary>
-/// <remarks>
-/// The shell runs as a separate child process because its builtins act on the whole process: <c>cd</c> changes the
-/// process's working directory and <c>exit</c> ends the process. It runs in a pseudo-terminal, so the shell and the
-/// programs it starts see a terminal, prompts like <c>[Y/n]</c> and <c>sudo</c>'s password show, and full-screen
-/// programs work. The prompt header, the colored input and Tab completion are drawn by the shell's line editor.
-/// </remarks>
-internal sealed partial class TerminalWindow : Window, IDisposable
+internal sealed class TerminalWindow : Window, IDisposable
 {
-	private readonly TerminalView view;
-	private readonly ScrollBar scrollBar;
-	private readonly ManPager pager;
+	private readonly List<TerminalTab> tabs = [];
+	private readonly Panel pages;
+	private readonly TabStrip strip;
 	private readonly WindowFrame frame;
-	private readonly ShellConnection shell;
+	private readonly bool useSavedHistory;
+	private TerminalTab active;
 
 	/// <summary>
-	/// Initializes a new instance of the <see cref="TerminalWindow" /> class and starts the shell.
+	/// Initializes a new instance of the <see cref="TerminalWindow" /> class and starts the shell in its first tab.
 	/// </summary>
 	public TerminalWindow() : this(useSavedHistory: true)
 	{
 	}
 
 	/// <summary>
-	/// Initializes a new instance of the <see cref="TerminalWindow" /> class and starts the shell.
+	/// Initializes a new instance of the <see cref="TerminalWindow" /> class and starts the shell in its first tab.
 	/// </summary>
 	/// <param name="useSavedHistory">
 	/// <see langword="false" /> to keep the shell away from the saved history, so tests never read or write the user's
@@ -44,7 +37,6 @@ internal sealed partial class TerminalWindow : Window, IDisposable
 	/// </param>
 	internal TerminalWindow(bool useSavedHistory)
 	{
-		this.Title = "Sharpie";
 		// Wide and tall enough for the fastfetch banner, about 133 columns by 31 lines at font size 15, to fit with the
 		// first prompt below it and no wrapping.
 		this.Width = 1300;
@@ -63,46 +55,41 @@ internal sealed partial class TerminalWindow : Window, IDisposable
 		// transparency at all, the frame goes square and opaque once the window opens.
 		this.TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
 
-		// The shell is started below, after the view knows its first size. Anything typed before then is dropped.
-		this.view = new TerminalView(bytes => this.shell?.Write(bytes));
-		this.view.GridResized += this.OnGridResized;
-		this.view.Scrolled += this.OnViewScrolled;
-		this.view.Screen.ManPageRequested += this.OnManPageRequested;
-
-		// Fluent's scroll bar shrinks to a thin line until the pointer comes near, close to the old screen's.
-		this.scrollBar = new ScrollBar
-		{
-			Orientation = Orientation.Vertical,
-			AllowAutoHide = true,
-			HorizontalAlignment = HorizontalAlignment.Right,
-			IsVisible = false,
-		};
-		this.scrollBar.Scroll += this.OnScrollBarScroll;
-
-		this.pager = new ManPager(TerminalView.Font, TerminalView.FontSize, Palette.Text, Palette.Muted, Palette.Selection, new StylePainter().For);
-		this.pager.Closed += this.OnPagerClosed;
+		this.strip = new TabStrip(this.SelectTab, this.CloseTab);
+		this.pages = new Panel();
 
 		var titleBar = new TitleBar(this);
 
 		DockPanel.SetDock(titleBar, Dock.Top);
+		DockPanel.SetDock(this.strip, Dock.Top);
 
-		this.frame = new WindowFrame(this, new DockPanel { Children = { titleBar, new Panel { Children = { this.view, this.scrollBar, this.pager } } } });
+		this.frame = new WindowFrame(this, new DockPanel { Children = { titleBar, this.strip, this.pages } });
 		this.Content = this.frame;
 
-		this.shell = ShellConnection.Start(this.OnOutput, useSavedHistory, this.view.Screen.Columns, this.view.Screen.Rows);
-		this.shell.Exited += this.OnShellExited;
+		this.useSavedHistory = useSavedHistory;
+		this.OpenTab(workingDirectory: null);
 
+		// Tunneling, so these keys are seen before the terminal, which marks every key handled, or an open man page.
+		this.AddHandler(KeyDownEvent, this.OnTabKeyDown, RoutingStrategies.Tunnel);
 		this.Opened += this.OnOpened;
 		this.Closed += this.OnClosed;
 	}
 
 	/// <summary>
-	/// Gets the terminal view, which tests read the screen from.
+	/// Gets the active tab's terminal view, which tests read the screen from.
 	/// </summary>
 	/// <value>
-	/// The view the shell's output is drawn in.
+	/// The view the active tab's shell output is drawn in.
 	/// </value>
-	internal TerminalView View => this.view;
+	internal TerminalView View => this.active.View;
+
+	/// <summary>
+	/// Gets the window's tabs, in the order the tab strip shows them.
+	/// </summary>
+	/// <value>
+	/// The open tabs, never empty while the window is open.
+	/// </value>
+	internal IReadOnlyList<TerminalTab> Tabs => this.tabs;
 
 	/// <inheritdoc />
 	protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -113,20 +100,6 @@ internal sealed partial class TerminalWindow : Window, IDisposable
 		if (change.Property == WindowStateProperty && this.frame is not null)
 		{
 			this.frame.ShowMaximized(this.WindowState == WindowState.Maximized);
-		}
-	}
-
-	/// <summary>
-	/// Draws what the shell printed, and names the window after the shell's folder.
-	/// </summary>
-	/// <param name="output">The text the terminal printed.</param>
-	private void OnOutput(string output)
-	{
-		this.view.Feed(output);
-
-		if (this.view.Screen.WorkingDirectory is { Length: > 0 } directory)
-		{
-			this.Title = $"{PromptHeader.SplitForDisplay(directory).Name} · Sharpie";
 		}
 	}
 
@@ -142,63 +115,144 @@ internal sealed partial class TerminalWindow : Window, IDisposable
 			this.frame.ShowOpaque();
 		}
 
-		_ = this.view.Focus();
+		this.active.FocusInput();
 	}
 
 	/// <summary>
-	/// Tells the terminal its new size when the window is resized, so programs redraw to fit.
+	/// Starts a shell in a new tab after the others and shows it.
 	/// </summary>
-	/// <param name="sender">The source of the event.</param>
-	/// <param name="e">The data for the event.</param>
-	private void OnGridResized(object? sender, EventArgs e) =>
-		this.shell?.Resize(this.view.Screen.Columns, this.view.Screen.Rows);
-
-	/// <summary>
-	/// Moves the scroll bar to match the view, and shows it only when there's scrollback.
-	/// </summary>
-	/// <param name="sender">The source of the event.</param>
-	/// <param name="e">The data for the event.</param>
-	private void OnViewScrolled(object? sender, EventArgs e)
+	/// <param name="workingDirectory">The folder the shell starts in, or <see langword="null" /> for the home folder.</param>
+	[MemberNotNull(nameof(active))]
+	private void OpenTab(string? workingDirectory)
 	{
-		var scrollback = this.view.Screen.ScrollbackCount;
+		var tab = new TerminalTab(this.useSavedHistory, workingDirectory);
 
-		this.scrollBar.IsVisible = scrollback > 0;
-		this.scrollBar.Maximum = scrollback;
-		this.scrollBar.ViewportSize = this.view.Screen.Rows;
-		this.scrollBar.Value = scrollback - this.view.ScrollOffset;
+		tab.Exited += (_, _) => this.CloseTab(tab);
+		this.tabs.Add(tab);
+		this.pages.Children.Add(tab);
+		this.SelectTab(tab);
 	}
 
 	/// <summary>
-	/// Scrolls the view when the scroll bar is dragged.
+	/// Shows <paramref name="tab" />, names the window after it, and gives it the keyboard.
 	/// </summary>
-	/// <param name="sender">The source of the event.</param>
-	/// <param name="e">The data for the event.</param>
-	private void OnScrollBarScroll(object? sender, ScrollEventArgs e) =>
-		this.view.ScrollTo((int)Math.Round(this.scrollBar.Maximum - e.NewValue));
-
-	/// <summary>
-	/// Closes the window after the shell exits, for example after <c>exit</c>.
-	/// </summary>
-	/// <param name="sender">The source of the event.</param>
-	/// <param name="e">The data for the event.</param>
-	private void OnShellExited(object? sender, EventArgs e) => Dispatcher.UIThread.Post(this.Close);
-
-	/// <summary>
-	/// Stops the shell, and anything it started, when the user closes the window.
-	/// </summary>
-	/// <param name="sender">The source of the event.</param>
-	/// <param name="e">The data for the event.</param>
-	private void OnClosed(object? sender, EventArgs e)
+	/// <param name="tab">The tab to show.</param>
+	[MemberNotNull(nameof(active))]
+	private void SelectTab(TerminalTab tab)
 	{
-		this.shell.Exited -= this.OnShellExited;
-		this.Dispose();
+		foreach (var each in this.tabs)
+		{
+			each.IsVisible = each == tab;
+		}
+
+		this.active = tab;
+		this[!TitleProperty] = tab[!TerminalTab.TitleProperty];
+		this.strip.Show(this.tabs, tab);
+		tab.FocusInput();
 	}
 
 	/// <summary>
-	/// Ends the shell and everything it started.
+	/// Ends the shell in <paramref name="tab" /> and removes the tab, closing the window after the last one.
+	/// </summary>
+	/// <param name="tab">The tab to close.</param>
+	/// <remarks>
+	/// A tab that's already gone is skipped, since its shell's exit can arrive after the tab or window was closed.
+	/// </remarks>
+	private void CloseTab(TerminalTab tab)
+	{
+		var index = this.tabs.IndexOf(tab);
+
+		if (index < 0)
+		{
+			return;
+		}
+
+		this.tabs.RemoveAt(index);
+		_ = this.pages.Children.Remove(tab);
+		tab.Dispose();
+
+		if (this.tabs.Count == 0)
+		{
+			this.Close();
+
+			return;
+		}
+
+		// Closing the active tab shows the one that took its place, or the new last tab, as Ghostty does.
+		this.SelectTab(tab == this.active ? this.tabs[Math.Min(index, this.tabs.Count - 1)] : this.active);
+	}
+
+	/// <summary>
+	/// Handles the tab keys: Ctrl+T opens a tab, Ctrl+Tab and Ctrl+Shift+Tab go to the next and previous tab,
+	/// Ctrl+Shift+W closes the tab, and Alt+1 to Alt+9 go to a tab by number.
+	/// </summary>
+	/// <param name="sender">The source of the event.</param>
+	/// <param name="e">The data for the event.</param>
+	private void OnTabKeyDown(object? sender, KeyEventArgs e)
+	{
+		var count = this.tabs.Count;
+		var index = this.tabs.IndexOf(this.active);
+
+		switch (e.KeyModifiers, e.Key)
+		{
+			// Programs no longer see Ctrl+T, such as readline's swap-characters.
+			case (KeyModifiers.Control, Key.T):
+				this.OpenTab(this.active.View.Screen.WorkingDirectory);
+				break;
+
+			case (KeyModifiers.Control, Key.Tab):
+				this.SelectTab(this.tabs[(index + 1) % count]);
+				break;
+
+			case (KeyModifiers.Control | KeyModifiers.Shift, Key.Tab):
+				this.SelectTab(this.tabs[(index + count - 1) % count]);
+				break;
+
+			// Plain Ctrl+W stays with the shell, which uses it to delete a word.
+			case (KeyModifiers.Control | KeyModifiers.Shift, Key.W):
+				this.CloseTab(this.active);
+				break;
+
+			// Alt+9 is the last tab, as in Ghostty. A number with no tab is left for the program.
+			case (KeyModifiers.Alt, >= Key.D1 and <= Key.D9):
+				var number = e.Key == Key.D9 ? count : e.Key - Key.D1 + 1;
+
+				if (number > count)
+				{
+					return;
+				}
+
+				this.SelectTab(this.tabs[number - 1]);
+				break;
+
+			default:
+				return;
+		}
+
+		e.Handled = true;
+	}
+
+	/// <summary>
+	/// Stops every tab's shell, and anything they started, when the user closes the window.
+	/// </summary>
+	/// <param name="sender">The source of the event.</param>
+	/// <param name="e">The data for the event.</param>
+	private void OnClosed(object? sender, EventArgs e) => this.Dispose();
+
+	/// <summary>
+	/// Ends every tab's shell and everything they started.
 	/// </summary>
 	/// <remarks>
 	/// Runs when the window closes. Calling it again does nothing.
 	/// </remarks>
-	public void Dispose() => this.shell.Dispose();
+	public void Dispose()
+	{
+		foreach (var tab in this.tabs)
+		{
+			tab.Dispose();
+		}
+
+		// Emptied so a shell exit already on its way finds no tab to close.
+		this.tabs.Clear();
+	}
 }
