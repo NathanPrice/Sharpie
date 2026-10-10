@@ -8,13 +8,14 @@ namespace Sharpie.Shell.Features.LineEditing;
 
 /// <summary>
 /// Reads one command line from the terminal a key at a time, coloring it as it's typed, with Tab completion,
-/// Up and Down history, and the usual editing keys.
+/// Up and Down through the history lines that start with what's typed, a dimmed suggestion from history after the
+/// cursor, and the usual editing keys.
 /// </summary>
 /// <param name="readKey">Reads the next key without echoing it, like <see cref="Console.ReadKey(bool)" />.</param>
 /// <param name="output">Where the prompt and the line are drawn.</param>
 /// <param name="columns">Gives the terminal's width in columns, read again on every redraw so a resize is picked up.</param>
 /// <param name="completer">Decides what each Tab press does.</param>
-/// <param name="history">The earlier lines, oldest first, which Up and Down step through.</param>
+/// <param name="history">The earlier lines, oldest first, which Up and Down search.</param>
 /// <param name="builtins">The builtin command names, which the coloring counts as commands.</param>
 /// <remarks>
 /// The whole input is redrawn after every key. The cursor first goes back up to the prompt's row, everything below
@@ -41,6 +42,15 @@ internal sealed class LineEditor(
 	private string draft = string.Empty;
 	private IReadOnlyList<string>? listed;
 	private int? selected;
+	private string suggestion = string.Empty;
+
+	/// <summary>
+	/// Gets a value indicating whether the line still shows a history line that Up or Down put there, unedited.
+	/// </summary>
+	/// <value>
+	/// <see langword="false" /> once any key changes the line, which makes the next Up search again from the changed text.
+	/// </value>
+	private bool Browsing => this.recalled < history.Count && this.line.ToString() == history[this.recalled];
 
 	/// <summary>
 	/// Draws <paramref name="header" /> and the prompt, then reads keys until Enter.
@@ -60,6 +70,7 @@ internal sealed class LineEditor(
 		this.recalled = history.Count;
 		this.draft = string.Empty;
 		this.listed = null;
+		this.suggestion = string.Empty;
 		completer.Reset();
 
 		output.Write(header);
@@ -79,6 +90,7 @@ internal sealed class LineEditor(
 
 			if (outcome == Outcome.Continue)
 			{
+				this.suggestion = this.Suggest();
 				this.Render();
 
 				continue;
@@ -109,6 +121,7 @@ internal sealed class LineEditor(
 				ConsoleKey.D when this.line.Length == 0 => Outcome.EndOfInput,
 				ConsoleKey.D => this.DeleteAt(this.cursor),
 				ConsoleKey.A => this.MoveTo(0),
+				ConsoleKey.E when this.suggestion.Length > 0 => this.Accept(),
 				ConsoleKey.E => this.MoveTo(this.line.Length),
 				ConsoleKey.U => this.DeleteRange(0, this.cursor),
 				ConsoleKey.K => this.DeleteRange(this.cursor, this.line.Length),
@@ -123,12 +136,13 @@ internal sealed class LineEditor(
 			ConsoleKey.Enter => Outcome.Submit,
 			ConsoleKey.Backspace when this.cursor > 0 => this.DeleteRange(this.cursor - 1, this.cursor),
 			ConsoleKey.Delete => this.DeleteAt(this.cursor),
+			ConsoleKey.RightArrow or ConsoleKey.End when this.suggestion.Length > 0 => this.Accept(),
 			ConsoleKey.LeftArrow => this.MoveTo(this.cursor - 1),
 			ConsoleKey.RightArrow => this.MoveTo(this.cursor + 1),
 			ConsoleKey.Home => this.MoveTo(0),
 			ConsoleKey.End => this.MoveTo(this.line.Length),
-			ConsoleKey.UpArrow => this.Recall(this.recalled - 1),
-			ConsoleKey.DownArrow => this.Recall(this.recalled + 1),
+			ConsoleKey.UpArrow => this.Recall(-1),
+			ConsoleKey.DownArrow => this.Recall(1),
 			ConsoleKey.Tab => this.Complete(),
 			_ when !char.IsControl(key.KeyChar) => this.Insert(key.KeyChar),
 			_ => Outcome.Continue,
@@ -148,6 +162,50 @@ internal sealed class LineEditor(
 		this.cursor++;
 
 		return Outcome.Continue;
+	}
+
+	/// <summary>
+	/// Adds the suggestion on screen to the end of the line and moves the cursor after it.
+	/// </summary>
+	/// <returns>
+	/// <see cref="Outcome.Continue" />.
+	/// </returns>
+	private Outcome Accept()
+	{
+		_ = this.line.Append(this.suggestion);
+		this.cursor = this.line.Length;
+
+		return Outcome.Continue;
+	}
+
+	/// <summary>
+	/// Finds the rest of the newest history line that starts with the line typed so far, as fish suggests it.
+	/// </summary>
+	/// <returns>
+	/// The part of that history line past the typed text, or an empty string when the line is empty, the cursor isn't
+	/// at its end, a list of matches is showing, Up or Down is stepping through history, or no longer history line starts
+	/// with it.
+	/// </returns>
+	private string Suggest()
+	{
+		// Hidden while browsing, because the next Up searches by the text typed before the first Up, not by the line
+		// on screen, and the dimmed text must always be what Up gives.
+		if (this.line.Length == 0 || this.cursor != this.line.Length || this.listed is not null || this.Browsing)
+		{
+			return string.Empty;
+		}
+
+		var typed = this.line.ToString();
+
+		for (var i = history.Count - 1; i >= 0; i--)
+		{
+			if (history[i].Length > typed.Length && history[i].StartsWith(typed, StringComparison.Ordinal))
+			{
+				return history[i][typed.Length..];
+			}
+		}
+
+		return string.Empty;
 	}
 
 	/// <summary>
@@ -230,24 +288,35 @@ internal sealed class LineEditor(
 	}
 
 	/// <summary>
-	/// Shows history line <paramref name="index" /> in place of the line, or the line that was being typed before Up
-	/// when <paramref name="index" /> is one past the newest.
+	/// Shows the next older or newer history line that starts with the text typed or edited before Up, in place of the
+	/// line, or that text again after Down past the newest match. With nothing typed, every history line matches.
 	/// </summary>
-	/// <param name="index">The history position to show. Out of range does nothing, so Up stops at the oldest line.</param>
+	/// <param name="step"><c>-1</c> to go to older lines, <c>1</c> to go to newer ones.</param>
 	/// <returns>
 	/// <see cref="Outcome.Continue" />.
 	/// </returns>
-	private Outcome Recall(int index)
+	private Outcome Recall(int step)
 	{
+		// The typed line is kept so Down past the newest entry brings it back instead of an empty line. An edit since
+		// the last Up or Down starts a new search from the edited text, so Up never carries on with a stale prefix.
+		if (!this.Browsing)
+		{
+			this.recalled = history.Count;
+			this.draft = this.line.ToString();
+		}
+
+		var index = this.recalled + step;
+
+		// Same match as the suggestion, so the first Up fills in exactly the dimmed text.
+		while (index >= 0 && index < history.Count && !(history[index].Length > this.draft.Length && history[index].StartsWith(this.draft, StringComparison.Ordinal)))
+		{
+			index += step;
+		}
+
+		// Up stops at the oldest match.
 		if (index < 0 || index > history.Count)
 		{
 			return Outcome.Continue;
-		}
-
-		// The typed line is kept so Down past the newest entry brings it back instead of an empty line.
-		if (this.recalled == history.Count)
-		{
-			this.draft = this.line.ToString();
 		}
 
 		this.recalled = index;
@@ -291,6 +360,7 @@ internal sealed class LineEditor(
 	private string? Finish(string marker, string? result)
 	{
 		this.listed = null;
+		this.suggestion = string.Empty;
 		this.cursor = this.line.Length;
 		this.Render();
 		output.Write($"{marker}\r\n");
@@ -320,7 +390,13 @@ internal sealed class LineEditor(
 		_ = screen.Append("\r\e[J").Append(PromptHeader.Symbol);
 		this.AppendColored(screen);
 
-		var end = PromptHeader.SymbolWidth + this.line.Length;
+		if (this.suggestion.Length > 0)
+		{
+			// The dimmed color the prompt header uses for the parent folder.
+			_ = screen.Append("\e[30m").Append(this.suggestion).Append("\e[0m");
+		}
+
+		var end = PromptHeader.SymbolWidth + this.line.Length + this.suggestion.Length;
 		var endRow = end / width;
 		var endColumn = end % width;
 

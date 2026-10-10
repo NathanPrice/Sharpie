@@ -63,17 +63,15 @@ public sealed class LineEditorTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that Up stops at the oldest history line, and Down past the newest brings back what was being typed.
+	/// Checks that with nothing typed, Up steps through every history line and stops at the oldest, and Down steps back.
 	/// </summary>
 	[Fact]
-	public void ReadLine_UpAndDown_RecallHistoryAndDraft()
+	public void ReadLine_UpAndDown_RecallHistory()
 	{
 		// Arrange
-		this.Type("draft");
 		this.Press(ConsoleKey.UpArrow);
 		this.Press(ConsoleKey.UpArrow);
 		this.Press(ConsoleKey.UpArrow);
-		this.Press(ConsoleKey.DownArrow);
 		this.Press(ConsoleKey.DownArrow);
 		this.Press(ConsoleKey.Enter);
 
@@ -81,7 +79,50 @@ public sealed class LineEditorTests : IDisposable
 		var line = this.sut.ReadLine(string.Empty);
 
 		// Assert
-		_ = line.Should().Be("draft");
+		_ = line.Should().Be("second");
+	}
+
+	/// <summary>
+	/// Checks that Up and Down after typing skip history lines that don't start with the typed text, and Up stops at
+	/// the oldest one that does.
+	/// </summary>
+	[Fact]
+	public void ReadLine_UpWithTypedText_SkipsLinesThatDontMatch()
+	{
+		// Arrange
+		this.history.Add("first again");
+		this.Type("fi");
+		this.Press(ConsoleKey.UpArrow);
+		this.Press(ConsoleKey.UpArrow);
+		this.Press(ConsoleKey.UpArrow);
+		this.Press(ConsoleKey.DownArrow);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("first again");
+	}
+
+	/// <summary>
+	/// Checks that Down past the newest matching history line brings back what was typed.
+	/// </summary>
+	[Fact]
+	public void ReadLine_DownPastNewestMatch_BringsBackTypedText()
+	{
+		// Arrange
+		this.history.Add("first again");
+		this.Type("fi");
+		this.Press(ConsoleKey.UpArrow);
+		this.Press(ConsoleKey.DownArrow);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("fi");
 	}
 
 	/// <summary>
@@ -174,6 +215,149 @@ public sealed class LineEditorTests : IDisposable
 
 		// Assert
 		_ = this.output.ToString().Should().Contain("\e[1A\r\e[J");
+	}
+
+	/// <summary>
+	/// Checks that typing the start of a history line shows the rest of it dimmed after the cursor.
+	/// </summary>
+	[Fact]
+	public void ReadLine_PrefixOfHistory_ShowsDimSuggestion()
+	{
+		// Arrange
+		this.Type("fi");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.output.ToString().Should().Contain("\e[30mrst\e[0m");
+	}
+
+	/// <summary>
+	/// Checks that Right, End and Ctrl+E at the end of the line take the suggestion into it.
+	/// </summary>
+	/// <param name="key">The key that accepts.</param>
+	/// <param name="control">Whether Ctrl is held.</param>
+	[Theory]
+	[InlineData(ConsoleKey.RightArrow, false)]
+	[InlineData(ConsoleKey.End, false)]
+	[InlineData(ConsoleKey.E, true)]
+	public void ReadLine_AcceptKeyAtEnd_TakesSuggestion(ConsoleKey key, bool control)
+	{
+		// Arrange
+		this.Type("fi");
+		this.Press(key, control);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("first");
+	}
+
+	/// <summary>
+	/// Checks that Right in the middle of the line only moves the cursor, even when a history line matches.
+	/// </summary>
+	[Fact]
+	public void ReadLine_RightArrowMidLine_MovesWithoutAccepting()
+	{
+		// Arrange
+		this.Type("fi");
+		this.Press(ConsoleKey.LeftArrow);
+		this.Press(ConsoleKey.RightArrow);
+		this.Type("x");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("fix");
+	}
+
+	/// <summary>
+	/// Checks that Enter runs only what was typed and draws the finished line without the suggestion.
+	/// </summary>
+	[Fact]
+	public void ReadLine_EnterWithoutAccepting_ReturnsTypedTextOnly()
+	{
+		// Arrange
+		this.Type("fi");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		var output = this.output.ToString();
+
+		_ = line.Should().Be("fi");
+		_ = output[output.LastIndexOf("\r\e[J", StringComparison.Ordinal)..].Should().NotContain("rst");
+	}
+
+	/// <summary>
+	/// Checks that when several history lines match, the newest one is suggested.
+	/// </summary>
+	[Fact]
+	public void ReadLine_SeveralMatches_SuggestsNewest()
+	{
+		// Arrange
+		this.history.Add("first again");
+		this.Type("f");
+		this.Press(ConsoleKey.RightArrow);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("first again");
+	}
+
+	/// <summary>
+	/// Checks that editing a line Up brought back makes the next Up search by the edited text instead of carrying on
+	/// from where it was.
+	/// </summary>
+	[Fact]
+	public void ReadLine_UpAfterEditingRecalledLine_SearchesEditedText()
+	{
+		// Arrange
+		this.history.Add("sixth");
+		this.Press(ConsoleKey.UpArrow);
+		this.Press(ConsoleKey.U, control: true);
+		this.Type("f");
+		this.Press(ConsoleKey.UpArrow);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("first");
+	}
+
+	/// <summary>
+	/// Checks that no suggestion shows while Up is stepping through history, so Right can't take a line the next Up
+	/// wouldn't give.
+	/// </summary>
+	[Fact]
+	public void ReadLine_WhileBrowsingHistory_HidesSuggestion()
+	{
+		// Arrange
+		this.history.Clear();
+		this.history.AddRange(["first again", "second", "first"]);
+		this.Type("f");
+		this.Press(ConsoleKey.UpArrow);
+		this.Press(ConsoleKey.RightArrow);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("first");
 	}
 
 	/// <inheritdoc />
