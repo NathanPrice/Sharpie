@@ -170,6 +170,70 @@ public sealed class VtScreenTests
 	}
 
 	/// <summary>
+	/// Checks that the blank row a scroll adds shows nothing of the row it reuses, starting from a screen whose first
+	/// row wraps.
+	/// </summary>
+	/// <param name="prefix">Sent before the screen is filled, to switch screens.</param>
+	/// <param name="sequence">The scroll, sent with the cursor on the last row.</param>
+	/// <param name="newRow">The screen row the blank row lands on.</param>
+	/// <param name="expected">The screen's text afterwards.</param>
+	[Theory]
+	[InlineData("", "\e[H\e[M", 3, "x\nr2\nr3")]
+	[InlineData("\e[?1049h", "\e[S", 3, "x\nr2\nr3")]
+	[InlineData("", "\e[2;4r\e[S", 3, "0123456789r2\nr3")]
+	[InlineData("", "\e[T", 0, "\n0123456789x\nr2")]
+	public void Feed_ScrollDroppingRow_AddsCleanBlankRow(string prefix, string sequence, int newRow, string expected)
+	{
+		// Arrange
+		this.screen.Feed(prefix + "0123456789x\r\nr2\r\nr3");
+
+		// Act
+		this.screen.Feed(sequence);
+
+		// Assert
+		_ = this.screen.GetText().Should().Be(expected);
+		_ = this.screen.GetLine(this.screen.ScrollbackCount + newRow).Wrapped.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that once the scrollback is full it keeps the newest rows, and the blank rows made from the rows it drops
+	/// come out clean.
+	/// </summary>
+	[Fact]
+	public void Feed_PastFullScrollback_KeepsNewestRowsAndAddsCleanBlankRow()
+	{
+		// Arrange
+		// Each line fills one row and wraps onto the next, so half the dropped rows are wrapped ones.
+		var lines = string.Concat(Enumerable.Range(0, VtScreen.ScrollbackRows).Select(i => $"{i:D10}x\r\n"));
+
+		// Act
+		this.screen.Feed(lines);
+
+		// Assert
+		_ = this.screen.ScrollbackCount.Should().Be(VtScreen.ScrollbackRows);
+		_ = this.screen.GetLine(1).Text().Should().Be("0000004999");
+		_ = this.screen.GetText(this.screen.ScrollbackCount, 0, this.screen.LineCount - 1, 10).Should().Be("x\n0000009999x");
+		_ = this.screen.GetLine(this.screen.LineCount - 1).Wrapped.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that a blank row a scroll adds takes the current background color, as erasing does.
+	/// </summary>
+	[Fact]
+	public void Feed_ScrollWithBackground_FillsBlankRowWithBackground()
+	{
+		// Arrange
+		this.screen.Feed("r0\r\nr1\r\nr2\r\nr3\e[44m");
+
+		// Act
+		this.screen.Feed("\e[T");
+
+		// Assert
+		_ = this.screen.GetLine(0).Cells.Select(cell => this.screen.GetStyle(cell.Style).Background)
+			.Should().AllBeEquivalentTo(new AnsiColor(4, 0));
+	}
+
+	/// <summary>
 	/// Checks that the alternate screen starts blank and leaving it brings back the main screen and its cursor.
 	/// </summary>
 	[Fact]

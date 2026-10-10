@@ -124,18 +124,25 @@ internal sealed class Scrollback(int capacity)
 	/// Adds a row as the newest, dropping the oldest when full.
 	/// </summary>
 	/// <param name="row">The row.</param>
-	public void Add(TerminalLine row)
+	/// <returns>
+	/// The oldest row, which no longer belongs to the scrollback, or <see langword="null" /> while there's still room.
+	/// </returns>
+	public TerminalLine? Add(TerminalLine row)
 	{
 		if (this.Count < this.rows.Length)
 		{
 			this.rows[(this.first + this.Count) % this.rows.Length] = row;
 			this.Count++;
 
-			return;
+			return null;
 		}
+
+		var dropped = this.rows[this.first];
 
 		this.rows[this.first] = row;
 		this.first = (this.first + 1) % this.rows.Length;
+
+		return dropped;
 	}
 
 	/// <summary>

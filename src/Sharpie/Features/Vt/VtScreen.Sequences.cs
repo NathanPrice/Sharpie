@@ -561,8 +561,10 @@ internal sealed partial class VtScreen
 
 		for (var i = 0; i < count; i++)
 		{
+			var dropped = lines[this.top];
+
 			Array.Copy(lines, this.top + 1, lines, this.top, this.bottom - this.top);
-			lines[this.bottom] = this.BlankLine();
+			lines[this.bottom] = this.BlankLine(dropped);
 		}
 
 		this.top = regionTop;

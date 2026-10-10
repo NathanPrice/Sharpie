@@ -422,7 +422,7 @@ internal sealed partial class VtScreen : IVtHandler
 			{
 				if (keepHistory)
 				{
-					this.History.Add(list[0]);
+					_ = this.History.Add(list[0]);
 				}
 
 				list.RemoveAt(0);
@@ -610,13 +610,15 @@ internal sealed partial class VtScreen : IVtHandler
 
 		for (var i = 0; i < count; i++)
 		{
+			var dropped = lines[this.top];
+
 			if (this.top == 0 && !this.AlternateScreen)
 			{
-				this.History.Add(lines[this.top]);
+				dropped = this.History.Add(dropped);
 			}
 
 			Array.Copy(lines, this.top + 1, lines, this.top, this.bottom - this.top);
-			lines[this.bottom] = this.BlankLine();
+			lines[this.bottom] = this.BlankLine(dropped);
 		}
 	}
 
@@ -632,18 +634,38 @@ internal sealed partial class VtScreen : IVtHandler
 
 		for (var i = 0; i < count; i++)
 		{
+			var dropped = lines[this.bottom];
+
 			Array.Copy(lines, this.top, lines, this.top + 1, this.bottom - this.top);
-			lines[this.top] = this.BlankLine();
+			lines[this.top] = this.BlankLine(dropped);
 		}
 	}
 
 	/// <summary>
-	/// Makes a blank row in the current background color.
+	/// Makes a blank row in the current background color, reusing a row that just left the screen or scrollback.
 	/// </summary>
+	/// <param name="dropped">The row nothing holds anymore, or <see langword="null" /> when there isn't one.</param>
 	/// <returns>
-	/// The row.
+	/// <paramref name="dropped" /> wiped, or a new row when it's missing or was cut for another width.
 	/// </returns>
-	private TerminalLine BlankLine() => TerminalLine.Blank(this.Columns, this.EraseStyle());
+	/// <remarks>
+	/// Reusing the row saves a new row and its cells for every row printed. Once the scrollback is full, every dropped
+	/// row has lived long enough to reach the older garbage collector generations, so heavy output like a build log
+	/// would keep triggering expensive collections.
+	/// </remarks>
+	private TerminalLine BlankLine(TerminalLine? dropped)
+	{
+		// Scrollback rows keep the width they had when they left the screen, so a resize can leave them the wrong size.
+		if (dropped is null || dropped.Cells.Length != this.Columns)
+		{
+			return TerminalLine.Blank(this.Columns, this.EraseStyle());
+		}
+
+		Array.Fill(dropped.Cells, Cell.Blank(this.EraseStyle()));
+		dropped.Wrapped = false;
+
+		return dropped;
+	}
 
 	/// <summary>
 	/// Gets the style erased cells take: the current background color and nothing else, as xterm does.
