@@ -241,7 +241,15 @@ internal static class Program
 			return false;
 		}
 
-		var startInfo = new ProcessStartInfo(man) { RedirectStandardOutput = true, RedirectStandardError = true };
+		// All three are redirected. .NET treats a child with any of them on the terminal as one that uses it, and its
+		// terminal handling for that child stops the shell ignoring SIGTTOU. The shell is then stopped when it takes the
+		// terminal back from man, and the next prompt crashes.
+		var startInfo = new ProcessStartInfo(man)
+		{
+			RedirectStandardInput = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+		};
 
 		startInfo.ArgumentList.Add("-w");
 
@@ -258,6 +266,8 @@ internal static class Program
 			{
 				return false;
 			}
+
+			process.StandardInput.Close();
 
 			// Both pipes are drained, or a long answer could fill one and hang the check.
 			var errors = process.StandardError.ReadToEndAsync();

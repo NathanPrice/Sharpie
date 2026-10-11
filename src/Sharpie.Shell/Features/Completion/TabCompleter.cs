@@ -116,7 +116,13 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 			var startInfo = new ProcessStartInfo(script, [command, current, previous])
 			{
 				UseShellExecute = false,
+
+				// All three are redirected. .NET treats a child with any of them on the terminal as one that uses it,
+				// and its terminal handling for that child stops the shell ignoring SIGTTOU. The shell is then stopped
+				// when it takes the terminal back from the next program, and the next prompt crashes.
+				RedirectStandardInput = true,
 				RedirectStandardOutput = true,
+				RedirectStandardError = true,
 			};
 
 			// Set on the child only, so the shell's own environment never gets these. COMP_POINT is a byte index, and
@@ -131,9 +137,15 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 				return [];
 			}
 
+			process.StandardInput.Close();
+
+			// Errors are drained and dropped, or a script that writes many could fill the pipe and hang Tab.
+			var errors = process.StandardError.ReadToEndAsync();
+
 			// Read to the end before inserting anything, so a slow script can't leave a partial line.
 			var output = process.StandardOutput.ReadToEnd();
 
+			errors.Wait();
 			process.WaitForExit();
 
 			return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal)];
