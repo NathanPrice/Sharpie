@@ -24,18 +24,15 @@ internal sealed class TerminalWindow : Window, IDisposable
 	/// <summary>
 	/// Initializes a new instance of the <see cref="TerminalWindow" /> class and starts the shell in its first tab.
 	/// </summary>
-	public TerminalWindow() : this(useSavedHistory: true)
-	{
-	}
-
-	/// <summary>
-	/// Initializes a new instance of the <see cref="TerminalWindow" /> class and starts the shell in its first tab.
-	/// </summary>
 	/// <param name="useSavedHistory">
 	/// <see langword="false" /> to keep the shell away from the saved history, so tests never read or write the user's
 	/// history.
 	/// </param>
-	internal TerminalWindow(bool useSavedHistory)
+	/// <param name="command">
+	/// A program and its arguments to run in the first tab instead of an interactive shell, or <see langword="null" />
+	/// for the shell.
+	/// </param>
+	internal TerminalWindow(bool useSavedHistory, string[]? command = null)
 	{
 		// Wide and tall enough for the fastfetch banner, about 133 columns by 31 lines at font size 15, to fit with the
 		// first prompt below it and no wrapping.
@@ -67,7 +64,10 @@ internal sealed class TerminalWindow : Window, IDisposable
 		this.Content = this.frame;
 
 		this.useSavedHistory = useSavedHistory;
-		this.OpenTab(workingDirectory: null);
+
+		// The folder the window was started in, which file managers set for "Open Terminal Here". A launch from the
+		// menu starts in the home folder, which the desktop file sets.
+		this.OpenTab(Directory.GetCurrentDirectory(), command);
 
 		// Tunneling, so these keys are seen before the terminal, which marks every key handled, or an open man page.
 		this.AddHandler(KeyDownEvent, this.OnTabKeyDown, RoutingStrategies.Tunnel);
@@ -122,10 +122,13 @@ internal sealed class TerminalWindow : Window, IDisposable
 	/// Starts a shell in a new tab after the others and shows it.
 	/// </summary>
 	/// <param name="workingDirectory">The folder the shell starts in, or <see langword="null" /> for the home folder.</param>
+	/// <param name="command">
+	/// A program and its arguments to run instead of an interactive shell, or <see langword="null" /> for the shell.
+	/// </param>
 	[MemberNotNull(nameof(active))]
-	private void OpenTab(string? workingDirectory)
+	private void OpenTab(string? workingDirectory, string[]? command = null)
 	{
-		var tab = new TerminalTab(this.useSavedHistory, workingDirectory);
+		var tab = new TerminalTab(this.useSavedHistory, workingDirectory, command);
 
 		tab.Exited += (_, _) => this.CloseTab(tab);
 		this.tabs.Add(tab);

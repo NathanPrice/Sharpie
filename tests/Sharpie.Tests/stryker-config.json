@@ -9,7 +9,8 @@
       "**/Features/ManPages/**/*.cs",
       "**/Features/Terminal/RowCache.cs",
       "**/Features/Terminal/Palette.cs",
-      "**/Features/Terminal/StylePainter.cs"
+      "**/Features/Terminal/StylePainter.cs",
+      "**/Features/Terminal/LaunchArguments.cs"
     ]
   }
 }

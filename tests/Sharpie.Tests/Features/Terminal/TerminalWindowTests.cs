@@ -28,6 +28,20 @@ public sealed class TerminalWindowTests : IDisposable
 	private readonly TerminalWindow window = new(useSavedHistory: false) { Height = 300 };
 
 	/// <summary>
+	/// Checks that the first tab's shell starts in the folder the window was started in, as a file manager's "Open
+	/// Terminal Here" expects.
+	/// </summary>
+	[AvaloniaFact]
+	public void Open_FirstTab_StartsInCurrentFolder()
+	{
+		// Act
+		this.ShowAndWaitForPrompt();
+
+		// Assert
+		_ = this.window.View.Screen.WorkingDirectory.Should().Be(Directory.GetCurrentDirectory());
+	}
+
+	/// <summary>
 	/// Checks that quitting a page with the given key leaves the <c>man</c> line followed by exactly one empty prompt.
 	/// </summary>
 	/// <param name="key">The key that quits.</param>

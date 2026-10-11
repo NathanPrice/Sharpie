@@ -39,6 +39,35 @@ public sealed class ShellConnectionTests
 	}
 
 	/// <summary>
+	/// Checks that a command runs through the shell with each word reaching the program as typed, and that the
+	/// connection reports the exit once it's done.
+	/// </summary>
+	[AvaloniaFact]
+	public void Start_WithCommand_RunsItAndExits()
+	{
+		// Arrange
+		var output = new StringBuilder();
+		var exited = false;
+
+		// Act
+		using var shell = ShellConnection.Start(text => output.Append(text), useSavedHistory: false, 80, 24, workingDirectory: null, ["printf", "%s|%s\n", "it's ok", "$HOME"]);
+		shell.Exited += (_, _) => exited = true;
+
+		// Assert
+		var clock = Stopwatch.StartNew();
+
+		while (!exited && clock.Elapsed < TimeSpan.FromSeconds(15))
+		{
+			Dispatcher.UIThread.RunJobs();
+			Thread.Sleep(20);
+		}
+
+		Dispatcher.UIThread.RunJobs();
+		_ = exited.Should().BeTrue();
+		_ = output.ToString().Should().Contain("it's ok|$HOME\r\n");
+	}
+
+	/// <summary>
 	/// Checks that the Spargine guard rejects a missing output callback before any shell starts.
 	/// </summary>
 	[AvaloniaFact]

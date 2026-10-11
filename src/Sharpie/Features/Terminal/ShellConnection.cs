@@ -53,10 +53,14 @@ internal sealed class ShellConnection : IDisposable
 	/// The folder the shell starts in, or <see langword="null" /> for the user's home folder. A folder that no longer
 	/// exists falls back to the home folder too.
 	/// </param>
+	/// <param name="command">
+	/// A program and its arguments for the shell to run with <c>-c</c> instead of reading commands, or
+	/// <see langword="null" /> for an interactive shell. Each word is quoted, so it reaches the program as typed.
+	/// </param>
 	/// <returns>
 	/// The connection to the running shell.
 	/// </returns>
-	public static ShellConnection Start(Action<string> onOutput, bool useSavedHistory, int columns, int rows, string? workingDirectory)
+	public static ShellConnection Start(Action<string> onOutput, bool useSavedHistory, int columns, int rows, string? workingDirectory, string[]? command = null)
 	{
 		_ = onOutput.ArgumentNotNull();
 
@@ -78,7 +82,9 @@ internal sealed class ShellConnection : IDisposable
 		{
 			Name = "Sharpie",
 			App = Path.Combine(AppContext.BaseDirectory, fileName),
-			CommandLine = useSavedHistory ? [] : [Shell.Program.NoRcOption],
+			CommandLine = command is not null ? ["-c", string.Join(' ', command.Select(Shell.Common.CommandLine.Quote))]
+				: useSavedHistory ? []
+				: [Shell.Program.NoRcOption],
 			Cwd = Directory.Exists(workingDirectory) ? workingDirectory : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
 			Cols = columns,
 			Rows = rows,

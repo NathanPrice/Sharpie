@@ -15,7 +15,10 @@ internal static class Program
 	/// <summary>
 	/// Builds the Avalonia app and runs it until the last window closes.
 	/// </summary>
-	/// <param name="args">The command-line arguments, passed through to Avalonia.</param>
+	/// <param name="args">
+	/// The command-line arguments, passed through to Avalonia, which hands them to the window as
+	/// <see cref="IClassicDesktopStyleApplicationLifetime.Args" />.
+	/// </param>
 	[STAThread]
 	private static void Main(string[] args) => _ = AppBuilder.Configure<App>().UsePlatformDetect().StartWithClassicDesktopLifetime(args);
 }
@@ -44,7 +47,7 @@ internal sealed class App : Application
 	{
 		if (this.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
 		{
-			desktop.MainWindow = new TerminalWindow();
+			desktop.MainWindow = new TerminalWindow(useSavedHistory: true, LaunchArguments.Command(desktop.Args ?? []));
 		}
 
 		base.OnFrameworkInitializationCompleted();

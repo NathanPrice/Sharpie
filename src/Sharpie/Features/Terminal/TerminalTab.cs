@@ -37,7 +37,11 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	/// history.
 	/// </param>
 	/// <param name="workingDirectory">The folder the shell starts in, or <see langword="null" /> for the home folder.</param>
-	public TerminalTab(bool useSavedHistory, string? workingDirectory)
+	/// <param name="command">
+	/// A program and its arguments to run instead of an interactive shell, or <see langword="null" /> for the shell. The
+	/// tab closes when it ends.
+	/// </param>
+	public TerminalTab(bool useSavedHistory, string? workingDirectory, string[]? command = null)
 	{
 		// The shell is started below, after the view knows its first size. Anything typed before then is dropped.
 		this.View = new TerminalView(bytes => this.shell?.Write(bytes));
@@ -61,7 +65,7 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 
 		this.Children.AddRange([this.View, this.scrollBar, this.pager]);
 
-		this.shell = ShellConnection.Start(this.OnOutput, useSavedHistory, this.View.Screen.Columns, this.View.Screen.Rows, workingDirectory);
+		this.shell = ShellConnection.Start(this.OnOutput, useSavedHistory, this.View.Screen.Columns, this.View.Screen.Rows, workingDirectory, command);
 		this.shell.Exited += this.OnShellExited;
 	}
 
