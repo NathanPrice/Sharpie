@@ -491,9 +491,9 @@ internal static partial class ApiDocs
 
 		foreach (var exception in docs?.Elements("exception") ?? [])
 		{
-			var name = MarkdownRenderer.XrefName(Attribute(exception, "cref").Length > 2 ? Attribute(exception, "cref")[2..] : Attribute(exception, "cref"));
+			var cref = WithoutKind(Attribute(exception, "cref"));
 
-			writer.Tagged([[new Span(Resources.DmanThrows, SpanStyle.Plain), new Span(name, SpanStyle.Bold, Links.ApiUrl(Attribute(exception, "cref")[Math.Min(2, Attribute(exception, "cref").Length)..]))]], MarkdownRenderer.Inline(Collapse(DocText(exception))));
+			writer.Tagged([[new Span(Resources.DmanThrows, SpanStyle.Plain), new Span(MarkdownRenderer.XrefName(cref), SpanStyle.Bold, Links.ApiUrl(cref))]], MarkdownRenderer.Inline(Collapse(DocText(exception))));
 		}
 
 		renderer.Render(DocText(docs?.Element("remarks")), url, Links.ApiRepository, 0, null);
@@ -723,7 +723,7 @@ internal static partial class ApiDocs
 		_ = element.Name.LocalName switch
 		{
 			"see" when element.Attribute("langword") is { } word => text.Append('`').Append(word.Value).Append('`'),
-			"see" when element.Attribute("cref") is { } cref => text.Append("<xref:").Append(cref.Value.Length > 2 && cref.Value[1] == ':' ? cref.Value[2..] : cref.Value).Append('>'),
+			"see" when element.Attribute("cref") is { } cref => text.Append("<xref:").Append(WithoutKind(cref.Value)).Append('>'),
 			"see" => text.Append(inner.Length > 0 ? inner : Attribute(element, "href")),
 			"seealso" => text,
 			"paramref" or "typeparamref" => text.Append('*').Append(Attribute(element, "name")).Append('*'),
@@ -800,6 +800,15 @@ internal static partial class ApiDocs
 	/// The value, or empty when the attribute is missing.
 	/// </returns>
 	private static string Attribute(XElement element, string name) => element.Attribute(name)?.Value ?? string.Empty;
+
+	/// <summary>
+	/// Removes the kind from a doc id.
+	/// </summary>
+	/// <param name="id">A doc id like <c>T:System.String</c>, or a bare name like <c>ArgumentException</c>.</param>
+	/// <returns>
+	/// The id without its <c>T:</c>, <c>M:</c> or other kind; a bare name unchanged.
+	/// </returns>
+	private static string WithoutKind(string id) => id.Length > 2 && id[1] == ':' ? id[2..] : id;
 
 	/// <summary>
 	/// Writes an index type name the way C# reads, like <c>List&lt;&gt;</c> for <c>List`1</c>.

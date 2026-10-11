@@ -125,6 +125,7 @@ public sealed class ApiDocsTests : IDisposable
 		      <Docs>
 		        <typeparam name="T">Unused.</typeparam>
 		        <summary>Splits into at most <paramref name="count" /> parts.</summary>
+		        <exception cref="ArgumentOutOfRangeException">Too few.</exception>
 		        <example>Split <c>a,b</c> in two.</example>
 		      </Docs>
 		    </Member>
@@ -424,6 +425,9 @@ public sealed class ApiDocsTests : IDisposable
 			       T
 			              Unused.
 
+			       Throws ArgumentOutOfRangeException
+			              Too few.
+
 			       Split a,b in two.
 
 			SEE ALSO
@@ -536,7 +540,7 @@ public sealed class ApiDocsTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a styled member page links each exception to its page.
+	/// Checks that a styled member page links each exception to its page, whether or not the docs give its kind.
 	/// </summary>
 	[Fact]
 	public void Render_StyledMemberPage_LinksExceptions()
@@ -546,6 +550,7 @@ public sealed class ApiDocsTests : IDisposable
 
 		// Assert
 		_ = result.Should().Contain($"Throws {Link("https://learn.microsoft.com/dotnet/api/system.argumentexception", Bold("ArgumentException"))}")
+			.And.Contain($"Throws {Link("https://learn.microsoft.com/dotnet/api/argumentoutofrangeexception", Bold("ArgumentOutOfRangeException"))}")
 			.And.Contain(Link("https://learn.microsoft.com/dotnet/api/system.string", Bold("System.String(3net)")));
 	}
 
