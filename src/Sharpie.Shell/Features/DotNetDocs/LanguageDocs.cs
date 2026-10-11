@@ -103,7 +103,9 @@ internal static partial class LanguageDocs
 
 		writer.Header(title, manual);
 		writer.Section("NAME");
-		writer.Paragraph([new Span(word, SpanStyle.Bold), new Span(Resources.DmanNameSeparator, SpanStyle.Plain), .. MarkdownRenderer.Inline(description, pageUrl)]);
+		writer.Paragraph(description.Length == 0
+			? [new Span(word, SpanStyle.Bold)]
+			: [new Span(word, SpanStyle.Bold), new Span(Resources.DmanNameSeparator, SpanStyle.Plain), .. MarkdownRenderer.Inline(description, pageUrl)]);
 		new MarkdownRenderer(writer, source, language).Render(body, pageUrl, Links.ArticleRepository, sectionLevel, "DESCRIPTION");
 		writer.Section("SEE ALSO");
 

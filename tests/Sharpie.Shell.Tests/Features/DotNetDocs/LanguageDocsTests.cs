@@ -45,6 +45,7 @@ public sealed class LanguageDocsTests : IDisposable
 		this.server.Add($"{Docs}visual-basic/language-reference/keywords/index.md", "[`Select`](../statements/select-case-statement.md)");
 		this.server.Add($"{Docs}visual-basic/language-reference/statements/select-case-statement.md", "---\ndescription: \"Select...Case Statement\"\n---\n# Select...Case\n\nRuns one group.\n");
 		this.server.Add($"{Docs}standard/io/titled.md", "---\ntitle: File and stream I/O\n---\nBody.\n");
+		this.server.Add($"{Docs}standard/io/plain.md", "Just text.\n");
 		this.source = this.server.CreateSource(new ManualTime(new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero)));
 	}
 
@@ -118,6 +119,19 @@ public sealed class LanguageDocsTests : IDisposable
 			dotnet/docs                   checked 2026-01-15                    titled(7net)
 
 			""");
+	}
+
+	/// <summary>
+	/// Checks that an article with no front matter has just its name on the NAME line, without a dangling dash.
+	/// </summary>
+	[Fact]
+	public void RenderArticle_NoFrontMatter_NameHasNoDash()
+	{
+		// Act
+		var result = LanguageDocs.RenderArticle(new Uri($"{Docs}standard/io/plain.md"), null, this.source, 80, styled: false);
+
+		// Assert
+		_ = result.Should().Contain("NAME\n       plain\n\nDESCRIPTION\n       Just text.\n");
 	}
 
 	/// <summary>
