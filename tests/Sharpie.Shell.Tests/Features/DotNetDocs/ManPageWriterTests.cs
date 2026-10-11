@@ -254,4 +254,23 @@ public sealed class ManPageWriterTests
 		// Assert
 		_ = sut.ToString().Should().Be(expected);
 	}
+
+	/// <summary>
+	/// Checks that a paragraph with no text writes nothing, so a page has no lines of only spaces.
+	/// </summary>
+	[Fact]
+	public void Paragraph_NoText_WritesNothing()
+	{
+		// Arrange
+		var sut = new ManPageWriter(40, styled: false);
+		sut.Section("one");
+
+		// Act
+		sut.Paragraph([]);
+		sut.Paragraph([new Span(string.Empty, SpanStyle.Plain)]);
+		sut.Paragraph([new Span("x", SpanStyle.Plain)]);
+
+		// Assert
+		_ = sut.ToString().Should().Be("\nONE\n       x\n");
+	}
 }

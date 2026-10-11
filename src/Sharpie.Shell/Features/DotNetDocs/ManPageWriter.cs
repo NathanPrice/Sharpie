@@ -169,11 +169,16 @@ internal sealed class ManPageWriter(int width, bool styled)
 	/// <summary>
 	/// Writes a paragraph wrapped to the width, with a blank line before it unless it opens a section.
 	/// </summary>
-	/// <param name="spans">The paragraph text.</param>
+	/// <param name="spans">The paragraph text. A paragraph with no text writes nothing, not even its indent.</param>
 	/// <param name="indent">The column every line starts at.</param>
 	/// <param name="firstIndent">The column the first line starts at, or <see langword="null" /> for <paramref name="indent" />.</param>
 	public void Paragraph(IReadOnlyList<Span> spans, int indent = BodyIndent, int? firstIndent = null)
 	{
+		if (VisibleLength(spans) == 0)
+		{
+			return;
+		}
+
 		this.BlankLineUnlessStart();
 		this.Wrap(spans, indent, firstIndent ?? indent);
 	}

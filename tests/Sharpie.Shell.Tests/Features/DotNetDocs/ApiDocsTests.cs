@@ -721,6 +721,37 @@ public sealed class ApiDocsTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a member without docs has just its name on the NAME line and nothing under DESCRIPTION.
+	/// </summary>
+	[Fact]
+	public void Render_MemberPageWithoutDocs_WritesWholePage()
+	{
+		// Act
+		var result = ApiDocs.Render("Int32.MaxValue", DocLanguage.CSharp, this.source, 80, styled: false);
+
+		// Assert
+		_ = result.Should().Be($"""
+			Int32.MaxValue(3net)           .NET API Reference           Int32.MaxValue(3net)
+
+			NAME
+			       System.Int32.MaxValue
+
+			SYNOPSIS
+			       public const int MaxValue = 2147483647
+
+			DESCRIPTION
+
+			SEE ALSO
+			       System.Int32(3net)
+
+			       https://learn.microsoft.com/dotnet/api/system.int32.maxvalue
+
+			.NET {Environment.Version.Major}                 checked 2026-01-15                  Int32.MaxValue(3net)
+
+			""");
+	}
+
+	/// <summary>
 	/// Checks that a type file with no members still gives a page, and so does a member the index lists but the file
 	/// doesn't have, named as the index does.
 	/// </summary>
