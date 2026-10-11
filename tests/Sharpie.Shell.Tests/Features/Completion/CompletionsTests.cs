@@ -129,6 +129,30 @@ public sealed class CompletionsTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a word that is already a whole program name is finished with a space even when longer names, like
+	/// executable backup copies, also match, and that typing on still reaches those copies.
+	/// </summary>
+	/// <param name="partial">The text typed before Tab.</param>
+	/// <param name="expected">The text Tab should add, or <see langword="null" /> for nothing.</param>
+	[Theory]
+	[InlineData("sampletool", " ")]
+	[InlineData("sampletool.", "bak-")]
+	[InlineData("sampletool.bak-", null)]
+	public void Complete_WithExactMatchAmongLonger_FinishesExactName(string partial, string? expected)
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.pathFolder, "sampletool", executable: true);
+		_ = ShellEnvironment.CreateFile(this.pathFolder, "sampletool.bak-1", executable: true);
+		_ = ShellEnvironment.CreateFile(this.pathFolder, "sampletool.bak-2", executable: true);
+
+		// Act
+		var result = Completions.Complete(partial, Names);
+
+		// Assert
+		_ = result.Should().Be(expected);
+	}
+
+	/// <summary>
 	/// Checks that a builtin and a program sharing its start, like <c>exit</c> and <c>exiv2</c>, leave Tab with
 	/// nothing to add.
 	/// </summary>

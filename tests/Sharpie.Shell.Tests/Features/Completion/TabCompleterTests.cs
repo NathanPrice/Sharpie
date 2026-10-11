@@ -88,6 +88,27 @@ public sealed class TabCompleterTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that Tab on a whole program name that longer names also start with finishes it with a space instead of
+	/// ringing the bell.
+	/// </summary>
+	[Fact]
+	public void Press_OnExactNameWithLongerMatches_AcceptsItWithSpace()
+	{
+		// Arrange
+		var folder = this.environment.CreateFolder();
+
+		_ = ShellEnvironment.CreateFile(folder, "mytool", executable: true);
+		_ = ShellEnvironment.CreateFile(folder, "mytool1", executable: true);
+		ShellEnvironment.SetPath(folder);
+
+		// Act
+		var result = this.sut.Press("mytool");
+
+		// Assert
+		_ = result.Should().Be(new TabCompleter.TabResult("mytool ", null, Bell: false));
+	}
+
+	/// <summary>
 	/// Checks that <see cref="TabCompleter.Reset" /> between two Tabs makes the second one ring the bell again
 	/// instead of listing.
 	/// </summary>
