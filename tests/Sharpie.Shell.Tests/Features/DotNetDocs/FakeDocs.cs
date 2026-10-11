@@ -10,6 +10,9 @@ internal sealed class FakeDocs : HttpMessageHandler
 {
 	private readonly Dictionary<string, byte[]> files = new(StringComparer.Ordinal);
 
+	// Deleted on dispose. Stryker runs these tests thousands of times, and the copies left behind filled /tmp.
+	private readonly List<string> folders = [];
+
 	/// <summary>
 	/// Initializes a new instance of the <see cref="FakeDocs" /> class.
 	/// </summary>
@@ -74,8 +77,22 @@ internal sealed class FakeDocs : HttpMessageHandler
 	/// <returns>
 	/// The source.
 	/// </returns>
-	public DocsSource CreateSource(TimeProvider time) =>
-		new(this.Client, Directory.CreateTempSubdirectory("dman-tests-").FullName, time);
+	public DocsSource CreateSource(TimeProvider time) => new(this.Client, this.CreateFolder(), time);
+
+	/// <summary>
+	/// Creates an empty temporary folder that is deleted with this server.
+	/// </summary>
+	/// <returns>
+	/// The folder's full path.
+	/// </returns>
+	public string CreateFolder()
+	{
+		var folder = Directory.CreateTempSubdirectory("dman-tests-").FullName;
+
+		this.folders.Add(folder);
+
+		return folder;
+	}
 
 	/// <inheritdoc />
 	protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -112,6 +129,7 @@ internal sealed class FakeDocs : HttpMessageHandler
 		if (disposing)
 		{
 			this.Client.Dispose();
+			this.folders.ForEach(folder => Directory.Delete(folder, recursive: true));
 		}
 
 		base.Dispose(disposing);

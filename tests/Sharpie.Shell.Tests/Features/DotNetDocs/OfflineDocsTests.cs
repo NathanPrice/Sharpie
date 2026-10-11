@@ -54,7 +54,7 @@ public sealed class OfflineDocsTests : IDisposable
 	public void Import_ParentSegments_StaysInsideCacheFolder()
 	{
 		// Arrange
-		var folder = Directory.CreateTempSubdirectory("dman-tests-").FullName;
+		var folder = this.server.CreateFolder();
 		var cache = Path.Combine(folder, "cache");
 		var nested = new DocsSource(this.server.Client, cache, this.time);
 
@@ -123,10 +123,13 @@ public sealed class OfflineDocsTests : IDisposable
 		}
 
 		// Act
-		var result = OfflineDocs.RefreshIfDue(this.source, this.time.Now + TimeSpan.FromDays(days));
+		var refresh = OfflineDocs.RefreshIfDue(this.source, this.time.Now + TimeSpan.FromDays(days));
+
+		// Waited for, or the download would recreate the cache folder after Dispose deletes it.
+		refresh?.Wait();
 
 		// Assert
-		_ = result.Should().Be(expected);
+		_ = (refresh is not null).Should().Be(expected);
 	}
 
 	/// <summary>

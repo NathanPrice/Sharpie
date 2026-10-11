@@ -94,22 +94,21 @@ internal static class OfflineDocs
 	/// <param name="source">Where the pages are kept.</param>
 	/// <param name="now">The current time.</param>
 	/// <returns>
-	/// <see langword="true" /> when a refresh was started.
+	/// The refresh running in the background, or <see langword="null" /> when none was due. The shell doesn't wait
+	/// for it.
 	/// </returns>
 	/// <remarks>
 	/// It runs quietly on a background thread of the shell, so the page asked for opens straight away from the
 	/// current copy. The lock in <see cref="Download" /> keeps a second shell from starting another.
 	/// </remarks>
-	public static bool RefreshIfDue(DocsSource source, DateTimeOffset now)
+	public static Task<bool>? RefreshIfDue(DocsSource source, DateTimeOffset now)
 	{
 		if (source.OfflineSince is not { } since || now - since < RefreshAfter)
 		{
-			return false;
+			return null;
 		}
 
-		_ = Task.Run(() => Download(source, TextWriter.Null));
-
-		return true;
+		return Task.Run(() => Download(source, TextWriter.Null));
 	}
 
 	/// <summary>

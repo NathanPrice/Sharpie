@@ -128,7 +128,7 @@ public sealed class DocsSourceTests : IDisposable
 	{
 		// Arrange
 		const string Escaped = "https://docs.test/a/%2E%2E/%2E%2E/%2E%2E/escaped.txt";
-		var folder = Directory.CreateTempSubdirectory("dman-tests-").FullName;
+		var folder = this.server.CreateFolder();
 		var source = new DocsSource(this.server.Client, Path.Combine(folder, "cache"), this.time);
 
 		this.server.Add(new Uri(Escaped).AbsoluteUri, "text");
