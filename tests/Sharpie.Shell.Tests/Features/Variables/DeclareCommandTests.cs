@@ -9,6 +9,11 @@ namespace Sharpie.Shell.Tests.Features.Variables;
 [Collection(GlobalState.Name)]
 public sealed class DeclareCommandTests : IDisposable
 {
+	/// <summary>
+	/// A made-up environment variable name the tests set and remove.
+	/// </summary>
+	private const string SampleVariable = "SHARPIE_SAMPLE_DECLARED";
+
 	private readonly ShellEnvironment environment = new();
 	private readonly DeclareCommand sut = new();
 
@@ -70,7 +75,83 @@ public sealed class DeclareCommandTests : IDisposable
 	}
 
 	/// <summary>
-	/// Restores the console and <c>PATH</c> after each test.
+	/// Checks that <see cref="DeclareCommand.IsAssignment" /> accepts a valid name followed by <c>=</c> and rejects
+	/// everything else.
 	/// </summary>
-	public void Dispose() => this.environment.Dispose();
+	/// <param name="word">The word to check.</param>
+	/// <param name="expected">Whether it is an assignment.</param>
+	[Theory]
+	[InlineData("A=1", true)]
+	[InlineData("_a1=", true)]
+	[InlineData("A=b=c", true)]
+	[InlineData("A", false)]
+	[InlineData("=1", false)]
+	[InlineData("1A=1", false)]
+	[InlineData("a-b=1", false)]
+	public void IsAssignment_WithWord_ReturnsExpected(string word, bool expected)
+	{
+		// Act
+		var result = DeclareCommand.IsAssignment(word);
+
+		// Assert
+		_ = result.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.Set" /> also updates the environment when the name is already exported.
+	/// </summary>
+	[Fact]
+	public void Set_WithExportedName_UpdatesEnvironment()
+	{
+		// Arrange
+		Environment.SetEnvironmentVariable(SampleVariable, "old");
+
+		// Act
+		this.sut.Set(SampleVariable, "new");
+
+		// Assert
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("new");
+		_ = this.sut.Variables.Should().Contain(SampleVariable, "new");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.Set" /> keeps a name that isn't exported out of the environment.
+	/// </summary>
+	[Fact]
+	public void Set_WithNameNotExported_LeavesEnvironmentAlone()
+	{
+		// Act
+		this.sut.Set(SampleVariable, "value");
+
+		// Assert
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().BeNull();
+		_ = this.sut.Variables.Should().Contain(SampleVariable, "value");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.Remove" /> takes the name out of both the shell and the environment.
+	/// </summary>
+	[Fact]
+	public void Remove_WithExportedName_RemovesBoth()
+	{
+		// Arrange
+		Environment.SetEnvironmentVariable(SampleVariable, "value");
+		this.sut.Set(SampleVariable, "value");
+
+		// Act
+		this.sut.Remove(SampleVariable);
+
+		// Assert
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().BeNull();
+		_ = this.sut.Variables.Should().NotContainKey(SampleVariable);
+	}
+
+	/// <summary>
+	/// Restores the console and <c>PATH</c> after each test, and removes the sample variable.
+	/// </summary>
+	public void Dispose()
+	{
+		Environment.SetEnvironmentVariable(SampleVariable, null);
+		this.environment.Dispose();
+	}
 }

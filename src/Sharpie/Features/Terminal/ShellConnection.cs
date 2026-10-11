@@ -43,8 +43,9 @@ internal sealed class ShellConnection : IDisposable
 	/// </summary>
 	/// <param name="onOutput">Called on the UI thread with each chunk the terminal prints.</param>
 	/// <param name="useSavedHistory">
-	/// <see langword="false" /> to keep the shell away from the saved history file and its key and from the user's own
-	/// shell settings, so tests never read or write the user's history or depend on their aliases.
+	/// <see langword="false" /> to keep the shell away from the saved history file and its key, from the user's own
+	/// shell settings and from <c>~/.sharpierc</c>, so tests never read or write the user's history or depend on their
+	/// aliases.
 	/// </param>
 	/// <param name="columns">The terminal's width in columns.</param>
 	/// <param name="rows">The terminal's height in rows.</param>
@@ -77,7 +78,7 @@ internal sealed class ShellConnection : IDisposable
 		{
 			Name = "Sharpie",
 			App = Path.Combine(AppContext.BaseDirectory, fileName),
-			CommandLine = [],
+			CommandLine = useSavedHistory ? [] : [Shell.Program.NoRcOption],
 			Cwd = Directory.Exists(workingDirectory) ? workingDirectory : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
 			Cols = columns,
 			Rows = rows,

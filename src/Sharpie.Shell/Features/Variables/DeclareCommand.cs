@@ -62,7 +62,7 @@ internal partial class DeclareCommand : ICommand
 			// Split on the first '=' only, so a value can itself contain '='
 			var parts = arg.Split('=', 2);
 
-			if (!IdentifierRegex().IsMatch(parts[0]))
+			if (!IsIdentifier(parts[0]))
 			{
 				Console.Error.WriteLine($"{this.Name}: `{arg}': not a valid identifier");
 				continue;
@@ -70,9 +70,58 @@ internal partial class DeclareCommand : ICommand
 
 			if (parts.Length == 2)
 			{
-				this.variables[parts[0]] = parts[1];
+				this.Set(parts[0], parts[1]);
 			}
 		}
+	}
+
+	/// <summary>
+	/// Checks whether <paramref name="name" /> is a valid shell variable name.
+	/// </summary>
+	/// <param name="name">The name to check.</param>
+	/// <returns>
+	/// <see langword="true" /> when it is a letter or underscore followed by any letters, digits or underscores.
+	/// </returns>
+	public static bool IsIdentifier(string name) => IdentifierRegex().IsMatch(name.ArgumentNotNull());
+
+	/// <summary>
+	/// Checks whether <paramref name="word" /> is a POSIX assignment such as <c>NAME=VALUE</c>.
+	/// </summary>
+	/// <param name="word">One word of a command line.</param>
+	/// <returns>
+	/// <see langword="true" /> when the text before the first <c>=</c> is a valid name.
+	/// </returns>
+	public static bool IsAssignment(string word) => word.ArgumentNotNull().Split('=', 2) is [var name, _] && IsIdentifier(name);
+
+	/// <summary>
+	/// Stores or overwrites the variable <paramref name="name" />.
+	/// </summary>
+	/// <param name="name">A valid variable name.</param>
+	/// <param name="value">The value.</param>
+	/// <remarks>
+	/// A name that is already in the environment gets the new value there too, so <c>PATH=...</c> reaches the programs
+	/// the shell starts, as it does in a POSIX shell where an exported variable stays exported.
+	/// </remarks>
+	public void Set(string name, string value)
+	{
+		_ = value.ArgumentNotNull();
+
+		this.variables[name.ArgumentNotNull()] = value;
+
+		if (Environment.GetEnvironmentVariable(name) is not null)
+		{
+			Environment.SetEnvironmentVariable(name, value);
+		}
+	}
+
+	/// <summary>
+	/// Removes the variable <paramref name="name" /> from the shell and from the environment.
+	/// </summary>
+	/// <param name="name">The variable name. A name that isn't set is ignored.</param>
+	public void Remove(string name)
+	{
+		_ = this.variables.Remove(name.ArgumentNotNull());
+		Environment.SetEnvironmentVariable(name, null);
 	}
 
 	/// <summary>

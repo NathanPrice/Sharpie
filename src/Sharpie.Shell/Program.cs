@@ -55,6 +55,20 @@ internal static class Program
 	internal const string ManPageOsc = "5150;man;";
 
 	/// <summary>
+	/// The argument that keeps an interactive shell from running <see cref="RcFileName" />, like bash's
+	/// <c>--norc</c>.
+	/// </summary>
+	/// <remarks>
+	/// The window's own tests pass it, so a command in the user's startup file can't change what their commands print.
+	/// </remarks>
+	internal const string NoRcOption = "--norc";
+
+	/// <summary>
+	/// The startup file in the user's home folder that an interactive shell runs before its first prompt.
+	/// </summary>
+	internal const string RcFileName = ".sharpierc";
+
+	/// <summary>
 	/// Creates one instance of every builtin command.
 	/// </summary>
 	/// <param name="commands">
@@ -66,6 +80,7 @@ internal static class Program
 	internal static ICommand[] CreateBuiltins(Dictionary<string, ICommand> commands)
 	{
 		var alias = new AliasCommand();
+		var declare = new DeclareCommand();
 
 		return
 		[
@@ -80,7 +95,11 @@ internal static class Program
 			new FgCommand(),
 			new BgCommand(),
 			new HistoryCommand(),
-			new DeclareCommand(),
+			declare,
+			new ExportCommand(declare),
+			new UnsetCommand(declare),
+			new SourceCommand(".", line => RunLine(commands, alias, declare.Variables, line)),
+			new SourceCommand("source", line => RunLine(commands, alias, declare.Variables, line)),
 			new DmanCommand(),
 
 			// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
@@ -98,7 +117,8 @@ internal static class Program
 	/// is how its own process tests drive it.
 	/// </remarks>
 	/// <param name="args">
-	/// Empty, or <see cref="ShellImport.PrintEnvironmentOption" /> alone to print the environment and exit.
+	/// Empty, <see cref="NoRcOption" /> to skip the startup file, or <see cref="ShellImport.PrintEnvironmentOption" />
+	/// alone to print the environment and exit.
 	/// </param>
 	private static void Main(string[] args)
 	{
@@ -143,8 +163,17 @@ internal static class Program
 			ShellImport.Run(Environment.GetEnvironmentVariable("SHELL"), Environment.ProcessPath!, aliases, commands.Keys);
 		}
 
+		// After the import so the user's own settings win, and before the history starts so a HISTFILE set there is used.
+		if (interactive && !args.Contains(NoRcOption))
+		{
+			RunRcFile(commands["."]);
+		}
+
 		var historyCommand = (HistoryCommand)commands["history"];
-		var history = HistorySession.Start(historyCommand, useEncryptedFile: inWindow && Environment.GetEnvironmentVariable(HistoryVariable) != "0", Environment.GetEnvironmentVariable("HISTFILE"));
+
+		// A shell variable, so HISTFILE=... in the startup file works without export, as in bash. Empty means none.
+		var histFile = CommandLine.Lookup(variables, "HISTFILE") is { Length: > 0 } name ? name : null;
+		var history = HistorySession.Start(historyCommand, useEncryptedFile: inWindow && Environment.GetEnvironmentVariable(HistoryVariable) != "0", histFile);
 
 		// Runs for both the exit builtin, which calls Environment.Exit, and Main returning when input closes.
 		AppDomain.CurrentDomain.ProcessExit += (_, _) => history.WriteHistFile();
@@ -230,6 +259,24 @@ internal static class Program
 			{
 				Console.TreatControlCAsInput = false;
 			}
+		}
+	}
+
+	/// <summary>
+	/// Runs <see cref="RcFileName" /> from the user's home folder when it exists.
+	/// </summary>
+	/// <param name="source">The <c>.</c> builtin, which runs the file's lines.</param>
+	/// <remarks>
+	/// The home folder is <c>$HOME</c> on Linux and macOS and <c>%USERPROFILE%</c> on Windows. Only an interactive shell
+	/// calls this, as bash only reads <c>~/.bashrc</c> then.
+	/// </remarks>
+	private static void RunRcFile(ICommand source)
+	{
+		var rcFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), RcFileName);
+
+		if (File.Exists(rcFile))
+		{
+			source.Run([rcFile]);
 		}
 	}
 
@@ -335,6 +382,14 @@ internal static class Program
 
 		if (words.Length == 0)
 		{
+			return;
+		}
+
+		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
+		if (Array.TrueForAll(words, DeclareCommand.IsAssignment))
+		{
+			commands["declare"].Run(words);
+
 			return;
 		}
 

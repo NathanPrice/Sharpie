@@ -86,6 +86,7 @@ public sealed class CommandLineTests
 	[InlineData("echo ${A", new[] { "echo", "${A" })]
 	[InlineData("echo a$", new[] { "echo", "a$" })]
 	[InlineData("echo a$1", new[] { "echo", "a$1" })]
+	[InlineData("echo _$1", new[] { "echo", "_$1" })]
 	[InlineData("echo {$A}", new[] { "echo", "{one}" })]
 	[InlineData("echo }${A}", new[] { "echo", "}one" })]
 	[InlineData("echo $Ab", new[] { "echo" })]
@@ -99,6 +100,79 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = words.Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that an unquoted <c>#</c> at the start of a word drops the rest of the line, and that a <c>#</c> inside a
+	/// word, in quotes or after a backslash is kept.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="expected">The words the line should produce.</param>
+	[Theory]
+	[InlineData("# a whole comment", new string[0])]
+	[InlineData("   #indented comment", new string[0])]
+	[InlineData("echo hi # trailing words", new[] { "echo", "hi" })]
+	[InlineData("echo hi\t#tab before", new[] { "echo", "hi" })]
+	[InlineData("echo a#b", new[] { "echo", "a#b" })]
+	[InlineData("echo '#' \"#\"", new[] { "echo", "#", "#" })]
+	[InlineData(@"echo \#x", new[] { "echo", "#x" })]
+	[InlineData("echo ''# x", new[] { "echo", "#", "x" })]
+	public void Split_WithHash_DropsComment(string line, string[] expected)
+	{
+		// Act
+		var words = CommandLine.Split(line);
+
+		// Assert
+		_ = words.Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>$NAME</c> falls back to the environment when no shell variable has the name, with either form.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	[Theory]
+	[InlineData("echo $SHARPIE_SAMPLE_VALUE")]
+	[InlineData("echo ${SHARPIE_SAMPLE_VALUE}")]
+	public void Split_WithEnvironmentVariable_ExpandsIt(string line)
+	{
+		// Arrange
+		Environment.SetEnvironmentVariable("SHARPIE_SAMPLE_VALUE", "from-env");
+
+		try
+		{
+			// Act
+			var words = CommandLine.Split(line, new Dictionary<string, string>());
+
+			// Assert
+			_ = words.Should().Equal("echo", "from-env");
+		}
+		finally
+		{
+			Environment.SetEnvironmentVariable("SHARPIE_SAMPLE_VALUE", null);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a shell variable wins over an environment variable with the same name.
+	/// </summary>
+	[Fact]
+	public void Split_WithShellAndEnvironmentVariable_PrefersShellVariable()
+	{
+		// Arrange
+		Environment.SetEnvironmentVariable("SHARPIE_SAMPLE_SHADOWED", "from-env");
+
+		try
+		{
+			// Act
+			var words = CommandLine.Split("echo $SHARPIE_SAMPLE_SHADOWED", new Dictionary<string, string> { ["SHARPIE_SAMPLE_SHADOWED"] = "from-shell" });
+
+			// Assert
+			_ = words.Should().Equal("echo", "from-shell");
+		}
+		finally
+		{
+			Environment.SetEnvironmentVariable("SHARPIE_SAMPLE_SHADOWED", null);
+		}
 	}
 
 	/// <summary>

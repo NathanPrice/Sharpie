@@ -29,7 +29,11 @@ internal static class CommandLine
 	/// closed takes the rest of the line literally, and a backslash at the very end is kept as is. A real shell
 	/// would ask for another line in both cases.
 	/// <para>
-	/// Outside single quotes, <c>$NAME</c> is replaced by the variable's value, and an unset name gives nothing. An
+	/// An unquoted <c>#</c> at the start of a word begins a comment, which runs to the end of the line.
+	/// </para>
+	/// <para>
+	/// Outside single quotes, <c>$NAME</c> is replaced by the shell variable's value, or the environment variable's when
+	/// no shell variable has that name, and a name set in neither gives nothing. An
 	/// unquoted <c>$NAME</c> that comes out empty adds no argument, like bash. A <c>$</c> not followed by a letter or
 	/// underscore stays as typed. <c>${NAME}</c> marks where the name ends, so <c>${A}b</c> expands <c>A</c> and keeps
 	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. Values aren't split on spaces.
@@ -79,6 +83,11 @@ internal static class CommandLine
 						_ = word.Append(value);
 						hasWord |= value.Length > 0;
 						index = end;
+
+						break;
+					// POSIX starts a comment only at the start of a word, so the # in a#b and \#x is kept.
+					case null when character == '#' && !hasWord:
+						index = line.Length;
 
 						break;
 					case null when character is '\'' or '"':
@@ -133,7 +142,9 @@ internal static class CommandLine
 	/// </summary>
 	/// <param name="line">The command line being split.</param>
 	/// <param name="index">The position of the <c>$</c>.</param>
-	/// <param name="variables">The shell variables. An unset name expands to an empty string.</param>
+	/// <param name="variables">
+	/// The shell variables. A name in neither them nor the environment expands to an empty string.
+	/// </param>
 	/// <param name="value">The variable's value, or an empty string when no name follows.</param>
 	/// <param name="end">The position of the last character the expansion used.</param>
 	/// <returns>
@@ -143,7 +154,7 @@ internal static class CommandLine
 	{
 		if (index + 1 < line.Length && line[index + 1] == '{' && line.IndexOf('}', index + 2) is var close and > 0)
 		{
-			value = variables.GetValueOrDefault(line[(index + 2)..close], string.Empty);
+			value = Lookup(variables, line[(index + 2)..close]);
 			end = close;
 
 			return true;
@@ -158,7 +169,7 @@ internal static class CommandLine
 				end++;
 			}
 
-			value = variables.GetValueOrDefault(line[(index + 1)..(end + 1)], string.Empty);
+			value = Lookup(variables, line[(index + 1)..(end + 1)]);
 
 			return true;
 		}
@@ -168,6 +179,21 @@ internal static class CommandLine
 
 		return false;
 	}
+
+	/// <summary>
+	/// Gets the value of the variable <paramref name="name" />.
+	/// </summary>
+	/// <param name="variables">The shell variables, which win over the environment.</param>
+	/// <param name="name">The variable name.</param>
+	/// <returns>
+	/// The shell variable, else the environment variable, else an empty string.
+	/// </returns>
+	/// <remarks>
+	/// POSIX makes every environment variable a shell variable when the shell starts, so <c>$PATH</c> and <c>$HOME</c>
+	/// expand without being declared first.
+	/// </remarks>
+	internal static string Lookup(IReadOnlyDictionary<string, string> variables, string name) =>
+		variables.TryGetValue(name, out var value) ? value : Environment.GetEnvironmentVariable(name) ?? string.Empty;
 
 	/// <summary>
 	/// Takes the redirections out of <paramref name="words" />: <c>&gt;</c> or <c>1&gt;</c> to write standard output,
