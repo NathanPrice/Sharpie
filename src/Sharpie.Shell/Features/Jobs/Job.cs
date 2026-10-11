@@ -43,6 +43,10 @@ internal sealed class Job(int number, int processId, string command, Process? pr
 	// The ids of the programs still running, for jobs started with posix_spawn. Empty for the others.
 	private readonly List<int> members = [];
 
+	// The pipeline's last program, whose exit code is the job's, as in bash. Kept apart from members, which it leaves
+	// when it exits, possibly before the others.
+	private int lastStage;
+
 	/// <summary>
 	/// Gets or sets the job number.
 	/// </summary>
@@ -142,7 +146,11 @@ internal sealed class Job(int number, int processId, string command, Process? pr
 	/// Adds a program started with <c>posix_spawn</c> to the job.
 	/// </summary>
 	/// <param name="pid">The program's process id.</param>
-	internal void Add(int pid) => this.members.Add(pid);
+	internal void Add(int pid)
+	{
+		this.members.Add(pid);
+		this.lastStage = pid;
+	}
 
 	/// <summary>
 	/// Records a status <c>waitpid</c> returned for one of the job's programs.
@@ -171,11 +179,9 @@ internal sealed class Job(int number, int processId, string command, Process? pr
 			return;
 		}
 
-		var last = this.members.Count > 0 && this.members[^1] == pid;
-
 		_ = this.members.Remove(pid);
 
-		if (last)
+		if (pid == this.lastStage)
 		{
 			this.ExitCode = low == 0 ? high : 128 + low;
 		}
