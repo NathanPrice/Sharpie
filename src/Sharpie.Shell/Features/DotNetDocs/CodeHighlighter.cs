@@ -147,7 +147,7 @@ internal static class CodeHighlighter
 	{
 		var kind = (CS.SyntaxKind)token.RawKind;
 
-		if (CS.SyntaxFacts.IsKeywordKind(kind) || token.Parent is CSSyntax.IdentifierNameSyntax { IsVar: true } || kind == CS.SyntaxKind.HashToken)
+		if (CS.SyntaxFacts.IsKeywordKind(kind) || CS.SyntaxFacts.IsPreprocessorKeyword(kind) || token.Parent is CSSyntax.IdentifierNameSyntax { IsVar: true } || kind == CS.SyntaxKind.HashToken)
 		{
 			return SpanStyle.Keyword;
 		}

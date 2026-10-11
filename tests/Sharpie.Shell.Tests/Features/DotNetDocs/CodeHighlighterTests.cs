@@ -139,6 +139,21 @@ public sealed class CodeHighlighterTests
 	}
 
 	/// <summary>
+	/// Checks that preprocessor lines color their keywords, and a comment on one is colored as a comment.
+	/// </summary>
+	[Fact]
+	public void Highlight_CSharpDirectives_ColorsKeywordsAndComments()
+	{
+		// Act
+		var result = CodeHighlighter.Highlight(["#if DEBUG // note", "#endif", "#region Setup"], DocLanguage.CSharp);
+
+		// Assert
+		_ = result[0].Should().StartWith([new Span("#if", SpanStyle.Keyword)]).And.EndWith(new Span("// note", SpanStyle.Comment));
+		_ = result[1].Should().Equal(new Span("#endif", SpanStyle.Keyword));
+		_ = result[2].Should().Equal(new Span("#region", SpanStyle.Keyword), new Span(" Setup", SpanStyle.Plain));
+	}
+
+	/// <summary>
 	/// Checks that a name the compiler binds only as a near miss, like a variable called as a method, still gets its
 	/// own color, and that an unknown method called on something is colored as a method.
 	/// </summary>
