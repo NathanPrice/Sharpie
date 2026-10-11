@@ -82,7 +82,6 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 
 		if (this.tabbedOnce && (candidates ?? Completions.FindMatches(line, this.names)) is { Count: > 1 } matches)
 		{
-			this.tabbedOnce = false;
 			this.cycle = matches;
 
 			// The matches are single words, so cycling swaps only the last word and keeps what was typed before it.

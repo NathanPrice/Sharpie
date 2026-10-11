@@ -27,15 +27,21 @@ internal static class ManPageReader
 	/// makes groff mark them with overstrike instead of color codes. macOS's mandoc keeps overstrike on a pipe by
 	/// itself and ignores both. Both read <c>MANWIDTH</c>.
 	/// </remarks>
-	public static string? Read(string[] arguments, int columns, string? directory)
+	public static string? Read(string[] arguments, int columns, string? directory) =>
+		PathFinder.FindExecutable("man") is { } fullPath ? Read(fullPath, arguments, columns, directory) : null;
+
+	/// <summary>
+	/// Runs a <c>man</c> program with formatting kept and waits for the whole page.
+	/// </summary>
+	/// <param name="fullPath">The <c>man</c> program to run.</param>
+	/// <param name="arguments">The arguments for <c>man</c>.</param>
+	/// <param name="columns">The width to format the page to.</param>
+	/// <param name="directory">The folder to run in, or <see langword="null" /> to use the window's own.</param>
+	/// <returns>
+	/// The page with its overstrike, or <see langword="null" /> when the program failed or printed nothing.
+	/// </returns>
+	internal static string? Read(string fullPath, string[] arguments, int columns, string? directory)
 	{
-		var fullPath = PathFinder.FindExecutable("man");
-
-		if (fullPath is null)
-		{
-			return null;
-		}
-
 		var startInfo = new ProcessStartInfo(fullPath)
 		{
 			RedirectStandardOutput = true,

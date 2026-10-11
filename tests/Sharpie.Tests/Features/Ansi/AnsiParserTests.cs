@@ -54,6 +54,12 @@ public sealed class AnsiParserTests
 	[InlineData("38;5;196", null, 0xFF0000u)]
 	[InlineData("38;5;244", null, 0x808080u)]
 	[InlineData("38;2;1;2;3", null, 0x010203u)]
+	[InlineData("30", 0, 0u)]
+	[InlineData("37", 7, 0u)]
+	[InlineData("38;5;16", null, 0u)]
+	[InlineData("38;5;28", null, 0x008700u)]
+	[InlineData("38;5;232", null, 0x080808u)]
+	[InlineData("38;5;255", null, 0xEEEEEEu)]
 	public void Parse_ForegroundCode_SetsForeground(string code, int? index, uint rgb)
 	{
 		// Act
@@ -72,6 +78,10 @@ public sealed class AnsiParserTests
 	[InlineData("44", 4)]
 	[InlineData("101", 9)]
 	[InlineData("48;5;3", 3)]
+	[InlineData("40", 0)]
+	[InlineData("47", 7)]
+	[InlineData("100", 8)]
+	[InlineData("107", 15)]
 	public void Parse_BackgroundCode_SetsBackground(string code, int index)
 	{
 		// Act
@@ -244,5 +254,113 @@ public sealed class AnsiParserTests
 		// Assert
 		_ = this.plain.ToString().Should().Be("a link b");
 		_ = links.Should().Equal(new AnsiLink(2, 4, "https://x.test"));
+	}
+
+	/// <summary>
+	/// Checks the codes that turn one attribute on or off, leaving the others alone.
+	/// </summary>
+	/// <param name="codes">The SGR codes, separated by <c>;</c>.</param>
+	/// <param name="underline">Whether text is underlined afterwards.</param>
+	/// <param name="inverse">Whether text is inverse afterwards.</param>
+	/// <param name="hidden">Whether text is hidden afterwards.</param>
+	[Theory]
+	[InlineData("8", false, false, true)]
+	[InlineData("4;7;8;24", false, true, true)]
+	[InlineData("4;7;8;27", true, false, true)]
+	[InlineData("4;7;8;28", true, true, false)]
+	public void ApplySgr_AttributeCodes_SetOnlyTheirAttribute(string codes, bool underline, bool inverse, bool hidden)
+	{
+		// Act
+		var style = AnsiParser.ApplySgr(default, [.. codes.Split(';').Select(int.Parse)]);
+
+		// Assert
+		_ = (style.Underline, style.Inverse, style.Hidden).Should().Be((underline, inverse, hidden));
+	}
+
+	/// <summary>
+	/// Checks that an SGR sequence with more parameters than are kept still applies the ones it keeps.
+	/// </summary>
+	[Fact]
+	public void Parse_SgrWithTooManyParameters_KeepsTheFirstOnes()
+	{
+		// Act
+		this.parser.Parse($"\e[{string.Join(';', Enumerable.Repeat("31", 40))}mx", this.plain, this.runs);
+
+		// Assert
+		_ = this.runs.Should().ContainSingle().Which.Style.Foreground.Should().Be(new AnsiColor(1, 0));
+	}
+
+	/// <summary>
+	/// Checks that CSI sequences ending in the first and last final characters, <c>@</c> and <c>~</c>, are taken out.
+	/// </summary>
+	[Fact]
+	public void Parse_CsiEndingAtEitherEdge_IsStripped()
+	{
+		// Act
+		this.parser.Parse("a\e[@b\e[2~c", this.plain, this.runs);
+
+		// Assert
+		_ = this.plain.ToString().Should().Be("abc");
+	}
+
+	/// <summary>
+	/// Checks that a character overstruck by a different one shows the second, plain, and that one overstruck twice is
+	/// still bold.
+	/// </summary>
+	[Fact]
+	public void Parse_OverstrikeByOtherAndThreeTimes_StylesEach()
+	{
+		// Act
+		this.parser.Parse("a\bbX\bX\bX\n", this.plain, this.runs);
+
+		// Assert
+		_ = this.plain.ToString().Should().Be("bX\n");
+		_ = this.runs.Should().ContainSingle().Which.Should().Be(new AnsiRun(1, 1, new AnsiStyle(new AnsiColor(4, 0), null, Bold: true)));
+	}
+
+	/// <summary>
+	/// Checks that a chunk ending right after a color code that followed overstrike holds nothing back.
+	/// </summary>
+	[Fact]
+	public void Parse_OverstrikeThenColorAtEnd_WritesEverything()
+	{
+		// Act
+		this.parser.Parse("a\bab\e[1m", this.plain, this.runs);
+
+		// Assert
+		_ = this.plain.ToString().Should().Be("ab");
+	}
+
+	/// <summary>
+	/// Checks that OSC 8 stays in the text when the caller doesn't ask for links, like any other OSC.
+	/// </summary>
+	[Fact]
+	public void Parse_HyperlinkWithoutLinkList_IsKept()
+	{
+		// Act
+		this.parser.Parse("\e]8;;u\ago\e]8;;\a", this.plain, this.runs);
+
+		// Assert
+		_ = this.plain.ToString().Should().Be("\e]8;;u\ago\e]8;;\a");
+	}
+
+	/// <summary>
+	/// Checks link edge cases: a color code while links are asked for, a link ended by ESC backslash with a BEL after
+	/// it, a link with no text, one with no parameters part, and one split across chunks.
+	/// </summary>
+	[Fact]
+	public void Parse_HyperlinkEdgeCases_ReportsOnlyRealLinks()
+	{
+		// Arrange
+		var links = new List<AnsiLink>();
+
+		// Act
+		this.parser.Parse("\e[1mx\e[m\e]8;;u1\e\\a\e]8;;\e\\\a\e]8;;u2\a\e]8;;\a\e]8;u3\ab\e]8;;\a\e]8;;u4", this.plain, this.runs, links);
+		this.parser.Parse("\ac\e]8;;\a", this.plain, this.runs, links);
+
+		// Assert
+		_ = this.plain.ToString().Should().Be("xa\abc");
+		_ = this.runs.Should().ContainSingle().Which.Style.Bold.Should().BeTrue();
+		_ = links.Should().Equal(new AnsiLink(1, 1, "u1"), new AnsiLink(4, 1, "u4"));
 	}
 }

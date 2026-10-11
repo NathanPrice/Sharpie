@@ -1,0 +1,14 @@
+{
+  "stryker-config": {
+    "project": "Sharpie.Shell.csproj",
+    "reporters": ["html", "json", "progress"],
+    "mutate": [
+      "**/*.cs",
+      "!**/Program.cs",
+      "!**/Common/NativeMethods*.cs",
+      "!**/Common/PosixSpawn.cs",
+      "!**/Common/ExternalProgram.Unix.cs",
+      "!**/Common/ExternalProgram.Windows.cs"
+    ]
+  }
+}

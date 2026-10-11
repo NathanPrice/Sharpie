@@ -112,14 +112,24 @@ internal sealed class DmanCommand : ICommand
 	/// <c>System.String</c> type. A learn.microsoft.com address, which is what links in pages point to, opens the API
 	/// or article it names.
 	/// </remarks>
-	public static string? Render(string[] args, int columns, bool styled = true)
+	public static string? Render(string[] args, int columns, bool styled = true) => Render(args, columns, styled, DocsSource.Shared);
+
+	/// <summary>
+	/// Builds the page for the arguments from the docs in <paramref name="source" />.
+	/// </summary>
+	/// <param name="args">The words after <c>dman</c>.</param>
+	/// <param name="columns">The number of columns to fill.</param>
+	/// <param name="styled"><see langword="true" /> for bold and underline; <see langword="false" /> for plain text.</param>
+	/// <param name="source">Where the docs are downloaded from.</param>
+	/// <returns>
+	/// The page, or <see langword="null" /> when the arguments are wrong or nothing matches.
+	/// </returns>
+	internal static string? Render(string[] args, int columns, bool styled, DocsSource source)
 	{
 		if (Parse(args) is not var (name, language))
 		{
 			return null;
 		}
-
-		var source = DocsSource.Shared;
 
 		if (Links.TryParse(name, out var api, out var article))
 		{
@@ -138,7 +148,7 @@ internal sealed class DmanCommand : ICommand
 	/// <returns>
 	/// The name and language, or <see langword="null" /> unless there's exactly one name.
 	/// </returns>
-	private static (string Name, DocLanguage Language)? Parse(string[] args)
+	internal static (string Name, DocLanguage Language)? Parse(string[] args)
 	{
 		var language = DocLanguage.CSharp;
 		var names = new List<string>();

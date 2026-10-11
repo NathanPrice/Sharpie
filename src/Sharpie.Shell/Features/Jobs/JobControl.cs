@@ -29,7 +29,7 @@ internal static unsafe class JobControl
 	/// <value>
 	/// <see langword="true" /> after <see cref="Initialize" /> in an interactive shell on Linux or macOS.
 	/// </value>
-	public static bool Enabled { get; private set; }
+	public static bool Enabled { get; internal set; }
 
 	/// <summary>
 	/// Waits until the shell is in the foreground, puts it in its own process group, takes the terminal, and ignores

@@ -18,6 +18,7 @@ public sealed class LinksTests
 	[InlineData("System.String.Split(System.Char[])", "https://learn.microsoft.com/dotnet/api/system.string.split")]
 	[InlineData("System.Collections.Generic.List`1.Add*", "https://learn.microsoft.com/dotnet/api/system.collections.generic.list-1.add")]
 	[InlineData("System.Console.WriteLine%2A?displayProperty=nameWithType", "https://learn.microsoft.com/dotnet/api/system.console.writeline")]
+	[InlineData("System.String.#ctor(System.Char[])", "https://learn.microsoft.com/dotnet/api/system.string.-ctor")]
 	public void ApiUrl_DocId_ReturnsLearnAddress(string id, string expected)
 	{
 		// Act
@@ -36,6 +37,7 @@ public sealed class LinksTests
 	[InlineData("xref:System.String", "https://learn.microsoft.com/dotnet/api/system.string")]
 	[InlineData("/dotnet/standard/io/", "https://learn.microsoft.com/dotnet/standard/io/")]
 	[InlineData("https://github.com/dotnet", "https://github.com/dotnet")]
+	[InlineData("http://example.com/a", "http://example.com/a")]
 	[InlineData("if-else.md#else", "https://learn.microsoft.com/dotnet/csharp/language-reference/statements/if-else#else")]
 	[InlineData("../../samples/x.cs", "https://raw.githubusercontent.com/dotnet/docs/main/docs/csharp/samples/x.cs")]
 	public void Resolve_Link_ReturnsAddress(string href, string? expected)
@@ -101,6 +103,8 @@ public sealed class LinksTests
 	[InlineData("https://github.com/dotnet/docs")]
 	[InlineData("https://learn.microsoft.com/azure/storage")]
 	[InlineData("String.Split")]
+	[InlineData("https://learn.microsoft.com/dotnet/")]
+	[InlineData("https://learn.microsoft.com/dotnet/api/-1")]
 	public void TryParse_OtherText_ReturnsFalse(string address)
 	{
 		// Act

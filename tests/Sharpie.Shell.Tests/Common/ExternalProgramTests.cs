@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Jobs;
 
 namespace Sharpie.Shell.Tests.Common;
 
@@ -167,6 +168,44 @@ public sealed partial class ExternalProgramTests : IDisposable
 
 		// Assert
 		_ = stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
+	}
+
+	/// <summary>
+	/// Checks that a pipeline with programs that aren't on <c>PATH</c> names each of them and runs none of the others.
+	/// </summary>
+	[Fact]
+	public void RunPipeline_WithMissingPrograms_ReportsEachAndRunsNothing()
+	{
+		// Arrange
+		var marker = Path.Combine(this.folder, "ran");
+		_ = ShellEnvironment.CreateFile(this.folder, "toucher", executable: true, $"#!/bin/sh\n/usr/bin/touch {marker}\n");
+
+		// Act
+		ExternalProgram.RunPipeline([["nope1"], ["toucher"], ["nope2"]]);
+
+		// Assert
+		_ = this.environment.Output.Should().Be($"nope1: command not found{Environment.NewLine}nope2: command not found{Environment.NewLine}");
+		_ = File.Exists(marker).Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that a new job is numbered one past the newest job still listed, like bash, even after older ones ended.
+	/// </summary>
+	[Fact]
+	public void AddJob_AfterOlderJobEnded_NumbersPastNewest()
+	{
+		// Arrange
+		ExternalProgram.Jobs.Clear();
+		ExternalProgram.AddJob(new Job(0, 101, "a"));
+		ExternalProgram.AddJob(new Job(0, 102, "b"));
+		ExternalProgram.Jobs.RemoveAt(0);
+
+		// Act
+		ExternalProgram.AddJob(new Job(0, 103, "c"));
+
+		// Assert
+		_ = ExternalProgram.Jobs.Select(job => job.Number).Should().Equal(2, 3);
+		ExternalProgram.Jobs.Clear();
 	}
 
 	/// <summary>

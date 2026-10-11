@@ -144,7 +144,10 @@ internal static class Program
 		}
 
 		var historyCommand = (HistoryCommand)commands["history"];
-		var history = HistorySession.Start(historyCommand, useEncryptedFile: inWindow && Environment.GetEnvironmentVariable(HistoryVariable) != "0");
+		var history = HistorySession.Start(historyCommand, useEncryptedFile: inWindow && Environment.GetEnvironmentVariable(HistoryVariable) != "0", Environment.GetEnvironmentVariable("HISTFILE"));
+
+		// Runs for both the exit builtin, which calls Environment.Exit, and Main returning when input closes.
+		AppDomain.CurrentDomain.ProcessExit += (_, _) => history.WriteHistFile();
 		var editor = interactive ? CreateEditor(commands, aliases, historyCommand) : null;
 
 		if (interactive && OperatingSystem.IsWindows())

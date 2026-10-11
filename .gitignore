@@ -451,3 +451,6 @@ coverage*.info
 .directory
 .Trash-*
 .nfs*
+
+# Stryker.NET mutation test reports
+StrykerOutput/

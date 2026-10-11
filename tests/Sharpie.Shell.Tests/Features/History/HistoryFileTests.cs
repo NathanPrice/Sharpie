@@ -180,6 +180,7 @@ public sealed class HistoryFileTests : IDisposable
 
 		// Assert
 		_ = prepared.Should().BeFalse();
+		_ = this.environment.Error.Should().Contain($"history: {link} is a symbolic link, so history won't be saved");
 	}
 
 	/// <summary>
@@ -197,6 +198,120 @@ public sealed class HistoryFileTests : IDisposable
 
 		// Assert
 		_ = prepared.Should().BeFalse();
+		_ = this.environment.Error.Should().Contain($"history: {folder} is writable by other users, so history won't be saved");
+	}
+
+	/// <summary>
+	/// Checks that a folder that can't be created, because a file is in the way, is reported and refused.
+	/// </summary>
+	[Fact]
+	public void PrepareFolder_UnderAFile_ReportsAndReturnsFalse()
+	{
+		// Arrange
+		var file = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "file", executable: false);
+
+		// Act
+		var prepared = HistoryFile.PrepareFolder(Path.Combine(file, "history"));
+
+		// Assert
+		_ = prepared.Should().BeFalse();
+		_ = this.environment.Error.Should().Contain("history: ");
+	}
+
+	/// <summary>
+	/// Checks that a file saved with another key is reported and left alone.
+	/// </summary>
+	[Fact]
+	public void Load_WithWrongKey_ReportsFileLeftAlone()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, RandomNumberGenerator.GetBytes(32), ["echo hi"]);
+
+		// Act
+		_ = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = this.environment.Error.Should().Contain($"history: {this.path} was changed or saved with another key, so it was left alone");
+	}
+
+	/// <summary>
+	/// Checks that a file this account can't read is reported and gives no lines, so it isn't overwritten.
+	/// </summary>
+	[Fact]
+	public void Load_UnreadableFile_ReportsAndReturnsNull()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["echo hi"]);
+		File.SetUnixFileMode(this.path, UnixFileMode.None);
+
+		// Act
+		var lines = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = lines.Should().BeNull();
+		_ = this.environment.Error.Should().Contain("history: ");
+	}
+
+	/// <summary>
+	/// Checks that saving again replaces the file.
+	/// </summary>
+	[Fact]
+	public void Save_Twice_ReplacesFile()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["old"]);
+
+		// Act
+		var saved = HistoryFile.Save(this.path, this.key, ["new"]);
+
+		// Assert
+		_ = saved.Should().BeTrue();
+		_ = HistoryFile.Load(this.path, this.key).Should().Equal("new");
+	}
+
+	/// <summary>
+	/// Checks that a save that can't finish is reported, returns <see langword="false" />, and leaves no temporary
+	/// file behind.
+	/// </summary>
+	[Fact]
+	public void Save_OverAFolder_ReportsAndCleansUp()
+	{
+		// Arrange
+		_ = Directory.CreateDirectory(this.path);
+
+		// Act
+		var saved = HistoryFile.Save(this.path, this.key, ["echo hi"]);
+
+		// Assert
+		_ = saved.Should().BeFalse();
+		_ = this.environment.Error.Should().Contain("history: ");
+		_ = Directory.GetFileSystemEntries(Path.GetDirectoryName(this.path)!).Should().Equal(this.path);
+	}
+
+	/// <summary>
+	/// Checks that an empty history encrypts to the smallest file and reads back.
+	/// </summary>
+	[Fact]
+	public void Decrypt_EmptyPlaintext_RoundTrips()
+	{
+		// Act
+		var plaintext = HistoryFile.Decrypt(this.key, HistoryFile.Encrypt(this.key, []));
+
+		// Assert
+		_ = plaintext.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that data too short to hold the version, nonce and tag is rejected as not a history file.
+	/// </summary>
+	[Fact]
+	public void Decrypt_TooShort_Throws()
+	{
+		// Act
+		var act = () => HistoryFile.Decrypt(this.key, [1, 0, 0]);
+
+		// Assert
+		_ = act.Should().Throw<CryptographicException>();
 	}
 
 	/// <summary>

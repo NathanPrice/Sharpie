@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using FluentAssertions;
 using Sharpie.Shell.Features.Aliases;
 
@@ -21,15 +20,7 @@ public sealed class ShellImportTests : IDisposable
 	private static readonly string[] Builtins = ["echo", "cd"];
 
 	private readonly ShellEnvironment environment = new();
-	[SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The process-wide writer, borrowed only to put it back.")]
-	private readonly TextWriter originalError = Console.Error;
-	private readonly StringWriter error = new();
 	private readonly AliasCommand aliases = new();
-
-	/// <summary>
-	/// Initializes a new instance of the <see cref="ShellImportTests" /> class.
-	/// </summary>
-	public ShellImportTests() => Console.SetError(this.error);
 
 	/// <summary>
 	/// Checks that the variables between the first two markers are read and the ones about the asking shell itself
@@ -39,7 +30,7 @@ public sealed class ShellImportTests : IDisposable
 	public void Parse_WithEnvironment_KeepsUserVariables()
 	{
 		// Arrange
-		var output = $"{Marker}SAMPLE=a=b\0PWD=/x\0SHLVL=2\0_=/bin/env\0EMPTY=\0{Marker}{Marker}";
+		var output = $"{Marker}SAMPLE=a=b\0PWD=/x\0OLDPWD=/y\0SHLVL=2\0_=/bin/env\0EMPTY=\0{Marker}{Marker}";
 
 		// Act
 		var result = ShellImport.Parse(output, Marker);
@@ -171,7 +162,7 @@ public sealed class ShellImportTests : IDisposable
 		_ = this.aliases.Aliases.Should().Contain("sample_alias", "echo it's here");
 		_ = this.aliases.Aliases.Should().NotContainKey("zsh_only");
 		_ = this.environment.Output.Should().BeEmpty();
-		_ = this.error.ToString().Should().BeEmpty();
+		_ = this.environment.Error.Should().BeEmpty();
 	}
 
 	/// <summary>
@@ -190,7 +181,7 @@ public sealed class ShellImportTests : IDisposable
 		// Assert
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().BeNull();
 		_ = this.aliases.Aliases.Should().BeEmpty();
-		_ = this.error.ToString().Should().Be($"sharpie: couldn't read settings from {shell}{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be($"sharpie: couldn't read settings from {shell}{Environment.NewLine}");
 	}
 
 	/// <summary>
@@ -204,7 +195,28 @@ public sealed class ShellImportTests : IDisposable
 
 		// Assert
 		_ = this.aliases.Aliases.Should().BeEmpty();
-		_ = this.error.ToString().Should().BeEmpty();
+		_ = this.environment.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that the import still works when this shell's own path has an apostrophe in it, which the script the
+	/// login shell runs has to quote.
+	/// </summary>
+	[Fact]
+	public void Run_WithApostropheInOwnPath_StillImports()
+	{
+		// Arrange
+		var folder = Directory.CreateDirectory(Path.Combine(this.environment.CreateFolder(), "it's")).FullName;
+		var self = Path.Combine(folder, "Sharpie.Shell");
+		_ = File.CreateSymbolicLink(self, ShellPath);
+		var shell = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "fake-shell", executable: true,
+			$"#!/bin/sh\nexport {SampleVariable}=imported\neval \"$4\"\n");
+
+		// Act
+		ShellImport.Run(shell, self, this.aliases, Builtins);
+
+		// Assert
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("imported");
 	}
 
 	/// <summary>
@@ -213,8 +225,6 @@ public sealed class ShellImportTests : IDisposable
 	public void Dispose()
 	{
 		Environment.SetEnvironmentVariable(SampleVariable, null);
-		Console.SetError(this.originalError);
-		this.error.Dispose();
 		this.environment.Dispose();
 	}
 }

@@ -126,6 +126,78 @@ public sealed class CodeHighlighterTests
 	}
 
 	/// <summary>
+	/// Checks that a snippet of class members, which can't stand alone, is read inside a class so its parameters bind.
+	/// </summary>
+	[Fact]
+	public void Highlight_CSharpClassMembers_ReadsThemInsideClass()
+	{
+		// Act
+		var result = CodeHighlighter.Highlight(["public int Count { get; set; }", "public int Twice(int value) => value * 2;"], DocLanguage.CSharp);
+
+		// Assert
+		_ = result[1].Count(span => span == new Span("value", SpanStyle.Parameter)).Should().Be(2);
+	}
+
+	/// <summary>
+	/// Checks that a name the compiler binds only as a near miss, like a variable called as a method, still gets its
+	/// own color, and that an unknown method called on something is colored as a method.
+	/// </summary>
+	[Fact]
+	public void Highlight_NearMissAndUnknownMember_ColorsByWhatTheyAre()
+	{
+		// Act
+		var result = CodeHighlighter.Highlight(["var x = 1;", "x();", "x.Frob();"], DocLanguage.CSharp);
+
+		// Assert
+		_ = result[1].Should().StartWith([new Span("x", SpanStyle.Variable)]);
+		_ = result[2].Should().Contain(new Span("Frob", SpanStyle.Method));
+	}
+
+	/// <summary>
+	/// Checks that a blank line in code stays an empty line.
+	/// </summary>
+	[Fact]
+	public void Highlight_BlankLine_HasNoSpans()
+	{
+		// Act
+		var result = CodeHighlighter.Highlight(["a();", "", "b();"], DocLanguage.CSharp);
+
+		// Assert
+		_ = result[1].Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks Visual Basic numbers, declared and unknown names, and types after <c>As</c> and <c>New</c> that the
+	/// compiler doesn't know.
+	/// </summary>
+	[Fact]
+	public void Highlight_VisualBasicNamesAndNumbers_ColorsEachKind()
+	{
+		// Act
+		var result = CodeHighlighter.Highlight(["Dim total = 1.5", "Dim w As Widget = New Gadget()", "Frobnicate(total)", "w.Spin()"], DocLanguage.VisualBasic);
+
+		// Assert
+		_ = result[0].Should().Contain(new Span("total", SpanStyle.Variable)).And.Contain(new Span("1.5", SpanStyle.Number));
+		_ = result[1].Should().Contain(new Span("Widget", SpanStyle.Type)).And.Contain(new Span("Gadget", SpanStyle.Type));
+		_ = result[2].Should().Contain(new Span("Frobnicate", SpanStyle.Method));
+		_ = result[3].Should().Contain(new Span("Spin", SpanStyle.Method));
+	}
+
+	/// <summary>
+	/// Checks that Visual Basic class members, which can't stand inside a method, are read inside a class.
+	/// </summary>
+	[Fact]
+	public void Highlight_VisualBasicClassMembers_ReadsThemInsideClass()
+	{
+		// Act
+		var result = CodeHighlighter.Highlight(["Public Function Twice(value As Integer) As Integer", "Return value * 2", "End Function"], DocLanguage.VisualBasic);
+
+		// Assert
+		_ = result[0].Should().Contain(new Span("Twice", SpanStyle.Method)).And.Contain(new Span("value", SpanStyle.Parameter));
+		_ = result[1].Should().Contain(new Span("value", SpanStyle.Parameter));
+	}
+
+	/// <summary>
 	/// Checks that code in another language, or none, stays plain.
 	/// </summary>
 	[Fact]

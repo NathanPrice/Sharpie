@@ -56,10 +56,7 @@ internal class HistoryCommand : ICommand
 	{
 		_ = lines.ArgumentNotNull();
 
-		if (lines.Count > MaxLines)
-		{
-			lines.RemoveRange(0, lines.Count - MaxLines);
-		}
+		lines.RemoveRange(0, Math.Max(0, lines.Count - MaxLines));
 	}
 
 	/// <summary>

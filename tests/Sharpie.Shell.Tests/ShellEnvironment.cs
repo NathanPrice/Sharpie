@@ -7,25 +7,30 @@ using System.Runtime.Versioning;
 namespace Sharpie.Shell.Tests;
 
 /// <summary>
-/// Gives one test its own console output, <c>PATH</c> and <c>HOME</c> values, working directory, and temporary folder,
+/// Gives one test its own console output and error, <c>PATH</c> and <c>HOME</c> values, working directory, and temporary folder,
 /// and puts the originals back when it's disposed.
 /// </summary>
 public sealed class ShellEnvironment : IDisposable
 {
 	[SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The process-wide writer, borrowed only to put it back.")]
 	private readonly TextWriter originalOut = Console.Out;
+	[SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The process-wide writer, borrowed only to put it back.")]
+	private readonly TextWriter originalError = Console.Error;
 	private readonly string? originalPath = Environment.GetEnvironmentVariable("PATH");
 	private readonly string? originalHome = Environment.GetEnvironmentVariable("HOME");
 	private readonly string originalDirectory = Directory.GetCurrentDirectory();
 	private readonly StringWriter output = new();
+	private readonly StringWriter error = new();
 	private readonly string root = Directory.CreateTempSubdirectory("shell-tests-").FullName;
 
 	/// <summary>
-	/// Initializes a new instance of the <see cref="ShellEnvironment" /> class and redirects <see cref="Console.Out" />.
+	/// Initializes a new instance of the <see cref="ShellEnvironment" /> class and redirects <see cref="Console.Out" />
+	/// and <see cref="Console.Error" />.
 	/// </summary>
 	public ShellEnvironment()
 	{
 		Console.SetOut(this.output);
+		Console.SetError(this.error);
 	}
 
 	/// <summary>
@@ -35,6 +40,14 @@ public sealed class ShellEnvironment : IDisposable
 	/// The captured text, with each line ending in <see cref="Environment.NewLine" />.
 	/// </value>
 	public string Output => this.output.ToString();
+
+	/// <summary>
+	/// Gets everything written to the console's error stream since this instance was created.
+	/// </summary>
+	/// <value>
+	/// The captured text, with each line ending in <see cref="Environment.NewLine" />.
+	/// </value>
+	public string Error => this.error.ToString();
 
 	/// <summary>
 	/// Creates a new, empty folder inside this environment's temporary folder.
@@ -93,13 +106,15 @@ public sealed class ShellEnvironment : IDisposable
 	}
 
 	/// <summary>
-	/// Restores the original console output, <c>PATH</c>, <c>HOME</c>, and working directory, then deletes the
+	/// Restores the original console output and error, <c>PATH</c>, <c>HOME</c>, and working directory, then deletes the
 	/// temporary folder.
 	/// </summary>
 	public void Dispose()
 	{
 		Console.SetOut(this.originalOut);
+		Console.SetError(this.originalError);
 		this.output.Dispose();
+		this.error.Dispose();
 		Environment.SetEnvironmentVariable("PATH", this.originalPath);
 		Environment.SetEnvironmentVariable("HOME", this.originalHome);
 

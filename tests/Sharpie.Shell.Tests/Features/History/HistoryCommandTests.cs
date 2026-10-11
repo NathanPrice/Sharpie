@@ -95,6 +95,7 @@ public sealed class HistoryCommandTests : IDisposable
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
+		_ = this.environment.Error.Should().Contain($"history: {count}: numeric argument required{Environment.NewLine}");
 	}
 
 	/// <summary>
@@ -133,7 +134,9 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Run(["-r", path]);
 
 		// Assert
+		_ = this.environment.Output.Should().BeEmpty();
 		_ = this.sut.Lines.Should().Equal($"history -r {path}", "echo hello", "echo world");
+		_ = this.environment.Error.Should().NotContain("history:");
 	}
 
 	/// <summary>
@@ -152,6 +155,153 @@ public sealed class HistoryCommandTests : IDisposable
 		// Assert
 		_ = this.sut.Lines.Should().Equal("echo hi");
 		_ = this.environment.Output.Should().BeEmpty();
+		_ = this.environment.Error.Should().Contain($"history: {path}: No such file or directory{Environment.NewLine}");
+	}
+
+	/// <summary>
+	/// Checks that dropping the oldest line also takes one off the count of lines already written by <c>-a</c>, so
+	/// the next <c>-a</c> still writes exactly the new lines.
+	/// </summary>
+	[Fact]
+	public void Add_PastMaxLines_LowersAppendedCount()
+	{
+		// Arrange
+		for (var i = 0; i < HistoryCommand.MaxLines; i++)
+		{
+			this.sut.Add($"echo {i}");
+		}
+
+		this.sut.AppendedCount = HistoryCommand.MaxLines;
+
+		// Act
+		this.sut.Add("newest");
+
+		// Assert
+		_ = this.sut.AppendedCount.Should().Be(HistoryCommand.MaxLines - 1);
+	}
+
+	/// <summary>
+	/// Checks that <c>-r</c> with an empty path reports it instead of ending the shell.
+	/// </summary>
+	[Fact]
+	public void Run_WithReadFlagAndEmptyPath_PrintsError()
+	{
+		// Act
+		this.sut.Run(["-r", string.Empty]);
+
+		// Assert
+		_ = this.environment.Error.Should().Contain("history: : ");
+		_ = this.sut.Lines.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that <c>-w</c> writes every line, and a later <c>-a</c> adds only the lines run since.
+	/// </summary>
+	[Fact]
+	public void Run_WithWriteThenAppendFlag_WritesAllThenOnlyNewLines()
+	{
+		// Arrange
+		var path = Path.Combine(this.environment.CreateFolder(), "history");
+		this.sut.Add("one");
+		this.sut.Add("two");
+		this.sut.Run(["-w", path]);
+		this.sut.Add("three");
+
+		// Act
+		this.sut.Run(["-a", path]);
+
+		// Assert
+		_ = this.environment.Output.Should().BeEmpty();
+		_ = File.ReadAllLines(path).Should().Equal("one", "two", "three");
+		_ = this.environment.Error.Should().NotContain("history:");
+	}
+
+	/// <summary>
+	/// Checks that <c>-w</c> replaces what the file had.
+	/// </summary>
+	[Fact]
+	public void Run_WithWriteFlag_ReplacesFile()
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "history", executable: false, "old\n");
+		this.sut.Add("new");
+
+		// Act
+		this.sut.Run(["-w", path]);
+
+		// Assert
+		_ = File.ReadAllLines(path).Should().Equal("new");
+	}
+
+	/// <summary>
+	/// Checks that a failed <c>-a</c> reports why and leaves the lines counted as unwritten, so the next <c>-a</c>
+	/// writes them.
+	/// </summary>
+	[Fact]
+	public void Run_WithAppendFlagToMissingFolder_ReportsAndKeepsLinesUnwritten()
+	{
+		// Arrange
+		var folder = this.environment.CreateFolder();
+		var missing = Path.Combine(folder, "missing", "history");
+		var path = Path.Combine(folder, "history");
+		this.sut.Add("one");
+		this.sut.Run(["-a", missing]);
+
+		// Act
+		this.sut.Run(["-a", path]);
+
+		// Assert
+		_ = this.environment.Error.Should().Contain($"history: {missing}: No such file or directory{Environment.NewLine}");
+		_ = File.ReadAllLines(path).Should().Equal("one");
+	}
+
+	/// <summary>
+	/// Checks that <c>-w</c> with an empty path reports it instead of ending the shell.
+	/// </summary>
+	[Fact]
+	public void Run_WithWriteFlagAndEmptyPath_PrintsError()
+	{
+		// Act
+		this.sut.Run(["-w", string.Empty]);
+
+		// Assert
+		_ = this.environment.Error.Should().Contain("history: : ");
+	}
+
+	/// <summary>
+	/// Checks that <c>-a</c> adds to what the file already has instead of replacing it.
+	/// </summary>
+	[Fact]
+	public void Run_WithAppendFlag_KeepsFileContents()
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "history", executable: false, "other\n");
+		this.sut.Add("new");
+
+		// Act
+		this.sut.Run(["-a", path]);
+
+		// Assert
+		_ = File.ReadAllLines(path).Should().Equal("other", "new");
+	}
+
+	/// <summary>
+	/// Checks that <c>-w</c> writes every line, including those an earlier <c>-a</c> already wrote elsewhere.
+	/// </summary>
+	[Fact]
+	public void Run_WithWriteFlagAfterAppend_WritesEveryLine()
+	{
+		// Arrange
+		var folder = this.environment.CreateFolder();
+		this.sut.Add("one");
+		this.sut.Run(["-a", Path.Combine(folder, "first")]);
+		this.sut.Add("two");
+
+		// Act
+		this.sut.Run(["-w", Path.Combine(folder, "second")]);
+
+		// Assert
+		_ = File.ReadAllLines(Path.Combine(folder, "second")).Should().Equal("one", "two");
 	}
 
 	/// <summary>

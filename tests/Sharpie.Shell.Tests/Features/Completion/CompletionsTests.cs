@@ -179,6 +179,7 @@ public sealed class CompletionsTests : IDisposable
 	[InlineData("cat a.txt re", "adme.txt ")]
 	[InlineData("cat no", null)]
 	[InlineData("cat sr", "c/")]
+	[InlineData(" re", "adme.txt ")]
 	public void Complete_WithArgument_CompletesFileName(string partial, string? expected)
 	{
 		// Arrange
@@ -241,6 +242,26 @@ public sealed class CompletionsTests : IDisposable
 
 		// Act
 		var result = Completions.Complete(partial, Names);
+
+		// Assert
+		_ = result.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks the start every word shares, whichever word is shorter.
+	/// </summary>
+	/// <param name="words">The words, separated by <c>|</c>.</param>
+	/// <param name="expected">The shared start.</param>
+	[Theory]
+	[InlineData("abc|ab", "ab")]
+	[InlineData("ab|abc", "ab")]
+	[InlineData("checkout|cherry-pick|chmod", "ch")]
+	[InlineData("ab|cd", "")]
+	[InlineData("only", "only")]
+	public void SharedPrefix_Words_ReturnsCommonStart(string words, string expected)
+	{
+		// Act
+		var result = Completions.SharedPrefix(words.Split('|'));
 
 		// Assert
 		_ = result.Should().Be(expected);

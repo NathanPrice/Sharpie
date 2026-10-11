@@ -1,0 +1,15 @@
+{
+  "stryker-config": {
+    "project": "Sharpie.csproj",
+    "test-runner": "mtp",
+    "reporters": ["html", "json", "progress"],
+    "mutate": [
+      "**/Features/Vt/**/*.cs",
+      "**/Features/Ansi/**/*.cs",
+      "**/Features/ManPages/**/*.cs",
+      "**/Features/Terminal/RowCache.cs",
+      "**/Features/Terminal/Palette.cs",
+      "**/Features/Terminal/StylePainter.cs"
+    ]
+  }
+}

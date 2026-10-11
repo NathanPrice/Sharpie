@@ -190,6 +190,7 @@ public sealed class CdCommandTests : IDisposable
 	/// <param name="argument">A path with a drive letter or a UNC prefix.</param>
 	[Theory]
 	[InlineData(@"C:\x")]
+	[InlineData("C:")]
 	[InlineData(@"\\server\share")]
 	public void Run_WithWindowsPath_PrintsErrorAndStays(string argument)
 	{
@@ -198,6 +199,63 @@ public sealed class CdCommandTests : IDisposable
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"Windows path not valid on this OS: {argument}{Environment.NewLine}");
+		_ = Directory.GetCurrentDirectory().Should().Be(this.start);
+	}
+
+	/// <summary>
+	/// Checks that a two-letter folder name isn't mistaken for a Windows drive.
+	/// </summary>
+	[Fact]
+	public void Run_WithTwoLetterFolder_GoesThere()
+	{
+		// Arrange
+		var folder = Directory.CreateDirectory(Path.Combine(this.start, "ab")).FullName;
+
+		// Act
+		this.sut.Run(["ab"]);
+
+		// Assert
+		_ = Directory.GetCurrentDirectory().Should().Be(folder);
+	}
+
+	/// <summary>
+	/// Checks that a folder this account can't enter is reported and the working directory is left alone.
+	/// </summary>
+	[Fact]
+	public void Run_WithFolderWithoutAccess_PrintsAccessDenied()
+	{
+		// Arrange
+		var folder = Directory.CreateDirectory(Path.Combine(this.start, "locked")).FullName;
+		File.SetUnixFileMode(folder, UnixFileMode.None);
+
+		try
+		{
+			// Act
+			this.sut.Run([folder]);
+
+			// Assert
+			_ = this.environment.Output.Should().Be($"Access denied: {folder}{Environment.NewLine}");
+			_ = Directory.GetCurrentDirectory().Should().Be(this.start);
+		}
+		finally
+		{
+			// The temporary folder can't be deleted while this one can't be listed.
+			File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a path the file system can't hold, like one with a null character, is reported instead of
+	/// ending the shell.
+	/// </summary>
+	[Fact]
+	public void Run_WithNullCharacter_PrintsInvalidPath()
+	{
+		// Act
+		this.sut.Run(["a\0b"]);
+
+		// Assert
+		_ = this.environment.Output.Should().StartWith("Invalid path: ");
 		_ = Directory.GetCurrentDirectory().Should().Be(this.start);
 	}
 

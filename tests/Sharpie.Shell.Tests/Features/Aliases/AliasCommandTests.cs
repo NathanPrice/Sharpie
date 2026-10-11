@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using FluentAssertions;
 using Sharpie.Shell.Features.Aliases;
 
@@ -11,15 +10,7 @@ namespace Sharpie.Shell.Tests.Features.Aliases;
 public sealed class AliasCommandTests : IDisposable
 {
 	private readonly ShellEnvironment environment = new();
-	[SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The process-wide writer, borrowed only to put it back.")]
-	private readonly TextWriter originalError = Console.Error;
-	private readonly StringWriter error = new();
 	private readonly AliasCommand sut = new();
-
-	/// <summary>
-	/// Initializes a new instance of the <see cref="AliasCommandTests" /> class.
-	/// </summary>
-	public AliasCommandTests() => Console.SetError(this.error);
 
 	/// <summary>
 	/// Checks that <c>alias NAME=VALUE</c> stores the alias and <c>alias NAME</c> prints it back.
@@ -69,7 +60,7 @@ public sealed class AliasCommandTests : IDisposable
 		this.sut.Run(["missing"]);
 
 		// Assert
-		_ = this.error.ToString().Should().Be($"alias: missing: not found{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be($"alias: missing: not found{Environment.NewLine}");
 		_ = this.environment.Output.Should().BeEmpty();
 	}
 
@@ -83,7 +74,7 @@ public sealed class AliasCommandTests : IDisposable
 		this.sut.Run(["a/b=ls"]);
 
 		// Assert
-		_ = this.error.ToString().Should().Be($"alias: `a/b': invalid alias name{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be($"alias: `a/b': invalid alias name{Environment.NewLine}");
 		_ = this.sut.Aliases.Should().BeEmpty();
 	}
 
@@ -133,12 +124,23 @@ public sealed class AliasCommandTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that an alias defined as nothing expands to no words, even as the last word.
+	/// </summary>
+	[Fact]
+	public void Expand_EmptyAlias_RemovesWord()
+	{
+		// Arrange
+		this.sut.Define("nothing", string.Empty);
+
+		// Act
+		var words = this.sut.Expand(["nothing"], null);
+
+		// Assert
+		_ = words.Should().BeEmpty();
+	}
+
+	/// <summary>
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
-	public void Dispose()
-	{
-		Console.SetError(this.originalError);
-		this.error.Dispose();
-		this.environment.Dispose();
-	}
+	public void Dispose() => this.environment.Dispose();
 }

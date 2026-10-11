@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentAssertions;
 using Sharpie.Shell.Features.Highlighting;
 
@@ -63,6 +64,10 @@ public sealed class HighlighterTests : IDisposable
 	/// <param name="operator">The redirect operator.</param>
 	[Theory]
 	[InlineData(">")]
+	[InlineData("1>")]
+	[InlineData(">>")]
+	[InlineData("1>>")]
+	[InlineData("2>")]
 	[InlineData("2>>")]
 	public void Highlight_RedirectToExistingFolder_MarksOnlyOperator(string @operator)
 	{
@@ -109,6 +114,41 @@ public sealed class HighlighterTests : IDisposable
 
 		// Assert
 		_ = tokens.Should().NotContain(token => token.Kind == TokenKind.MissingPath);
+	}
+
+	/// <summary>
+	/// Checks every token of lines that test the edges: a redirect target that is a new file, the word after a redirect
+	/// target, paths starting with <c>.</c> or <c>~</c>, <c>~</c> as home, escapes inside and outside quotes, quotes that
+	/// are never closed or hold nothing, and a target no file system allows.
+	/// </summary>
+	/// <param name="line">The typed line.</param>
+	/// <param name="expected">The tokens as <c>start,length,kind</c>, separated by <c>;</c>.</param>
+	[Theory]
+	[InlineData("echo > ./new.txt", "0,4,Command;5,1,Redirect")]
+	[InlineData("echo > out ~nope", "0,4,Command;5,1,Redirect;11,5,MissingPath")]
+	[InlineData("echo .hidden", "0,4,Command;5,7,MissingPath")]
+	[InlineData("echo ~gone", "0,4,Command;5,5,MissingPath")]
+	[InlineData("cd ~", "0,2,Command")]
+	[InlineData("cd ~/", "0,2,Command")]
+	[InlineData("cd ~/gone", "0,2,Command;3,6,MissingPath")]
+	[InlineData("echo \"a\\\"b\"", "0,4,Command;5,6,Quoted")]
+	[InlineData("echo 'a\\'", "0,4,Command;5,4,Quoted")]
+	[InlineData("echo \"abc", "0,4,Command;5,4,Quoted")]
+	[InlineData("echo \"\"", "0,4,Command;5,2,Quoted")]
+	[InlineData("echo a\\ ~x", "0,4,Command")]
+	[InlineData("echo a\\b \"q\"", "0,4,Command;9,3,Quoted")]
+	[InlineData("echo > a\0b", "0,4,Command;5,1,Redirect;7,3,MissingPath")]
+	public void Highlight_EdgeCaseLine_GivesExactTokens(string line, string expected)
+	{
+		// Arrange
+		ShellEnvironment.SetHome(this.environment.CreateFolder());
+
+		// Act
+		var tokens = Highlighter.Highlight(line, Builtins);
+
+		// Assert
+		_ = tokens.Should().Equal(expected.Split(';').Select(token => token.Split(',')).Select(parts =>
+			new Token(int.Parse(parts[0], CultureInfo.InvariantCulture), int.Parse(parts[1], CultureInfo.InvariantCulture), Enum.Parse<TokenKind>(parts[2]))));
 	}
 
 	/// <inheritdoc />

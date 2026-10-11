@@ -32,6 +32,13 @@ internal sealed class HistorySession
 	// in plain text.
 	private readonly List<string> plainLines;
 
+	// The HISTFILE variable, or null when it isn't set.
+	private readonly string? histFile;
+
+	// Without encryption HISTFILE gets the whole list on exit, as in bash. Decided once at the start, because a failed
+	// save later nulls the key and must not switch the exit write to the decrypted lines.
+	private readonly bool encrypted;
+
 	// Null when nothing should be saved: outside the window, no secret store, or a file that couldn't be read and
 	// mustn't be overwritten.
 	private byte[]? key;
@@ -43,27 +50,30 @@ internal sealed class HistorySession
 	/// <param name="path">The encrypted history file.</param>
 	/// <param name="key">The history file's key, or <see langword="null" /> when nothing should be saved.</param>
 	/// <param name="plainLines">The lines read from <c>HISTFILE</c>, or an empty list.</param>
-	private HistorySession(HistoryCommand history, string path, byte[]? key, List<string> plainLines)
+	/// <param name="histFile">The <c>HISTFILE</c> variable, or <see langword="null" /> when it isn't set.</param>
+	private HistorySession(HistoryCommand history, string path, byte[]? key, List<string> plainLines, string? histFile)
 	{
 		this.history = history;
 		this.path = path;
 		this.key = key;
 		this.plainLines = plainLines;
+		this.histFile = histFile;
+		this.encrypted = key is not null;
 	}
 
 	/// <summary>
-	/// Loads the encrypted history and <c>HISTFILE</c> into <paramref name="history" />, and arranges for
-	/// <c>HISTFILE</c> to be written when the shell exits.
+	/// Loads the encrypted history and <c>HISTFILE</c> into <paramref name="history" />.
 	/// </summary>
 	/// <param name="history">The <c>history</c> builtin to fill.</param>
 	/// <param name="useEncryptedFile">
 	/// <see langword="true" /> to load and save the encrypted file. Only the window turns this on, so the shell's
 	/// process tests never touch the keyring.
 	/// </param>
+	/// <param name="histFile">The <c>HISTFILE</c> variable, or <see langword="null" /> when it isn't set.</param>
 	/// <returns>
-	/// The session that <see cref="Record" /> saves new lines through.
+	/// The session that <see cref="Record" /> saves new lines through and <see cref="WriteHistFile" /> writes out.
 	/// </returns>
-	public static HistorySession Start(HistoryCommand history, bool useEncryptedFile)
+	public static HistorySession Start(HistoryCommand history, bool useEncryptedFile, string? histFile)
 	{
 		_ = history.ArgumentNotNull();
 
@@ -86,21 +96,24 @@ internal sealed class HistorySession
 			}
 		}
 
-		var histFile = Environment.GetEnvironmentVariable("HISTFILE");
 		var fileLines = ImportHistFile(history, histFile, encrypted: key is not null);
 
-		// Without encryption HISTFILE gets the whole list on exit, as in bash. Decided once here, because a failed
-		// save later nulls the key and must not switch the exit write to the decrypted lines.
-		var encrypted = key is not null;
-		var session = new HistorySession(history, path, key, [.. fileLines ?? []]);
+		return new HistorySession(history, path, key, [.. fileLines ?? []], histFile);
+	}
 
-		if (!string.IsNullOrEmpty(histFile))
+	/// <summary>
+	/// Writes the history to <c>HISTFILE</c>, replacing what it had, when the variable is set.
+	/// </summary>
+	/// <remarks>
+	/// With encryption on, only <c>HISTFILE</c>'s own lines and this session's are written, never the ones decrypted
+	/// from the encrypted file.
+	/// </remarks>
+	public void WriteHistFile()
+	{
+		if (!string.IsNullOrEmpty(this.histFile))
 		{
-			// Runs for both the exit builtin, which calls Environment.Exit, and Main returning when input closes.
-			AppDomain.CurrentDomain.ProcessExit += (_, _) => HistoryCommand.WriteFile(histFile, encrypted ? session.plainLines : history.Lines, append: false);
+			_ = HistoryCommand.WriteFile(this.histFile, this.encrypted ? this.plainLines : this.history.Lines, append: false);
 		}
-
-		return session;
 	}
 
 	/// <summary>

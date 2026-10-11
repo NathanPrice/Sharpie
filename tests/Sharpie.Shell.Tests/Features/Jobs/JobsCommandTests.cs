@@ -199,7 +199,89 @@ public sealed class JobsCommandTests : IDisposable
 	}
 
 	/// <summary>
-	/// Restores the console after each test.
+	/// Checks that a stopped job is listed as Stopped, without the <c>&amp;</c> a running one gets.
 	/// </summary>
-	public void Dispose() => this.environment.Dispose();
+	[Fact]
+	public void Run_WithStoppedJob_PrintsStopped()
+	{
+		// Arrange
+		ExternalProgram.Jobs.Add(new Job(1, 123, "vim notes") { State = JobState.Stopped });
+
+		// Act
+		this.sut.Run([]);
+
+		// Assert
+		_ = this.environment.Output.Should().Be("[1]+  Stopped                 vim notes\n");
+	}
+
+	/// <summary>
+	/// Checks that <c>fg</c> and <c>bg</c> say so when the shell has no job control, instead of looking for a job.
+	/// </summary>
+	[Fact]
+	public void Find_WithoutJobControl_ReportsIt()
+	{
+		// Arrange
+		ExternalProgram.Jobs.Add(new Job(1, 123, "sleep 10"));
+
+		// Act
+		var job = JobsCommand.Find("fg", []);
+
+		// Assert
+		_ = this.environment.Output.Should().Be("fg: no job control\n");
+		_ = job.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks which job <c>fg</c> and <c>bg</c> pick: the newest with no argument, else the one numbered, with or
+	/// without <c>%</c>, and a message for anything else.
+	/// </summary>
+	/// <param name="args">The arguments, separated by spaces.</param>
+	/// <param name="number">The job number expected, or 0 for none.</param>
+	/// <param name="message">What should be printed.</param>
+	[Theory]
+	[InlineData("", 2, "")]
+	[InlineData("%1", 1, "")]
+	[InlineData("2", 2, "")]
+	[InlineData("3", 0, "fg: 3: no such job\n")]
+	[InlineData("x", 0, "fg: x: no such job\n")]
+	public void Find_WithJobControl_PicksJob(string args, int number, string message)
+	{
+		// Arrange
+		JobControl.Enabled = true;
+		ExternalProgram.Jobs.Add(new Job(1, 101, "sleep 1"));
+		ExternalProgram.Jobs.Add(new Job(2, 102, "sleep 2"));
+
+		// Act
+		var job = JobsCommand.Find("fg", args.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
+		// Assert
+		_ = this.environment.Output.Should().Be(message);
+		_ = (job?.Number ?? 0).Should().Be(number);
+	}
+
+	/// <summary>
+	/// Checks that <c>fg</c> with no argument and no jobs says there's no current job.
+	/// </summary>
+	[Fact]
+	public void Find_WithJobControlAndNoJobs_ReportsNoCurrentJob()
+	{
+		// Arrange
+		JobControl.Enabled = true;
+
+		// Act
+		var job = JobsCommand.Find("fg", []);
+
+		// Assert
+		_ = this.environment.Output.Should().Be("fg: current: no such job\n");
+		_ = job.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Turns job control back off and restores the console after each test.
+	/// </summary>
+	public void Dispose()
+	{
+		JobControl.Enabled = false;
+		this.environment.Dispose();
+	}
 }

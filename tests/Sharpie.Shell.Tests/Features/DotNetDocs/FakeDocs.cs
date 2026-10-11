@@ -62,6 +62,12 @@ internal sealed class FakeDocs : HttpMessageHandler
 	public void Add(string url, byte[] contents) => this.files[url] = contents;
 
 	/// <summary>
+	/// Removes a file, so the server answers 404 for it from now on.
+	/// </summary>
+	/// <param name="url">The file's address.</param>
+	public void Remove(string url) => this.files.Remove(url);
+
+	/// <summary>
 	/// Creates a source that downloads from this server into a new temporary folder.
 	/// </summary>
 	/// <param name="time">The clock the source checks copies' age against.</param>

@@ -230,12 +230,6 @@ internal static partial class ApiDocs
 	private static HashSet<string> ReadMemberIds(XmlReader reader)
 	{
 		var ids = new HashSet<string>(StringComparer.Ordinal);
-
-		if (reader.IsEmptyElement)
-		{
-			return ids;
-		}
-
 		using var members = reader.ReadSubtree();
 
 		while (members.Read())

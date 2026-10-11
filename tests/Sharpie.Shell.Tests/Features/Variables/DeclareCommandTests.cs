@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using FluentAssertions;
 using Sharpie.Shell.Features.Variables;
 
@@ -11,15 +10,7 @@ namespace Sharpie.Shell.Tests.Features.Variables;
 public sealed class DeclareCommandTests : IDisposable
 {
 	private readonly ShellEnvironment environment = new();
-	[SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The process-wide writer, borrowed only to put it back.")]
-	private readonly TextWriter originalError = Console.Error;
-	private readonly StringWriter error = new();
 	private readonly DeclareCommand sut = new();
-
-	/// <summary>
-	/// Initializes a new instance of the <see cref="DeclareCommandTests" /> class.
-	/// </summary>
-	public DeclareCommandTests() => Console.SetError(this.error);
 
 	/// <summary>
 	/// Checks that <see cref="DeclareCommand.Run" /> stores a variable whose name is a valid identifier.
@@ -59,17 +50,27 @@ public sealed class DeclareCommandTests : IDisposable
 		this.sut.Run(["-p", name]);
 
 		// Assert
-		_ = this.error.ToString().Should().StartWith($"declare: `{argument}': not a valid identifier{Environment.NewLine}");
+		_ = this.environment.Error.Should().StartWith($"declare: `{argument}': not a valid identifier{Environment.NewLine}");
 		_ = this.environment.Output.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that <c>-p</c> with a name that isn't set reports it each time and doesn't create it.
+	/// </summary>
+	[Fact]
+	public void Run_PrintUnknownName_ReportsNotFoundAndCreatesNothing()
+	{
+		// Act
+		this.sut.Run(["-p", "missing"]);
+		this.sut.Run(["-p", "missing"]);
+
+		// Assert
+		_ = this.environment.Output.Should().BeEmpty();
+		_ = this.environment.Error.Should().Contain($"declare: missing: not found{Environment.NewLine}declare: missing: not found{Environment.NewLine}");
 	}
 
 	/// <summary>
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
-	public void Dispose()
-	{
-		Console.SetError(this.originalError);
-		this.error.Dispose();
-		this.environment.Dispose();
-	}
+	public void Dispose() => this.environment.Dispose();
 }

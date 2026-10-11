@@ -141,6 +141,124 @@ public sealed class DocsSourceTests : IDisposable
 			.Which.Should().StartWith(Path.Combine(folder, "cache"));
 	}
 
+	/// <summary>
+	/// Checks that a copy exactly a day old is checked again.
+	/// </summary>
+	[Fact]
+	public void Get_CopyExactlyADayOld_AsksAgain()
+	{
+		// Arrange
+		_ = this.sut.Get(new Uri(Address));
+		this.time.Now += TimeSpan.FromDays(1);
+
+		// Act
+		_ = this.sut.Get(new Uri(Address));
+
+		// Assert
+		_ = this.server.Requests.Should().HaveCount(2);
+	}
+
+	/// <summary>
+	/// Checks that an unchanged answer dates the copy now, so it isn't checked again for another day.
+	/// </summary>
+	[Fact]
+	public void Get_AfterUnchangedAnswer_WaitsADayToAskAgain()
+	{
+		// Arrange
+		_ = this.sut.Get(new Uri(Address));
+		this.time.Now += TimeSpan.FromDays(2);
+		_ = this.sut.Get(new Uri(Address));
+		this.time.Now += TimeSpan.FromHours(23);
+
+		// Act
+		_ = this.sut.Get(new Uri(Address));
+
+		// Assert
+		_ = this.server.Requests.Should().HaveCount(2);
+	}
+
+	/// <summary>
+	/// Checks that a saved ETag without its copy isn't sent, since an unchanged answer would leave nothing to show.
+	/// </summary>
+	[Fact]
+	public void Get_CopyDeletedButTagKept_DownloadsAgain()
+	{
+		// Arrange
+		_ = this.sut.Get(new Uri(Address));
+		File.Delete(Path.Combine(this.sut.CacheFolder, "docs.test", "xml", "System", "String.xml"));
+
+		// Act
+		var result = this.sut.Get(new Uri(Address));
+
+		// Assert
+		_ = result!.Text.Should().Be("first");
+	}
+
+	/// <summary>
+	/// Checks that a file Microsoft removed gives nothing, even with an old copy saved.
+	/// </summary>
+	[Fact]
+	public void Get_RemovedFromServer_ReturnsNull()
+	{
+		// Arrange
+		_ = this.sut.Get(new Uri(Address));
+		this.server.Remove(Address);
+		this.time.Now += TimeSpan.FromDays(2);
+
+		// Act
+		var result = this.sut.Get(new Uri(Address));
+
+		// Assert
+		_ = result.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that escaped slashes in an address can't make extra folders: each segment stays one file name.
+	/// </summary>
+	[Fact]
+	public void Get_EscapedSlashes_SavesAsOneFile()
+	{
+		// Arrange
+		const string Escaped = "https://docs.test/x/a%2Fb%5Cc.txt";
+		this.server.Add(new Uri(Escaped).AbsoluteUri, "text");
+
+		// Act
+		_ = this.sut.Get(new Uri(Escaped));
+
+		// Assert
+		_ = File.Exists(Path.Combine(this.sut.CacheFolder, "docs.test", "x", "a_b_c.txt")).Should().BeTrue();
+	}
+
+	/// <summary>
+	/// Checks that marking the docs offline records when.
+	/// </summary>
+	[Fact]
+	public void MarkOffline_RecordsTime()
+	{
+		// Act
+		this.sut.MarkOffline();
+
+		// Assert
+		_ = this.sut.OfflineSince.Should().Be(this.time.Now);
+	}
+
+	/// <summary>
+	/// Checks that only one lock on the cache can be held at a time.
+	/// </summary>
+	[Fact]
+	public void TryLock_WhileLocked_ReturnsNull()
+	{
+		// Arrange
+		using var first = this.sut.TryLock();
+
+		// Act
+		using var second = this.sut.TryLock();
+
+		// Assert
+		_ = first.Should().NotBeNull();
+		_ = second.Should().BeNull();
+	}
+
 	/// <inheritdoc />
 	public void Dispose() => this.server.Dispose();
 }

@@ -9,17 +9,21 @@ namespace Sharpie.Shell.Tests.Features.LineEditing;
 /// </summary>
 public sealed class LineEditorTests : IDisposable
 {
+	private const string Prompt = PromptHeader.Symbol;
+
 	private readonly Queue<ConsoleKeyInfo> keys = new();
 	private readonly StringWriter output = new();
 	private readonly List<string> history = ["first", "second"];
+	private readonly List<int> reads = [];
 	private readonly LineEditor sut;
+	private int columns = 80;
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="LineEditorTests" /> class with two history lines and an
 	/// 80-column terminal.
 	/// </summary>
 	public LineEditorTests() =>
-		this.sut = new LineEditor(this.keys.Dequeue, this.output, () => 80, new TabCompleter(["echo", "exit"]), this.history, ["echo", "exit"]);
+		this.sut = new LineEditor(this.ReadKey, this.output, () => this.columns, new TabCompleter(["echo", "exit"]), this.history, ["echo", "exit"]);
 
 	/// <summary>
 	/// Checks that typed characters come back as the line when Enter is pressed.
@@ -157,6 +161,7 @@ public sealed class LineEditorTests : IDisposable
 
 		// Assert
 		_ = line.Should().BeNull();
+		_ = this.output.ToString().Should().EndWith($"{PromptHeader.Symbol}\r\e[2C\r\n");
 	}
 
 	/// <summary>
@@ -231,7 +236,7 @@ public sealed class LineEditorTests : IDisposable
 		_ = this.sut.ReadLine(string.Empty);
 
 		// Assert
-		_ = this.output.ToString().Should().Contain("\e[30mrst\e[0m");
+		_ = this.Frame(1).Should().Be($"\r\e[J{PromptHeader.Symbol}\e[31mfi\e[0m\e[30mrst\e[0m\r\e[4C");
 	}
 
 	/// <summary>
@@ -291,10 +296,8 @@ public sealed class LineEditorTests : IDisposable
 		var line = this.sut.ReadLine(string.Empty);
 
 		// Assert
-		var output = this.output.ToString();
-
 		_ = line.Should().Be("fi");
-		_ = output[output.LastIndexOf("\r\e[J", StringComparison.Ordinal)..].Should().NotContain("rst");
+		_ = this.Frame(2).Should().Be($"\r\e[J{PromptHeader.Symbol}\e[31mfi\e[0m\r\e[4C\r\n");
 	}
 
 	/// <summary>
@@ -358,6 +361,388 @@ public sealed class LineEditorTests : IDisposable
 
 		// Assert
 		_ = line.Should().Be("first");
+	}
+
+	/// <summary>
+	/// Checks that Enter on an empty line draws the prompt once on start and once more when done, then ends the line.
+	/// </summary>
+	[Fact]
+	public void ReadLine_EnterOnEmptyLine_DrawsPromptThenEndsLine()
+	{
+		// Arrange
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine("h\r\n");
+
+		// Assert
+		_ = this.output.ToString().Should().Be($"h\r\n\r\e[J{Prompt}\r\e[2C\r\e[J{Prompt}\r\e[2C\r\n");
+	}
+
+	/// <summary>
+	/// Checks that a line that exactly fills its row prints a space to make the terminal wrap, so the next redraw can
+	/// count on the cursor being on the next row.
+	/// </summary>
+	[Fact]
+	public void ReadLine_LineFillsRow_ForcesWrap()
+	{
+		// Arrange
+		this.columns = 10;
+		this.Type("abcdefgh");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.Frame(7).Should().Be($"\r\e[J{Prompt}\e[31mabcdefgh\e[0m \r\r");
+		_ = this.Frame(8).Should().Be($"\e[1A\r\e[J{Prompt}\e[31mabcdefgh\e[0m \r\r\r\n");
+	}
+
+	/// <summary>
+	/// Checks that with the cursor on the first row of a wrapped line, the redraw moves up from the line's end to the
+	/// cursor's row and column.
+	/// </summary>
+	[Fact]
+	public void ReadLine_HomeOnWrappedLine_MovesUpToCursor()
+	{
+		// Arrange
+		this.columns = 10;
+		this.Type("abcdefghij");
+		this.Press(ConsoleKey.Home);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.Frame(10).Should().Be($"\e[1A\r\e[J{Prompt}\e[31mabcdefghij\e[0m\e[1A\r\e[2C");
+		_ = this.Frame(11).Should().Be($"\r\e[J{Prompt}\e[31mabcdefghij\e[0m\r\e[2C\r\n");
+	}
+
+	/// <summary>
+	/// Checks that a terminal that reports no width is drawn as 80 columns wide.
+	/// </summary>
+	[Fact]
+	public void ReadLine_NoTerminalWidth_Uses80Columns()
+	{
+		// Arrange
+		this.columns = 0;
+		this.Type("abcdefgh");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.Frame(7).Should().Be($"\r\e[J{Prompt}\e[31mabcdefgh\e[0m\r\e[10C");
+	}
+
+	/// <summary>
+	/// Checks the colors: unknown commands red, quoted text yellow, redirects cyan and missing paths red and
+	/// underlined, with the text between them left plain.
+	/// </summary>
+	[Fact]
+	public void ReadLine_MixedLine_ColorsEachPart()
+	{
+		// Arrange
+		this.Type("xx  \"q\" > /nonexistent/f");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.output.ToString().Should().EndWith($"\r\e[J{Prompt}\e[31mxx\e[0m  \e[33m\"q\"\e[0m \e[36m>\e[0m \e[31;4m/nonexistent/f\e[0m\r\e[26C\r\n");
+	}
+
+	/// <summary>
+	/// Checks that the first Tab with several matches rings the bell, the second lists them under the line, and the
+	/// third puts the first one in and highlights it, then Enter clears the list.
+	/// </summary>
+	[Fact]
+	public void ReadLine_TabWithSeveralMatches_RingsThenListsThenCycles()
+	{
+		// Arrange
+		var sut = this.ListEditor();
+		this.Type("zq");
+		this.Press(ConsoleKey.Tab);
+		this.Press(ConsoleKey.Tab);
+		this.Press(ConsoleKey.Tab);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("zqa");
+		_ = this.Frame(2).Should().Be($"\a\r\e[J{Prompt}\e[31mzq\e[0m\r\e[4C");
+		_ = this.Frame(3).Should().Be($"\r\e[J{Prompt}\e[31mzq\e[0m\r\nzqa  zqbcd \r\e[2A\r\e[4C\r\e[4C");
+		_ = this.Frame(4).Should().Be($"\r\e[J{Prompt}\e[32mzqa\e[0m\r\n\e[48;2;56;74;102mzqa\e[49m  zqbcd \r\e[2A\r\e[5C\r\e[5C");
+		_ = this.Frame(5).Should().Be($"\r\e[J{Prompt}\e[32mzqa\e[0m\r\e[5C\r\n");
+	}
+
+	/// <summary>
+	/// Checks that typing after a list of matches starts completion over, so the next Tab completes the new text
+	/// instead of stepping through the old list.
+	/// </summary>
+	[Fact]
+	public void ReadLine_TypingAfterList_StartsCompletionOver()
+	{
+		// Arrange
+		var sut = this.ListEditor();
+		this.Type("zq");
+		this.Press(ConsoleKey.Tab);
+		this.Press(ConsoleKey.Tab);
+		this.Type("b");
+		this.Press(ConsoleKey.Tab);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("zqbcd ");
+	}
+
+	/// <summary>
+	/// Checks that Ctrl+L clears the screen, draws the header at the top and the line under it.
+	/// </summary>
+	[Fact]
+	public void ReadLine_CtrlL_ClearsScreenAndRedraws()
+	{
+		// Arrange
+		this.Type("ab");
+		this.Press(ConsoleKey.L, control: true);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine("head\r\n");
+
+		// Assert
+		_ = this.Frame(2).Should().Be($"\e[H\e[2Jhead\r\n\r\e[J{Prompt}\e[31mab\e[0m\r\e[4C");
+	}
+
+	/// <summary>
+	/// Checks the editing keys at the edges: at the start or end of the line, across runs of spaces, and with no
+	/// suggestion to take.
+	/// </summary>
+	/// <param name="script">The keys, with special keys in braces and Ctrl shown as <c>^</c>, like <c>{^W}</c>.</param>
+	/// <param name="expected">The line Enter returns.</param>
+	[Theory]
+	[InlineData("fi{LeftArrow}{LeftArrow}{RightArrow}x", "fxi")]
+	[InlineData("{Backspace}ab", "ab")]
+	[InlineData("abc{^W}", "")]
+	[InlineData("echo one  {^W}", "echo ")]
+	[InlineData("  {^W}x", "x")]
+	[InlineData("abc{Home}{^D}", "bc")]
+	[InlineData("abc{LeftArrow}{^K}", "ab")]
+	[InlineData("abc{^A}x", "xabc")]
+	[InlineData("abc{LeftArrow}{LeftArrow}{End}x", "abcx")]
+	[InlineData("abc{LeftArrow}{^E}x", "abcx")]
+	[InlineData("abc{LeftArrow}{Delete}", "ab")]
+	[InlineData("zz{RightArrow}", "zz")]
+	public void ReadLine_EditingKeyScript_GivesLine(string script, string expected)
+	{
+		// Arrange
+		this.Script(script);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that a history line that is exactly what was typed isn't suggested, so an older, longer one is.
+	/// </summary>
+	[Fact]
+	public void ReadLine_HistoryLineSameAsTyped_SuggestsLongerOne()
+	{
+		// Arrange
+		this.history.Clear();
+		this.history.AddRange(["first again", "first"]);
+		this.Type("first");
+		this.Press(ConsoleKey.RightArrow);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("first again");
+	}
+
+	/// <summary>
+	/// Checks that Up skips a history line that is exactly what was typed, and stays put at an oldest line that doesn't
+	/// match.
+	/// </summary>
+	/// <param name="presses">How many times Up is pressed.</param>
+	[Theory]
+	[InlineData(1)]
+	[InlineData(2)]
+	public void ReadLine_UpWithTypedText_SkipsSameLineAndOldestNonMatch(int presses)
+	{
+		// Arrange
+		this.history.Clear();
+		this.history.AddRange(["nope", "first", "fi"]);
+		this.Type("fi");
+
+		for (var press = 0; press < presses; press++)
+		{
+			this.Press(ConsoleKey.UpArrow);
+		}
+
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("first");
+	}
+
+	/// <summary>
+	/// Reads the next queued key, first noting how much output there is, so <see cref="Frame" /> can tell what each key drew.
+	/// </summary>
+	/// <returns>
+	/// The key.
+	/// </returns>
+	private ConsoleKeyInfo ReadKey()
+	{
+		this.reads.Add(this.output.GetStringBuilder().Length);
+
+		return this.keys.Dequeue();
+	}
+
+	/// <summary>
+	/// Checks that a dimmed suggestion that runs onto the next row counts toward the rows to move back up.
+	/// </summary>
+	[Fact]
+	public void ReadLine_SuggestionWrapsRow_MovesBackUpToCursor()
+	{
+		// Arrange
+		this.columns = 10;
+		this.history.Add("abcdefghijk");
+		this.Type("ab");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.Frame(1).Should().Be($"\r\e[J{Prompt}\e[31mab\e[0m\e[30mcdefghijk\e[0m\e[1A\r\e[4C");
+	}
+
+	/// <summary>
+	/// Checks that with the cursor on a middle row of a line three rows long, the redraw moves up only from the last
+	/// row to the cursor's.
+	/// </summary>
+	[Fact]
+	public void ReadLine_CursorOnMiddleRow_MovesUpOnlyToIt()
+	{
+		// Arrange
+		this.columns = 10;
+		this.Type(new string('x', 25));
+		this.Press(ConsoleKey.Home);
+
+		for (var step = 0; step < 10; step++)
+		{
+			this.Press(ConsoleKey.RightArrow);
+		}
+
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.Frame(35).Should().EndWith("\e[1A\r\e[2C");
+	}
+
+	/// <summary>
+	/// Checks that a list of matches under a line that ends exactly at a row's end moves back to the start of the
+	/// row, without a move right of zero columns.
+	/// </summary>
+	[Fact]
+	public void ReadLine_ListAfterLineEndingAtRowEnd_MovesToRowStart()
+	{
+		// Arrange
+		string[] names = ["zqabcdefX", "zqabcdefY"];
+		var sut = new LineEditor(this.ReadKey, this.output, () => 10, new TabCompleter(names), this.history, names);
+		this.Type("zqabcdef");
+		this.Press(ConsoleKey.Tab);
+		this.Press(ConsoleKey.Tab);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.Frame(9).Should().Contain("zqabcdefX  zqabcdefY").And.NotContain("\e[0C");
+	}
+
+	/// <summary>
+	/// Makes an editor on a 10-column terminal that completes two names no program on <c>PATH</c> starts like, so
+	/// its list of matches is the same on every machine.
+	/// </summary>
+	/// <returns>
+	/// The editor, reading keys from <see cref="keys" /> and writing to <see cref="output" />.
+	/// </returns>
+	private LineEditor ListEditor()
+	{
+		string[] names = ["zqa", "zqbcd"];
+
+		return new LineEditor(this.ReadKey, this.output, () => 10, new TabCompleter(names), this.history, names);
+	}
+
+	/// <summary>
+	/// Queues keys written as text, with special keys in braces like <c>{Home}</c> and Ctrl keys like <c>{^W}</c>.
+	/// </summary>
+	/// <param name="script">The keys.</param>
+	private void Script(string script)
+	{
+		for (var index = 0; index < script.Length; index++)
+		{
+			if (script[index] != '{')
+			{
+				this.Type(script[index].ToString());
+
+				continue;
+			}
+
+			var end = script.IndexOf('}', index);
+			var name = script[(index + 1)..end];
+
+			if (name.StartsWith('^'))
+			{
+				this.Press(Enum.Parse<ConsoleKey>(name[1..]), control: true);
+			}
+			else
+			{
+				this.Press(Enum.Parse<ConsoleKey>(name));
+			}
+
+			index = end;
+		}
+	}
+
+	/// <summary>
+	/// Gets what the editor wrote in response to one key.
+	/// </summary>
+	/// <param name="key">The key's position among the keys read, or <c>-1</c> for what was written before the first one.</param>
+	/// <returns>
+	/// The output from reading that key up to reading the next, or to the end for the last key.
+	/// </returns>
+	private string Frame(int key)
+	{
+		var text = this.output.ToString();
+		var start = key < 0 ? 0 : this.reads[key];
+		var end = key + 1 < this.reads.Count ? this.reads[key + 1] : text.Length;
+
+		return text[start..end];
 	}
 
 	/// <inheritdoc />

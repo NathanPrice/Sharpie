@@ -12,6 +12,8 @@ namespace Sharpie.Shell.Tests.Features.DotNetDocs;
 public sealed class OfflineDocsTests : IDisposable
 {
 	private const string Archive = "https://archive.test/repo.tar.gz";
+	private const string ApiArchive = "https://codeload.github.com/dotnet/dotnet-api-docs/tar.gz/refs/heads/main";
+	private const string Docs = "https://raw.githubusercontent.com/dotnet/docs/main/docs/";
 
 	private static readonly Uri Repository = new("https://raw.test/repo/main/");
 
@@ -145,6 +147,54 @@ public sealed class OfflineDocsTests : IDisposable
 		_ = result.Should().BeFalse();
 		_ = progress.ToString().Should().Contain("already downloading");
 		_ = this.server.Requests.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks a whole download: the API archive with a progress line every 5000 files, then each keyword page in both
+	/// languages, then the time is recorded so dman knows when to refresh.
+	/// </summary>
+	[Fact]
+	public void Download_ApiArchiveAndKeywords_SavesAllAndReports()
+	{
+		// Arrange
+		this.server.Add(ApiArchive, BuildArchive([.. Enumerable.Range(0, 5000).Select(index => ($"repo-main/xml/N/T{index}.xml", "<Type />"))]));
+		this.server.Add($"{Docs}csharp/language-reference/keywords/index.md", "[`if`](../statements/if.md)");
+		this.server.Add($"{Docs}csharp/language-reference/statements/if.md", "Runs a branch.");
+		this.server.Add($"{Docs}visual-basic/language-reference/keywords/index.md", "[`Dim`](../statements/dim.md)");
+		this.server.Add($"{Docs}visual-basic/language-reference/statements/dim.md", "Declares a variable.");
+		using var progress = new StringWriter();
+
+		// Act
+		var result = OfflineDocs.Download(this.source, progress);
+
+		// Assert
+		_ = result.Should().BeTrue();
+		_ = progress.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).Should().Equal(
+			"dman: downloading the .NET API docs from GitHub, one archive of about 140 MB that unpacks to about 600 MB...",
+			"dman: 5000 files saved",
+			"dman: downloading the C# and Visual Basic keyword pages...",
+			$"dman: saved 5000 API files and 2 keyword pages in {this.source.CacheFolder}. dman downloads them again in the background once they're a week old.");
+		_ = this.source.IsSaved(new Uri($"{Docs}csharp/language-reference/statements/if.md")).Should().BeTrue();
+		_ = this.source.IsSaved(new Uri($"{Docs}visual-basic/language-reference/statements/dim.md")).Should().BeTrue();
+		_ = this.source.OfflineSince.Should().Be(this.time.Now);
+	}
+
+	/// <summary>
+	/// Checks that a download that can't get the archive reports why and doesn't mark the docs as downloaded.
+	/// </summary>
+	[Fact]
+	public void Download_ArchiveMissing_ReportsFailure()
+	{
+		// Arrange
+		using var progress = new StringWriter();
+
+		// Act
+		var result = OfflineDocs.Download(this.source, progress);
+
+		// Assert
+		_ = result.Should().BeFalse();
+		_ = progress.ToString().Should().Contain("dman: the download stopped: ");
+		_ = this.source.OfflineSince.Should().BeNull();
 	}
 
 	/// <inheritdoc />

@@ -84,6 +84,11 @@ public sealed class CommandLineTests
 	[InlineData("echo '${A}'", new[] { "echo", "${A}" })]
 	[InlineData("echo ${MISSING} z", new[] { "echo", "z" })]
 	[InlineData("echo ${A", new[] { "echo", "${A" })]
+	[InlineData("echo a$", new[] { "echo", "a$" })]
+	[InlineData("echo a$1", new[] { "echo", "a$1" })]
+	[InlineData("echo {$A}", new[] { "echo", "{one}" })]
+	[InlineData("echo }${A}", new[] { "echo", "}one" })]
+	[InlineData("echo $Ab", new[] { "echo" })]
 	public void Split_WithVariables_ExpandsDollarNames(string line, string[] expected)
 	{
 		// Arrange

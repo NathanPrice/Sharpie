@@ -661,7 +661,7 @@ internal sealed partial class MarkdownRenderer(ManPageWriter writer, DocsSource 
 					body.AddRange(row[column].Append(new Span(new string(' ', 1), SpanStyle.Plain)));
 				}
 
-				writer.Tagged([row.Count > 0 ? [.. Restyle(row[0], SpanStyle.Bold)] : []], body);
+				writer.Tagged([[.. Restyle(row[0], SpanStyle.Bold)]], body);
 			}
 
 			return index - 1;

@@ -109,11 +109,6 @@ internal sealed partial class AliasCommand : ICommand
 	{
 		_ = words.ArgumentNotNull();
 
-		if (this.aliases.Count == 0)
-		{
-			return words;
-		}
-
 		var result = new List<string>(words);
 
 		for (var index = 0; index < result.Count; index++)

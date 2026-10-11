@@ -68,10 +68,7 @@ internal sealed class LineEditor(
 		this.cursor = 0;
 		this.cursorRow = 0;
 		this.recalled = history.Count;
-		this.draft = string.Empty;
 		this.listed = null;
-		this.suggestion = string.Empty;
-		completer.Reset();
 
 		output.Write(header);
 		this.Render();
@@ -121,8 +118,7 @@ internal sealed class LineEditor(
 				ConsoleKey.D when this.line.Length == 0 => Outcome.EndOfInput,
 				ConsoleKey.D => this.DeleteAt(this.cursor),
 				ConsoleKey.A => this.MoveTo(0),
-				ConsoleKey.E when this.suggestion.Length > 0 => this.Accept(),
-				ConsoleKey.E => this.MoveTo(this.line.Length),
+				ConsoleKey.E => this.Accept(),
 				ConsoleKey.U => this.DeleteRange(0, this.cursor),
 				ConsoleKey.K => this.DeleteRange(this.cursor, this.line.Length),
 				ConsoleKey.W => this.DeleteRange(this.WordStartBefore(this.cursor), this.cursor),
@@ -136,11 +132,11 @@ internal sealed class LineEditor(
 			ConsoleKey.Enter => Outcome.Submit,
 			ConsoleKey.Backspace when this.cursor > 0 => this.DeleteRange(this.cursor - 1, this.cursor),
 			ConsoleKey.Delete => this.DeleteAt(this.cursor),
-			ConsoleKey.RightArrow or ConsoleKey.End when this.suggestion.Length > 0 => this.Accept(),
+			ConsoleKey.RightArrow when this.suggestion.Length > 0 => this.Accept(),
 			ConsoleKey.LeftArrow => this.MoveTo(this.cursor - 1),
 			ConsoleKey.RightArrow => this.MoveTo(this.cursor + 1),
 			ConsoleKey.Home => this.MoveTo(0),
-			ConsoleKey.End => this.MoveTo(this.line.Length),
+			ConsoleKey.End => this.Accept(),
 			ConsoleKey.UpArrow => this.Recall(-1),
 			ConsoleKey.DownArrow => this.Recall(1),
 			ConsoleKey.Tab => this.Complete(),
@@ -170,6 +166,9 @@ internal sealed class LineEditor(
 	/// <returns>
 	/// <see cref="Outcome.Continue" />.
 	/// </returns>
+	/// <remarks>
+	/// With no suggestion this only moves the cursor to the end, which is all End and Ctrl+E do then.
+	/// </remarks>
 	private Outcome Accept()
 	{
 		_ = this.line.Append(this.suggestion);
@@ -248,8 +247,8 @@ internal sealed class LineEditor(
 	private Outcome DeleteAt(int index) => this.DeleteRange(index, Math.Min(index + 1, this.line.Length));
 
 	/// <summary>
-	/// Removes the characters from <paramref name="start" /> up to <paramref name="end" />, and puts the cursor where
-	/// they were when it was inside or after them.
+	/// Removes the characters from <paramref name="start" /> up to <paramref name="end" />, a range that always starts
+	/// or ends at the cursor, and puts the cursor where the range started.
 	/// </summary>
 	/// <param name="start">The first position removed.</param>
 	/// <param name="end">The position after the last one removed.</param>
@@ -259,7 +258,7 @@ internal sealed class LineEditor(
 	private Outcome DeleteRange(int start, int end)
 	{
 		_ = this.line.Remove(start, end - start);
-		this.cursor = this.cursor > end ? this.cursor - (end - start) : Math.Min(this.cursor, start);
+		this.cursor = start;
 
 		return Outcome.Continue;
 	}

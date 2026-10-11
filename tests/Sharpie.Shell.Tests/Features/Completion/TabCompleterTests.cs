@@ -55,7 +55,7 @@ public sealed class TabCompleterTests : IDisposable
 		var presses = Enumerable.Range(0, 6).Select(_ => this.sut.Press("mytool")).ToList();
 
 		// Assert
-		_ = presses[0].Bell.Should().BeTrue();
+		_ = presses.Select(press => press.Bell).Should().Equal(true, false, false, false, false, false);
 		_ = presses[1].Listed.Should().Equal("mytool1", "mytool2", "mytool3");
 		_ = presses[1].Selected.Should().BeNull();
 		_ = presses.Skip(2).Select(press => press.Line).Should().Equal("mytool1", "mytool2", "mytool3", "mytool1");
@@ -266,6 +266,49 @@ public sealed class TabCompleterTests : IDisposable
 
 		// Assert
 		_ = result.Should().Be(new TabCompleter.TabResult("docker ", null, Bell: true));
+	}
+
+	/// <summary>
+	/// Checks that after Tab completes something, by name, by a completer's only line or by the start its lines share,
+	/// the next Tab starts over and rings the bell instead of listing.
+	/// </summary>
+	/// <param name="completing">The line Tab completes in between.</param>
+	[Theory]
+	[InlineData("ech")]
+	[InlineData("docker ")]
+	[InlineData("git c")]
+	public void Press_AfterCompleting_StartsOver(string completing)
+	{
+		// Arrange
+		var folder = this.environment.CreateFolder();
+		var docker = ShellEnvironment.CreateFile(folder, "docker-completer", executable: true, "#!/bin/sh\necho run\n");
+		var git = ShellEnvironment.CreateFile(folder, "git-completer", executable: true, "#!/bin/sh\nprintf 'checkout\\ncherry-pick\\n'\n");
+		var sut = new TabCompleter(["echo", "exit"], command => command switch { "docker" => docker, "git" => git, _ => null });
+		_ = sut.Press("mytool");
+		_ = sut.Press(completing);
+
+		// Act
+		var result = sut.Press("mytool");
+
+		// Assert
+		_ = result.Should().Be(new TabCompleter.TabResult("mytool", null, Bell: true));
+	}
+
+	/// <summary>
+	/// Checks that a completer script that reads its input gets an empty, closed input instead of waiting forever.
+	/// </summary>
+	[Fact]
+	public void Press_CompleterReadingInput_GetsClosedInput()
+	{
+		// Arrange
+		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\ncat > /dev/null\necho run\n");
+		var sut = new TabCompleter(["echo"], command => command == "docker" ? script : null);
+
+		// Act
+		var result = sut.Press("docker ");
+
+		// Assert
+		_ = result.Line.Should().Be("docker run ");
 	}
 
 	/// <summary>

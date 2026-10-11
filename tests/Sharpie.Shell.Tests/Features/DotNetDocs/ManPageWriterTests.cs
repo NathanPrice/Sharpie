@@ -112,4 +112,146 @@ public sealed class ManPageWriterTests
 		// Assert
 		_ = sut.ToString().Should().Be(expected);
 	}
+
+	/// <summary>
+	/// Checks a whole page through every kind of block, with blank lines between blocks but not right after a heading,
+	/// and none after a list line.
+	/// </summary>
+	[Fact]
+	public void WholePage_EveryBlock_WritesManLayout()
+	{
+		// Arrange
+		var sut = new ManPageWriter(40, styled: false);
+
+		// Act
+		sut.Header("x(1)", "Manual");
+		sut.Section("one");
+		sut.Line([new Span("• first", SpanStyle.Plain)], 9, 7);
+		sut.Line([new Span("• second", SpanStyle.Plain)], 9, 7);
+		sut.Paragraph([new Span("Text.", SpanStyle.Plain)]);
+		sut.Subsection("Sub");
+		sut.Tagged([[new Span("a tag long enough to wrap onto a second line", SpanStyle.Plain)]], [new Span("Body.", SpanStyle.Plain)]);
+		sut.Tagged([[new Span("bare", SpanStyle.Plain)]], []);
+		sut.Hanging([[new Span("sig", SpanStyle.Plain)]]);
+		sut.Verbatim([[new Span("code", SpanStyle.Plain)], [], [new Span("more", SpanStyle.Plain)]], 11);
+		sut.Footer("left", "mid", "x(1)");
+
+		// Assert
+		_ = sut.ToString().Should().Be("""
+			x(1)             Manual             x(1)
+
+			ONE
+			       • first
+			       • second
+
+			       Text.
+
+			   Sub
+			       a tag long enough to wrap onto a
+			           second line
+			              Body.
+
+			       bare
+
+			       sig
+
+			           code
+
+			           more
+
+			left              mid               x(1)
+
+			""");
+	}
+
+	/// <summary>
+	/// Checks that a word that ends exactly at the page's edge stays on the line, and one more column wraps it.
+	/// </summary>
+	/// <param name="word">The second word.</param>
+	/// <param name="expected">The paragraph.</param>
+	[Theory]
+	[InlineData("abcdefghijklmnopqrstuvwxyz1", "       abcde abcdefghijklmnopqrstuvwxyz1\n")]
+	[InlineData("abcdefghijklmnopqrstuvwxyz12", "       abcde\n       abcdefghijklmnopqrstuvwxyz12\n")]
+	public void Paragraph_WordAtEdge_WrapsOnlyPastWidth(string word, string expected)
+	{
+		// Arrange
+		var sut = new ManPageWriter(40, styled: false);
+
+		// Act
+		sut.Paragraph([new Span($"abcde {word}", SpanStyle.Plain)]);
+
+		// Assert
+		_ = sut.ToString().Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that a word made of several differently styled pieces is measured as a whole when wrapping.
+	/// </summary>
+	[Fact]
+	public void Paragraph_WordOfSeveralSpans_MeasuresWholeWord()
+	{
+		// Arrange
+		var sut = new ManPageWriter(40, styled: false);
+
+		// Act
+		sut.Paragraph([new Span("abcdefghijklmnopqrstuvwxyz ", SpanStyle.Plain), new Span("abc", SpanStyle.Plain), new Span("defgh", SpanStyle.Bold)]);
+
+		// Assert
+		_ = sut.ToString().Should().Be("       abcdefghijklmnopqrstuvwxyz\n       abcdefgh\n");
+	}
+
+	/// <summary>
+	/// Checks that runs of spaces and trailing spaces don't add space to the page.
+	/// </summary>
+	[Fact]
+	public void Paragraph_ExtraSpaces_CollapsesThem()
+	{
+		// Arrange
+		var sut = new ManPageWriter(40, styled: false);
+
+		// Act
+		sut.Paragraph([new Span("a  b ", SpanStyle.Plain)]);
+
+		// Assert
+		_ = sut.ToString().Should().Be("       a b\n");
+	}
+
+	/// <summary>
+	/// Checks that styled code gets the standard color for each kind of token, and bold text keeps its spaces plain.
+	/// </summary>
+	[Fact]
+	public void Verbatim_StyledCode_ColorsEachKind()
+	{
+		// Arrange
+		var sut = new ManPageWriter(80, styled: true);
+		SpanStyle[] styles = [SpanStyle.Keyword, SpanStyle.String, SpanStyle.Comment, SpanStyle.Number, SpanStyle.Type, SpanStyle.Method, SpanStyle.Parameter, SpanStyle.Variable];
+
+		// Act
+		sut.Verbatim([[.. styles.Select(style => new Span("x", style)), new Span("a b", SpanStyle.Bold)]], 0);
+
+		// Assert
+		_ = sut.ToString().Should().Be("\e[35mx\e[39m\e[33mx\e[39m\e[90mx\e[39m\e[91mx\e[39m\e[32mx\e[39m\e[94mx\e[39m\e[96mx\e[39m\e[36mx\e[39ma\ba b\bb\n");
+	}
+
+	/// <summary>
+	/// Checks the header when the title leaves just enough room for the manual's name with a space each side, and
+	/// when it leaves too little or none, which drops the name and keeps at least one space.
+	/// </summary>
+	/// <param name="title">The page title.</param>
+	/// <param name="expected">The header line.</param>
+	[Theory]
+	[InlineData("abcdefghijklm(1)", "abcdefghijklm(1) Manual abcdefghijklm(1)\n")]
+	[InlineData("abcdefghijklmn(1)", "abcdefghijklmn(1)      abcdefghijklmn(1)\n")]
+	[InlineData("abcdefghijklmnopqrstu(1)", "abcdefghijklmnopqrstu(1) abcdefghijklmnopqrstu(1)\n")]
+	public void Header_LittleRoom_DropsManualName(string title, string expected)
+	{
+		// Arrange
+		var sut = new ManPageWriter(40, styled: false);
+
+		// Act
+		sut.Header(title, "Manual");
+
+		// Assert
+		_ = sut.ToString().Should().Be(expected);
+	}
 }

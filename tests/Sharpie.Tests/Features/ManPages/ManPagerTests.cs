@@ -221,6 +221,390 @@ public sealed class ManPagerTests
 		_ = this.pager.IsVisible.Should().BeFalse();
 	}
 
+	/// <summary>
+	/// Checks the hint line: the keys always, then the link keys only on a page with links, and Backspace only after
+	/// following a link.
+	/// </summary>
+	[AvaloniaFact]
+	public void Hints_ByPage_ListOnlyKeysThatWork()
+	{
+		// Arrange
+		const string Keys = " · q quit · / search · n/N next/prev · space/b page · g/G top/end";
+		var plain = this.Status.Text;
+
+		// Act
+		this.pager.Navigate("links", "\e]8;;https://a.test/one\e\\One\e]8;;\e\\\n");
+		Dispatcher.UIThread.RunJobs();
+
+		// Assert
+		_ = plain.Should().Be($"ls{Keys}");
+		_ = this.Status.Text.Should().Be($"links{Keys} · Tab/Enter links · Backspace back");
+	}
+
+	/// <summary>
+	/// Checks that Alt+Left goes back like Backspace, and Left alone doesn't.
+	/// </summary>
+	[AvaloniaFact]
+	public void AltLeft_AfterNavigate_ShowsPreviousPage()
+	{
+		// Arrange
+		this.pager.Navigate("next", "the next page\n");
+		Dispatcher.UIThread.RunJobs();
+
+		// Act
+		this.Press(Key.Left, PhysicalKey.ArrowLeft);
+		var afterLeft = this.View.Text;
+		this.Press(Key.Left, PhysicalKey.ArrowLeft, RawInputModifiers.Alt);
+
+		// Assert
+		_ = afterLeft.Should().Be("the next page\n");
+		_ = this.View.Text.Should().StartWith("NAME\n");
+	}
+
+	/// <summary>
+	/// Checks that Home goes back to the top.
+	/// </summary>
+	[AvaloniaFact]
+	public void Home_AfterPageDown_ScrollsToTop()
+	{
+		// Arrange
+		this.Press(Key.PageDown, PhysicalKey.PageDown);
+
+		// Act
+		this.Press(Key.Home, PhysicalKey.Home);
+
+		// Assert
+		_ = this.Scroller.Offset.Y.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that Shift+N searches backward, wrapping from the first match to the last.
+	/// </summary>
+	[AvaloniaFact]
+	public void ShiftN_AfterSearch_MovesToPreviousMatchAndWraps()
+	{
+		// Arrange
+		this.Search("needle");
+
+		// Act
+		this.Press(Key.N, PhysicalKey.N, RawInputModifiers.Shift);
+		var wrapped = this.View.TextArea.Selection.StartPosition.Line;
+		this.Press(Key.N, PhysicalKey.N, RawInputModifiers.Shift);
+
+		// Assert
+		_ = wrapped.Should().Be(151);
+		_ = this.View.TextArea.Selection.StartPosition.Line.Should().Be(51);
+	}
+
+	/// <summary>
+	/// Checks that the search line hides the hints while open, and that leaving it empty with Enter, or with Escape
+	/// after typing, searches for nothing and brings the hints back.
+	/// </summary>
+	/// <param name="pattern">The text typed.</param>
+	/// <param name="key">The key that leaves the search line.</param>
+	/// <param name="physical">The physical key.</param>
+	[AvaloniaTheory]
+	[InlineData("", Key.Enter, PhysicalKey.Enter)]
+	[InlineData("needle", Key.Escape, PhysicalKey.Escape)]
+	public void SearchLine_LeftWithoutPattern_SearchesNothing(string pattern, Key key, PhysicalKey physical)
+	{
+		// Arrange
+		this.window.KeyTextInput("/");
+		Dispatcher.UIThread.RunJobs();
+		var hintsWhileOpen = this.Status.IsVisible;
+		this.window.KeyTextInput(pattern);
+
+		// Act
+		this.Press(key, physical);
+		var hintsAfter = this.Status.IsVisible;
+		this.Press(Key.N, PhysicalKey.N);
+
+		// Assert
+		_ = hintsWhileOpen.Should().BeFalse();
+		_ = hintsAfter.Should().BeTrue();
+		_ = this.pager.GetVisualDescendants().OfType<TextBox>().Should().OnlyContain(box => !box.IsVisible);
+		_ = this.View.SelectionLength.Should().Be(0);
+		_ = this.closed.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that opening a page starts it fresh: at the top, with the hints instead of an old message, no search to
+	/// repeat, and no earlier page to go back to.
+	/// </summary>
+	[AvaloniaFact]
+	public void Open_AfterUse_StartsFresh()
+	{
+		// Arrange
+		this.pager.Navigate("next", Page);
+		Dispatcher.UIThread.RunJobs();
+		this.Search("needle");
+		this.Search("zzzz");
+
+		// Act
+		this.pager.Open("fresh", Page);
+		Dispatcher.UIThread.RunJobs();
+		this.Press(Key.N, PhysicalKey.N);
+		var afterN = this.Status.Text;
+		this.Press(Key.Back, PhysicalKey.Backspace);
+
+		// Assert
+		_ = afterN.Should().StartWith("fresh · q quit");
+		_ = this.Scroller.Offset.Y.Should().Be(0);
+		_ = this.View.SelectionLength.Should().Be(0);
+		_ = this.Status.Text.Should().NotContain("Backspace back");
+	}
+
+	/// <summary>
+	/// Checks that giving the pager focus back puts it on the search line while that's open, and on the page
+	/// otherwise.
+	/// </summary>
+	[AvaloniaFact]
+	public void TakeFocus_WithAndWithoutSearchLine_FocusesTheRightPart()
+	{
+		// Arrange
+		var other = new TextBox();
+		((Panel)this.window.Content!).Children.Add(other);
+		_ = other.Focus();
+
+		// Act
+		this.pager.TakeFocus();
+		Dispatcher.UIThread.RunJobs();
+		var pageFocused = this.View.TextArea.IsKeyboardFocusWithin;
+		this.window.KeyTextInput("/");
+		Dispatcher.UIThread.RunJobs();
+		_ = other.Focus();
+		this.pager.TakeFocus();
+		Dispatcher.UIThread.RunJobs();
+
+		// Assert
+		_ = pageFocused.Should().BeTrue();
+		_ = this.pager.GetVisualDescendants().OfType<TextBox>().Single(box => box.IsVisible).IsKeyboardFocusWithin.Should().BeTrue();
+	}
+
+	/// <summary>
+	/// Checks that the hint line and the search line are a little smaller than the page, and the search line starts
+	/// hidden with a hint of what it's for.
+	/// </summary>
+	[AvaloniaFact]
+	public void Layout_HintAndSearchLines_AreSmallerAndSearchStartsHidden()
+	{
+		// Arrange
+		var search = this.pager.GetVisualDescendants().OfType<TextBox>().Single();
+
+		// Assert
+		_ = this.Status.FontSize.Should().Be(13);
+		_ = search.FontSize.Should().Be(13);
+		_ = search.IsVisible.Should().BeFalse();
+		_ = search.PlaceholderText.Should().Be("/search");
+		_ = DockPanel.GetDock(search).Should().Be(Dock.Bottom);
+		_ = DockPanel.GetDock(this.Status).Should().Be(Dock.Bottom);
+	}
+
+	/// <summary>
+	/// Checks that Shift+Tab steps back through the links, starting from the last one.
+	/// </summary>
+	[AvaloniaFact]
+	public void ShiftTab_SelectsLinksBackward()
+	{
+		// Arrange
+		this.pager.Open("links", "see \e]8;;https://a.test/one\e\\One\e]8;;\e\\ and \e]8;;https://a.test/two\e\\Two\e]8;;\e\\\n");
+		Dispatcher.UIThread.RunJobs();
+
+		// Act
+		this.Press(Key.Tab, PhysicalKey.Tab, RawInputModifiers.Shift);
+		var first = this.View.SelectedText;
+		this.Press(Key.Tab, PhysicalKey.Tab, RawInputModifiers.Shift);
+
+		// Assert
+		_ = first.Should().Be("Two");
+		_ = this.View.SelectedText.Should().Be("One");
+	}
+
+	/// <summary>
+	/// Checks that Tab picks the first link from the top of the screen and scrolls to a link that's off it.
+	/// </summary>
+	[AvaloniaFact]
+	public void Tab_ToLinkBelowScreen_ScrollsToIt()
+	{
+		// Arrange
+		var page = new StringBuilder("\e]8;;https://a.test/top\e\\Top\e]8;;\e\\\n");
+		_ = page.Append(string.Concat(Enumerable.Repeat("text\n", 150)));
+		_ = page.Append("\e]8;;https://a.test/far\e\\Far\e]8;;\e\\\n");
+		this.pager.Open("links", page.ToString());
+		Dispatcher.UIThread.RunJobs();
+
+		// Act
+		this.Press(Key.Tab, PhysicalKey.Tab);
+		var first = this.View.SelectedText;
+		this.Press(Key.Tab, PhysicalKey.Tab);
+
+		// Assert
+		_ = first.Should().Be("Top");
+		_ = this.View.SelectedText.Should().Be("Far");
+		_ = this.Scroller.Offset.Y.Should().BeGreaterThan(0);
+	}
+
+	/// <summary>
+	/// Checks that Enter with plain text selected doesn't follow anything and scrolls a line, as with no selection.
+	/// </summary>
+	[AvaloniaFact]
+	public void Enter_WithPlainTextSelected_ScrollsInsteadOfFollowing()
+	{
+		// Arrange
+		string? followed = null;
+		this.pager.LinkClicked += (_, url) => followed = url;
+		this.View.Select(0, 4);
+
+		// Act
+		this.Press(Key.Enter, PhysicalKey.Enter);
+
+		// Assert
+		_ = followed.Should().BeNull();
+		_ = this.Scroller.Offset.Y.Should().BeGreaterThan(0);
+	}
+
+	/// <summary>
+	/// Checks that going back returns to where the earlier page was scrolled to.
+	/// </summary>
+	[AvaloniaFact]
+	public void Backspace_AfterScrollAndNavigate_RestoresScroll()
+	{
+		// Arrange
+		this.Press(Key.PageDown, PhysicalKey.PageDown);
+		var scrolled = this.Scroller.Offset.Y;
+		this.pager.Navigate("next", "the next page\n");
+		Dispatcher.UIThread.RunJobs();
+
+		// Act
+		this.Press(Key.Back, PhysicalKey.Backspace);
+
+		// Assert
+		_ = scrolled.Should().BeGreaterThan(0);
+		_ = this.Scroller.Offset.Y.Should().Be(scrolled);
+	}
+
+	/// <summary>
+	/// Checks that Tab on a page without links does nothing.
+	/// </summary>
+	[AvaloniaFact]
+	public void Tab_WithoutLinks_DoesNothing()
+	{
+		// Act
+		this.Press(Key.Tab, PhysicalKey.Tab);
+
+		// Assert
+		_ = this.View.SelectionLength.Should().Be(0);
+		_ = this.Scroller.Offset.Y.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that Enter on a link follows it without also scrolling a line.
+	/// </summary>
+	[AvaloniaFact]
+	public void Enter_OnLink_FollowsWithoutScrolling()
+	{
+		// Arrange
+		string? followed = null;
+		this.pager.LinkClicked += (_, url) => followed = url;
+		this.pager.Open("links", "\e]8;;https://a.test/top\e\\Top\e]8;;\e\\\n" + string.Concat(Enumerable.Repeat("text\n", 150)));
+		Dispatcher.UIThread.RunJobs();
+		this.Press(Key.Tab, PhysicalKey.Tab);
+
+		// Act
+		this.Press(Key.Enter, PhysicalKey.Enter);
+
+		// Assert
+		_ = followed.Should().Be("https://a.test/top");
+		_ = this.Scroller.Offset.Y.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that Shift+N goes to the previous match and N to the next, with a pattern that matches many lines so
+	/// the two directions differ.
+	/// </summary>
+	[AvaloniaFact]
+	public void ShiftNAndN_WithManyMatches_GoOppositeWays()
+	{
+		// Arrange
+		this.Search("line 19");
+		var first = this.View.TextArea.Selection.StartPosition.Line;
+
+		// Act
+		this.Press(Key.N, PhysicalKey.N, RawInputModifiers.Shift);
+		var previous = this.View.TextArea.Selection.StartPosition.Line;
+		this.Press(Key.N, PhysicalKey.N);
+		this.Press(Key.N, PhysicalKey.N);
+
+		// Assert
+		_ = first.Should().Be(20);
+		_ = previous.Should().Be(200);
+		_ = this.View.TextArea.Selection.StartPosition.Line.Should().Be(191);
+	}
+
+	/// <summary>
+	/// Checks that a new search starts from the top of the screen, not from where the last match was.
+	/// </summary>
+	[AvaloniaFact]
+	public void Search_AgainAfterScrollingUp_StartsFromTopOfScreen()
+	{
+		// Arrange
+		this.Search("line 19");
+		this.Press(Key.N, PhysicalKey.N);
+		this.Press(Key.G, PhysicalKey.G);
+
+		// Act
+		this.Search("line 19");
+
+		// Assert
+		_ = this.View.TextArea.Selection.StartPosition.Line.Should().Be(20);
+	}
+
+	/// <summary>
+	/// Checks that a match at the very start of the page is found.
+	/// </summary>
+	[AvaloniaFact]
+	public void Search_MatchAtStart_SelectsIt()
+	{
+		// Act
+		this.Search("name");
+
+		// Assert
+		_ = this.View.SelectedText.Should().Be("NAME");
+		_ = this.Status.Text.Should().StartWith("ls · q quit");
+	}
+
+	/// <summary>
+	/// Checks that text typed into the page, other than <c>/</c>, neither opens the search line nor changes the page.
+	/// </summary>
+	[AvaloniaFact]
+	public void TypedText_OtherThanSlash_ChangesNothing()
+	{
+		// Act
+		this.window.KeyTextInput("x");
+		Dispatcher.UIThread.RunJobs();
+
+		// Assert
+		_ = this.pager.GetVisualDescendants().OfType<TextBox>().Should().OnlyContain(box => !box.IsVisible);
+		_ = this.View.Text.Should().StartWith("NAME\n");
+		_ = this.View.IsReadOnly.Should().BeTrue();
+	}
+
+	/// <summary>
+	/// Checks that a line wider than the window stays one line, since man already formatted it to a width.
+	/// </summary>
+	[AvaloniaFact]
+	public void Open_LongLine_DoesNotWrap()
+	{
+		// Act
+		this.pager.Open("wide", new string('x', 400) + "\n");
+		Dispatcher.UIThread.RunJobs();
+		var textView = this.View.TextArea.TextView;
+		textView.EnsureVisualLines();
+
+		// Assert
+		_ = textView.VisualLines[0].TextLines.Should().ContainSingle();
+	}
+
 	private void Press(Key key, PhysicalKey physical, RawInputModifiers modifiers = RawInputModifiers.None)
 	{
 		this.window.KeyPress(key, modifiers, physical, null);
