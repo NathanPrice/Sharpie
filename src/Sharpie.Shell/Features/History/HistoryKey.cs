@@ -67,7 +67,7 @@ internal static class HistoryKey
 	/// <returns>
 	/// The key, or <see langword="null" /> when it can't be found or created.
 	/// </returns>
-	private static byte[]? LoadOrCreateWithTool(bool allowCreate, Func<string?> lookup, Func<string, bool> store)
+	internal static byte[]? LoadOrCreateWithTool(bool allowCreate, Func<string?> lookup, Func<string, bool> store)
 	{
 		if (lookup() is { } stored)
 		{

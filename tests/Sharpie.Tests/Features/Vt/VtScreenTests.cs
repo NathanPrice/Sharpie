@@ -407,4 +407,104 @@ public sealed class VtScreenTests
 		// Assert
 		_ = this.screen.GetLine(0).Text().Should().Be("ab      c");
 	}
+
+	/// <summary>
+	/// Checks that a reverse index on the top row scrolls the screen down, as pagers do to scroll back a line.
+	/// </summary>
+	[Fact]
+	public void Feed_ReverseIndexOnTopRow_ScrollsDown()
+	{
+		// Arrange
+		this.screen.Feed("a\r\nb\e[H");
+
+		// Act
+		this.screen.Feed("\eM");
+
+		// Assert
+		_ = new[] { this.screen.GetLine(0).Text(), this.screen.GetLine(1).Text(), this.screen.GetLine(2).Text() }
+			.Should().Equal(string.Empty, "a", "b");
+		_ = (this.screen.CursorRow, this.screen.CursorColumn).Should().Be((0, 0));
+	}
+
+	/// <summary>
+	/// Checks that each way of saving the cursor brings it back to where it was saved.
+	/// </summary>
+	/// <param name="save">The sequence that saves the cursor.</param>
+	/// <param name="restore">The sequence that restores it.</param>
+	[Theory]
+	[InlineData("\e7", "\e8")]
+	[InlineData("\e[s", "\e[u")]
+	[InlineData("\e[?1048h", "\e[?1048l")]
+	public void Feed_SaveThenRestoreCursor_ReturnsToSavedCell(string save, string restore)
+	{
+		// Arrange
+		this.screen.Feed($"\e[2;3H{save}\e[4;9H");
+
+		// Act
+		this.screen.Feed(restore);
+
+		// Assert
+		_ = (this.screen.CursorRow, this.screen.CursorColumn).Should().Be((1, 2));
+	}
+
+	/// <summary>
+	/// Checks that in origin mode cursor moves count from the scroll region's top and stop at its bottom.
+	/// </summary>
+	/// <param name="move">The cursor move.</param>
+	/// <param name="row">The screen row the cursor should land on.</param>
+	[Theory]
+	[InlineData("\e[H", 1)]
+	[InlineData("\e[2;1H", 2)]
+	[InlineData("\e[9;1H", 2)]
+	public void Feed_OriginMode_MovesWithinScrollRegion(string move, int row)
+	{
+		// Arrange
+		this.screen.Feed("\e[2;3r\e[?6h");
+
+		// Act
+		this.screen.Feed(move);
+
+		// Assert
+		_ = this.screen.CursorRow.Should().Be(row);
+	}
+
+	/// <summary>
+	/// Checks that with autowrap off, text past the last column keeps overwriting the last cell instead of wrapping.
+	/// </summary>
+	[Fact]
+	public void Feed_AutoWrapOff_OverwritesLastColumn()
+	{
+		// Act
+		this.screen.Feed("\e[?7l0123456789xy");
+
+		// Assert
+		_ = this.screen.GetText().Should().Be("012345678y");
+		_ = (this.screen.CursorRow, this.screen.CursorColumn).Should().Be((0, 9));
+	}
+
+	/// <summary>
+	/// Checks that the repeat sequence prints the last character again the given number of times.
+	/// </summary>
+	[Fact]
+	public void Feed_Repeat_PrintsLastCharacterAgain()
+	{
+		// Act
+		this.screen.Feed("x\e[3b");
+
+		// Assert
+		_ = this.screen.GetLine(0).Text().Should().Be("xxxx");
+	}
+
+	/// <summary>
+	/// Checks that with every tab stop cleared, a tab goes to the last column.
+	/// </summary>
+	[Fact]
+	public void Feed_TabAfterClearingAllStops_MovesToLastColumn()
+	{
+		// Act
+		this.screen.Feed("\e[3ga\t");
+
+		// Assert
+		_ = this.screen.CursorColumn.Should().Be(9);
+	}
 }
