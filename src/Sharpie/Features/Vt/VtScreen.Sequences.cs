@@ -164,7 +164,9 @@ internal sealed partial class VtScreen
 		// Cursor moves and edits cancel a wrap waiting at the end of the row. Styles, reports and modes leave it.
 		this.pendingWrap &= final is 'm' or 'n' or 'c' or 't' or 'h' or 'l';
 
-		_ = this.MoveCursor(final, count, parameters) || this.Edit(final, first, count, parameters);
+		// The two handle different final characters, so each ignores the other's.
+		this.MoveCursor(final, count, parameters);
+		this.Edit(final, first, count, parameters);
 	}
 
 	/// <summary>
@@ -173,52 +175,69 @@ internal sealed partial class VtScreen
 	/// <param name="final">The sequence's final character.</param>
 	/// <param name="count">The first parameter, at least 1.</param>
 	/// <param name="parameters">All the parameters, with -1 for one left empty.</param>
-	/// <returns>
-	/// <see langword="true" /> when <paramref name="final" /> was a cursor move.
-	/// </returns>
-	private bool MoveCursor(char final, int count, ReadOnlySpan<int> parameters)
+	private void MoveCursor(char final, int count, ReadOnlySpan<int> parameters)
 	{
 		switch (final)
 		{
 			case 'A':
-				this.CursorRow = Math.Max(this.CursorRow >= this.top ? this.top : 0, this.CursorRow - count);
-				return true;
+				this.CursorRow = this.RowAbove(count);
+				break;
 			case 'B' or 'e':
-				this.CursorRow = Math.Min(this.CursorRow <= this.bottom ? this.bottom : this.Rows - 1, this.CursorRow + count);
-				return true;
+				this.CursorRow = this.RowBelow(count);
+				break;
 			case 'C' or 'a':
 				this.CursorColumn = Math.Min(this.Columns - 1, this.CursorColumn + count);
-				return true;
+				break;
 			case 'D':
 				this.CursorColumn = Math.Max(0, this.CursorColumn - count);
-				return true;
+				break;
 			case 'E':
 				this.CursorColumn = 0;
-				this.CursorRow = Math.Min(this.bottom, this.CursorRow + count);
-				return true;
+				this.CursorRow = this.RowBelow(count);
+				break;
 			case 'F':
 				this.CursorColumn = 0;
-				this.CursorRow = Math.Max(this.top, this.CursorRow - count);
-				return true;
+				this.CursorRow = this.RowAbove(count);
+				break;
 			case 'G' or '`':
 				this.CursorColumn = Math.Clamp(count - 1, 0, this.Columns - 1);
-				return true;
+				break;
 			case 'H' or 'f':
 				this.MoveTo(count - 1, Math.Max(1, parameters.Length > 1 ? parameters[1] : 1) - 1);
-				return true;
+				break;
 			case 'I':
 				this.TabForward(count);
-				return true;
+				break;
 			case 'Z':
 				this.TabBack(count);
-				return true;
+				break;
 			case 'd':
 				this.MoveTo(count - 1, this.CursorColumn);
-				return true;
+				break;
 			default:
-				return false;
+				break;
 		}
 	}
+
+	/// <summary>
+	/// Finds the row a cursor move up ends on.
+	/// </summary>
+	/// <param name="count">How many rows to move.</param>
+	/// <returns>
+	/// The row, stopped at the scroll region's top when the cursor starts in or below the region, or at the screen's
+	/// top when it starts above it.
+	/// </returns>
+	private int RowAbove(int count) => Math.Max(this.CursorRow >= this.top ? this.top : 0, this.CursorRow - count);
+
+	/// <summary>
+	/// Finds the row a cursor move down ends on.
+	/// </summary>
+	/// <param name="count">How many rows to move.</param>
+	/// <returns>
+	/// The row, stopped at the scroll region's bottom when the cursor starts in or above the region, or at the
+	/// screen's bottom when it starts below it.
+	/// </returns>
+	private int RowBelow(int count) => Math.Min(this.CursorRow <= this.bottom ? this.bottom : this.Rows - 1, this.CursorRow + count);
 
 	/// <summary>
 	/// Acts on a CSI sequence that edits the screen, sets a mode or style, or asks for a report.
@@ -227,73 +246,70 @@ internal sealed partial class VtScreen
 	/// <param name="first">The first parameter, or -1 when it was left empty.</param>
 	/// <param name="count">The first parameter, at least 1.</param>
 	/// <param name="parameters">All the parameters, with -1 for one left empty.</param>
-	/// <returns>
-	/// <see langword="true" /> when the sequence was known.
-	/// </returns>
-	private bool Edit(char final, int first, int count, ReadOnlySpan<int> parameters)
+	private void Edit(char final, int first, int count, ReadOnlySpan<int> parameters)
 	{
 		switch (final)
 		{
 			case '@':
 				this.InsertBlanks(count);
-				return true;
+				break;
 			case 'J':
 				this.EraseInDisplay(Math.Max(0, first));
-				return true;
+				break;
 			case 'K':
 				this.EraseInLine(Math.Max(0, first));
-				return true;
+				break;
 			case 'L':
 				this.InsertLines(count);
-				return true;
+				break;
 			case 'M':
 				this.DeleteLines(count);
-				return true;
+				break;
 			case 'P':
 				this.DeleteCells(count);
-				return true;
+				break;
 			case 'S':
 				this.ScrollUp(count);
-				return true;
+				break;
 			case 'T':
 				this.ScrollDown(count);
-				return true;
+				break;
 			case 'X':
 				this.Erase(this.CursorRow, this.CursorColumn, this.CursorColumn + count);
-				return true;
+				break;
 			case 'b':
 				this.Repeat(count);
-				return true;
+				break;
 			case 'c':
 				// Primary device attributes: a VT220 with ANSI color.
 				this.reply("\e[?62;22c");
-				return true;
+				break;
 			case 'g':
 				this.ClearTabStops(Math.Max(0, first));
-				return true;
+				break;
 			case 'h' or 'l':
 				this.InsertMode = parameters.Contains(4) ? final == 'h' : this.InsertMode;
-				return true;
+				break;
 			case 'm':
 				this.SetStyle(AnsiParser.ApplySgr(this.style, parameters));
-				return true;
+				break;
 			case 'n':
 				this.Report(first);
-				return true;
+				break;
 			case 'r':
 				this.SetScrollRegion(count - 1, (parameters.Length > 1 && parameters[1] > 0 ? parameters[1] : this.Rows) - 1);
-				return true;
+				break;
 			case 's':
 				this.SaveCursor();
-				return true;
+				break;
 			case 't':
 				this.ReportWindow(first);
-				return true;
+				break;
 			case 'u':
 				this.RestoreCursor();
-				return true;
+				break;
 			default:
-				return false;
+				break;
 		}
 	}
 
