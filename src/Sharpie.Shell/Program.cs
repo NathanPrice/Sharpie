@@ -6,6 +6,7 @@ using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Aliases;
 using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Features.Completion;
+using Sharpie.Shell.Features.DotNetDocs;
 using Sharpie.Shell.Features.History;
 using Sharpie.Shell.Features.Jobs;
 using Sharpie.Shell.Features.LineEditing;
@@ -80,6 +81,7 @@ internal static class Program
 			new BgCommand(),
 			new HistoryCommand(),
 			new DeclareCommand(),
+			new DmanCommand(),
 
 			// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
 			new TypeCommand(commands, alias.Aliases)
@@ -178,7 +180,8 @@ internal static class Program
 
 			history.Record(line);
 
-			if (inWindow && editor is not null && CommandLine.ManArguments(line) is { } manArguments && ManPageExists(manArguments))
+			if (inWindow && editor is not null && CommandLine.PagedCommand(line) is { } paged
+				&& (paged[0] == "man" ? ManPageExists(paged[1..]) : DmanCommand.Find(paged[1..])))
 			{
 				Console.Write($"\e]{ManPageOsc}{Convert.ToBase64String(Encoding.UTF8.GetBytes(line))}\a");
 				took = TimeSpan.Zero;

@@ -18,4 +18,49 @@
   <data name="CdTooManyArguments" xml:space="preserve">
     <value>cd: too many arguments</value>
   </data>
+  <data name="DmanUsage" xml:space="preserve">
+    <value>usage: dman [-vb] NAME | dman --download   (NAME is a C# or VB keyword, a .NET namespace, type or member like String.Split, or a learn.microsoft.com address)</value>
+  </data>
+  <data name="DmanNotFound" xml:space="preserve">
+    <value>dman: no .NET or language page for '{0}'</value>
+  </data>
+  <data name="DmanDownloadingIndex" xml:space="preserve">
+    <value>dman: downloading the {0} name index, only needed once...</value>
+  </data>
+  <data name="DmanNameSeparator" xml:space="preserve">
+    <value> - </value>
+  </data>
+  <data name="DmanListSeparator" xml:space="preserve">
+    <value>, </value>
+  </data>
+  <data name="DmanThrows" xml:space="preserve">
+    <value>Throws </value>
+  </data>
+  <data name="DmanNamespace" xml:space="preserve">
+    <value>Namespace: </value>
+  </data>
+  <data name="DmanAssembly" xml:space="preserve">
+    <value>    Assembly: {0}</value>
+  </data>
+  <data name="DmanTypePageHint" xml:space="preserve">
+    <value> for a type's page.</value>
+  </data>
+  <data name="DmanDownloadBusy" xml:space="preserve">
+    <value>dman: another shell is already downloading the docs.</value>
+  </data>
+  <data name="DmanDownloadingApi" xml:space="preserve">
+    <value>dman: downloading the .NET API docs from GitHub, one archive of about 140 MB that unpacks to about 600 MB...</value>
+  </data>
+  <data name="DmanDownloadProgress" xml:space="preserve">
+    <value>dman: {0} files saved</value>
+  </data>
+  <data name="DmanDownloadingKeywords" xml:space="preserve">
+    <value>dman: downloading the C# and Visual Basic keyword pages...</value>
+  </data>
+  <data name="DmanDownloadDone" xml:space="preserve">
+    <value>dman: saved {0} API files and {1} keyword pages in {2}. dman downloads them again in the background once they're a week old.</value>
+  </data>
+  <data name="DmanDownloadFailed" xml:space="preserve">
+    <value>dman: the download stopped: {0}</value>
+  </data>
 </root>

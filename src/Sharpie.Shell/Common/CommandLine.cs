@@ -272,19 +272,21 @@ internal static class CommandLine
 	}
 
 	/// <summary>
-	/// Gets the arguments of a line that only runs <c>man</c>, which the terminal window shows in its own reader.
+	/// Gets the words of a line that only runs <c>man</c> or <c>dman</c>, which the terminal window shows in its own
+	/// reader.
 	/// </summary>
 	/// <param name="line">The line the user entered.</param>
 	/// <returns>
-	/// The arguments after <c>man</c>, or <see langword="null" /> when the line is anything else, including
-	/// <c>man</c> with no page or with a redirect or pipe. The shell runs those itself, and the page prints as text.
+	/// The words, starting with <c>man</c> or <c>dman</c>, or <see langword="null" /> when the line is anything else,
+	/// including either command with no page or with a redirect or pipe. The shell runs those itself, and the page
+	/// prints as text.
 	/// </returns>
-	public static string[]? ManArguments(string line)
+	public static string[]? PagedCommand(string line)
 	{
 		var (words, outputPath, _, errorPath, _) = SplitRedirect(Split(line.ArgumentNotNull()));
 
-		return words is ["man", _, ..] && outputPath is null && errorPath is null && !words.Contains("|")
-			? words[1..]
+		return words is ["man" or "dman", _, ..] && outputPath is null && errorPath is null && !words.Contains("|")
+			? words
 			: null;
 	}
 }

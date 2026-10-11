@@ -58,6 +58,7 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 
 		this.pager = new ManPager(TerminalView.Font, TerminalView.FontSize, Palette.Text, Palette.Muted, Palette.Selection, new StylePainter().For);
 		this.pager.Closed += this.OnPagerClosed;
+		this.pager.LinkClicked += this.OnPagerLinkClicked;
 
 		this.Children.AddRange([this.view, this.scrollBar, this.pager]);
 

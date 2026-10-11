@@ -35,6 +35,14 @@ internal readonly record struct AnsiStyle(AnsiColor? Foreground, AnsiColor? Back
 internal readonly record struct AnsiRun(int Start, int Length, AnsiStyle Style);
 
 /// <summary>
+/// A part of the plain text <see cref="AnsiParser.Parse" /> writes out that links somewhere, from an OSC 8 hyperlink.
+/// </summary>
+/// <param name="Start">The index of the first character in the plain text.</param>
+/// <param name="Length">The number of characters covered.</param>
+/// <param name="Uri">The address the text links to.</param>
+internal readonly record struct AnsiLink(int Start, int Length, string Uri);
+
+/// <summary>
 /// Takes the color codes out of program output and reports which parts of the remaining text they styled.
 /// </summary>
 /// <remarks>
@@ -45,6 +53,10 @@ internal readonly record struct AnsiRun(int Start, int Length, AnsiStyle Style);
 /// </remarks>
 internal sealed class AnsiParser
 {
+	// The address of the OSC 8 link the text is inside, and where in the plain text it began. Null outside a link.
+	private string? linkUri;
+	private int linkStart;
+
 	// Most programs use fewer than six parameters. Extra ones are ignored instead of growing the buffer.
 	private const int MaxParameters = 32;
 
@@ -74,7 +86,11 @@ internal sealed class AnsiParser
 	/// <param name="text">The next chunk of program output.</param>
 	/// <param name="plain">Receives the text to show.</param>
 	/// <param name="runs">Receives the styled parts, with offsets into <paramref name="plain" />.</param>
-	public void Parse(ReadOnlySpan<char> text, StringBuilder plain, List<AnsiRun> runs)
+	/// <param name="links">
+	/// Receives the OSC 8 hyperlinks, with offsets into <paramref name="plain" />; or <see langword="null" /> to keep
+	/// <c>ESC ]</c> sequences in the text as before, for the terminal screen, which reads them itself.
+	/// </param>
+	public void Parse(ReadOnlySpan<char> text, StringBuilder plain, List<AnsiRun> runs, List<AnsiLink>? links = null)
 	{
 		_ = plain.ArgumentNotNull();
 		_ = runs.ArgumentNotNull();
@@ -147,6 +163,18 @@ internal sealed class AnsiParser
 				break;
 			}
 
+			if (links is not null && text.StartsWith("\e]8;"))
+			{
+				if (!this.ParseHyperlink(ref text, plain, links))
+				{
+					_ = this.pending.Append(text);
+
+					break;
+				}
+
+				continue;
+			}
+
 			if (text[1] != '[')
 			{
 				_ = plain.Append('\e');
@@ -180,6 +208,43 @@ internal sealed class AnsiParser
 		}
 
 		this.CloseRun(plain, runs, ref runStart);
+	}
+
+	/// <summary>
+	/// Reads one OSC 8 sequence, <c>ESC ] 8 ; params ; URI</c> ended by BEL or <c>ESC \</c>, which starts a link, or
+	/// ends the open one when the URI is empty.
+	/// </summary>
+	/// <param name="text">The output, starting at the sequence, which is moved past it.</param>
+	/// <param name="plain">The plain text so far, whose length is where the link starts or ends.</param>
+	/// <param name="links">Receives the link once it ends.</param>
+	/// <returns>
+	/// <see langword="false" /> when the sequence isn't complete yet and has to wait for the next chunk.
+	/// </returns>
+	private bool ParseHyperlink(ref ReadOnlySpan<char> text, StringBuilder plain, List<AnsiLink> links)
+	{
+		var bell = text.IndexOf('\a');
+		var terminator = text.IndexOf("\e\\");
+		var end = bell < 0 ? terminator : terminator < 0 ? bell : Math.Min(bell, terminator);
+
+		if (end < 0)
+		{
+			return false;
+		}
+
+		var body = text[4..end];
+		var separator = body.IndexOf(';');
+		var uri = separator < 0 ? string.Empty : body[(separator + 1)..].ToString();
+
+		if (this.linkUri is not null && plain.Length > this.linkStart)
+		{
+			links.Add(new AnsiLink(this.linkStart, plain.Length - this.linkStart, this.linkUri));
+		}
+
+		this.linkUri = uri.Length == 0 ? null : uri;
+		this.linkStart = plain.Length;
+		text = text[(end + (end == bell ? 1 : 2))..];
+
+		return true;
 	}
 
 	/// <summary>

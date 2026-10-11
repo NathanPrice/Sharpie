@@ -279,4 +279,27 @@ public sealed class CommandLineTests
 		// Assert
 		_ = act.Should().Throw<ArgumentNullException>();
 	}
+
+	/// <summary>
+	/// Checks that a line running only <c>man</c> or <c>dman</c> with a page name is handed to the window's reader with
+	/// all its words, and anything else is left for the shell to run.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="expected">The words the window gets, or <see langword="null" /> when the shell runs the line.</param>
+	[Theory]
+	[InlineData("man ls", new[] { "man", "ls" })]
+	[InlineData("dman -vb Select", new[] { "dman", "-vb", "Select" })]
+	[InlineData("dman String.Split", new[] { "dman", "String.Split" })]
+	[InlineData("dman", null)]
+	[InlineData("dman List > out.txt", null)]
+	[InlineData("dman List | less", null)]
+	[InlineData("echo dman", null)]
+	public void PagedCommand_Line_ReturnsWordsForReader(string line, string[]? expected)
+	{
+		// Act
+		var result = CommandLine.PagedCommand(line);
+
+		// Assert
+		_ = result.Should().BeEquivalentTo(expected, options => options.WithStrictOrdering());
+	}
 }

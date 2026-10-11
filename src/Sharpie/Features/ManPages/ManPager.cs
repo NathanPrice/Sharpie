@@ -22,7 +22,7 @@ namespace Sharpie.Features.ManPages;
 /// <c>less</c> itself can't run in the window, because the shell and the programs it starts write to pipes rather
 /// than a terminal. This stands in for it, the way less takes over the screen until <c>q</c>.
 /// </remarks>
-internal sealed class ManPager : DockPanel
+internal sealed partial class ManPager : DockPanel
 {
 	private readonly TextEditor view;
 	private readonly TextBlock status;
@@ -42,7 +42,22 @@ internal sealed class ManPager : DockPanel
 		[Key.Escape] = static (pager, e) => pager.quitKey = e.Key,
 		[Key.J] = static (pager, _) => pager.Scroller?.LineDown(),
 		[Key.Down] = static (pager, _) => pager.Scroller?.LineDown(),
-		[Key.Enter] = static (pager, _) => pager.Scroller?.LineDown(),
+		[Key.Enter] = static (pager, _) =>
+		{
+			if (!pager.FollowSelectedLink())
+			{
+				pager.Scroller?.LineDown();
+			}
+		},
+		[Key.Tab] = static (pager, e) => pager.SelectLink(forward: !e.KeyModifiers.HasFlag(KeyModifiers.Shift)),
+		[Key.Back] = static (pager, _) => pager.Back(),
+		[Key.Left] = static (pager, e) =>
+		{
+			if (e.KeyModifiers.HasFlag(KeyModifiers.Alt))
+			{
+				pager.Back();
+			}
+		},
 		[Key.K] = static (pager, _) => pager.Scroller?.LineUp(),
 		[Key.Up] = static (pager, _) => pager.Scroller?.LineUp(),
 		[Key.Space] = static (pager, _) => pager.Scroller?.PageDown(),
@@ -122,8 +137,14 @@ internal sealed class ManPager : DockPanel
 			Padding = new Thickness(16),
 		};
 
+		// AvaloniaEdit lets an editor scroll a screen past the last line by default. A reader stops at the end, like less.
+		this.view.Options.AllowScrollBelowDocument = false;
+
 		// A reader has nothing to type into, so the caret is hidden. Selecting text to copy still works.
 		this.view.TextArea.Caret.CaretBrush = Brushes.Transparent;
+
+		// On the TextView, not the TextArea: AvaloniaEdit puts its own I-beam there, and the innermost cursor wins.
+		this.view.TextArea.TextView.Cursor = ArrowCursor;
 		this.view.TextArea.SelectionBrush = selection;
 		this.view.TextArea.SelectionBorder = null;
 		this.view.TextArea.TextView.LineTransformers.Add(new RunColorizer(this));
@@ -131,6 +152,9 @@ internal sealed class ManPager : DockPanel
 
 		// On the pager rather than the text, so the keys work whichever part of the page has focus.
 		this.AddHandler(KeyDownEvent, this.OnKeyDown, RoutingStrategies.Tunnel);
+		this.view.TextArea.AddHandler(PointerReleasedEvent, this.OnPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
+		// Bubble, so it runs after AvaloniaEdit's own handler, which puts the I-beam back on every move.
+		this.view.TextArea.AddHandler(PointerMovedEvent, this.OnPointerMoved, RoutingStrategies.Bubble, handledEventsToo: true);
 		this.AddHandler(TextInputEvent, this.OnTextInput, RoutingStrategies.Tunnel);
 		this.AddHandler(KeyUpEvent, this.OnKeyUp, RoutingStrategies.Tunnel);
 
@@ -160,17 +184,31 @@ internal sealed class ManPager : DockPanel
 	public event EventHandler? Closed;
 
 	/// <summary>
-	/// Shows <paramref name="output" /> from the top and gives the page the keyboard.
+	/// Shows <paramref name="output" /> from the top as a new page, with no history to go back to, and gives the page
+	/// the keyboard.
 	/// </summary>
 	/// <param name="title">The page name for the status line, such as <c>ls</c>.</param>
 	/// <param name="output">What man printed, with its overstrike and color codes.</param>
 	public void Open(string title, string output)
 	{
+		this.history.Clear();
+		this.Show(title, output);
+	}
+
+	/// <summary>
+	/// Shows a page from the top and gives it the keyboard.
+	/// </summary>
+	/// <param name="title">The page name for the status line.</param>
+	/// <param name="output">The page, with its overstrike, color codes and links.</param>
+	private void Show(string title, string output)
+	{
 		var plain = new StringBuilder();
 
 		this.runs.Clear();
-		new AnsiParser().Parse(output, plain, this.runs);
+		this.links.Clear();
+		new AnsiParser().Parse(output, plain, this.runs, this.links);
 
+		this.output = output;
 		this.view.Text = plain.ToString();
 		this.view.ScrollToHome();
 		this.view.CaretOffset = 0;
@@ -350,14 +388,21 @@ internal sealed class ManPager : DockPanel
 		}
 
 		this.view.Select(match, this.pattern.Length);
+		this.ScrollTo(match);
+	}
 
-		// Placed a third of the way down so the lines just before the match stay in view.
+	/// <summary>
+	/// Scrolls so the line holding an offset sits a third of the way down, so the lines just before it stay in view.
+	/// </summary>
+	/// <param name="offset">The document offset.</param>
+	private void ScrollTo(int offset)
+	{
 		if (this.Scroller is not { } scroller)
 		{
 			return;
 		}
 
-		var line = this.view.Document.GetLineByOffset(match).LineNumber;
+		var line = this.view.Document.GetLineByOffset(offset).LineNumber;
 		var top = this.view.TextArea.TextView.GetVisualTopByDocumentLine(line);
 
 		scroller.Offset = new Vector(scroller.Offset.X, Math.Max(0, top - (scroller.Viewport.Height / 3)));
@@ -392,41 +437,26 @@ internal sealed class ManPager : DockPanel
 	/// </summary>
 	private void ShowHints()
 	{
-		this.status.Text = $"{this.title} · q quit · / search · n/N next/prev · space/b page · g/G top/end";
+		this.status.Text = $"{this.title} · q quit · / search · n/N next/prev · space/b page · g/G top/end"
+			+ (this.links.Count > 0 ? " · Tab/Enter links" : string.Empty)
+			+ (this.history.Count > 0 ? " · Backspace back" : string.Empty);
 		this.status.IsVisible = true;
 	}
 
 	/// <summary>
-	/// Colors the page with the runs <see cref="AnsiParser" /> found in it.
+	/// Colors the page with the runs <see cref="AnsiParser" /> found in it, and draws its links cyan and underlined.
 	/// </summary>
 	/// <param name="pager">The pager whose runs are drawn.</param>
 	private sealed class RunColorizer(ManPager pager) : DocumentColorizingTransformer
 	{
+		private static readonly AnsiStyle LinkStyle = new(new AnsiColor(6, 0), null, Bold: false);
+
 		/// <inheritdoc />
 		protected override void ColorizeLine(DocumentLine line)
 		{
 			var runs = pager.runs;
 
-			// Runs are in text order, so a binary search finds the first one that can reach this line. A long page
-			// has thousands, and only the few on this line need checking.
-			var low = 0;
-			var high = runs.Count;
-
-			while (low < high)
-			{
-				var middle = (low + high) / 2;
-
-				if (runs[middle].Start + runs[middle].Length <= line.Offset)
-				{
-					low = middle + 1;
-				}
-				else
-				{
-					high = middle;
-				}
-			}
-
-			for (var index = low; index < runs.Count && runs[index].Start < line.EndOffset; index++)
+			for (var index = FirstReaching(runs.Count, item => runs[item].Start + runs[item].Length, line.Offset); index < runs.Count && runs[index].Start < line.EndOffset; index++)
 			{
 				var run = runs[index];
 				var start = Math.Max(run.Start, line.Offset);
@@ -437,6 +467,61 @@ internal sealed class ManPager : DockPanel
 					this.ChangeLinePart(start, end, pager.paint(run.Style));
 				}
 			}
+
+			var links = pager.links;
+
+			// Cyan, since man draws bold in the same blue most links are written in, and the underline alone was easy
+			// to miss. Nothing else in man or dman prose is cyan; code examples use it, but code never has links.
+			var link = pager.paint(LinkStyle);
+
+			for (var index = FirstReaching(links.Count, item => links[item].Start + links[item].Length, line.Offset); index < links.Count && links[index].Start < line.EndOffset; index++)
+			{
+				var start = Math.Max(links[index].Start, line.Offset);
+				var end = Math.Min(links[index].Start + links[index].Length, line.EndOffset);
+
+				if (start < end)
+				{
+					this.ChangeLinePart(start, end, element =>
+					{
+						link(element);
+						element.TextRunProperties.SetTextDecorations(TextDecorations.Underline);
+					});
+				}
+			}
+		}
+
+		/// <summary>
+		/// Finds the first item, in a list sorted by position, that reaches past an offset.
+		/// </summary>
+		/// <param name="count">The number of items.</param>
+		/// <param name="end">Gets where an item ends.</param>
+		/// <param name="offset">The offset, like the start of a line.</param>
+		/// <returns>
+		/// The index of that item, or <paramref name="count" /> when none does.
+		/// </returns>
+		/// <remarks>
+		/// A binary search, since a long page has thousands of runs and only the few on the line being drawn matter.
+		/// </remarks>
+		private static int FirstReaching(int count, Func<int, int> end, int offset)
+		{
+			var low = 0;
+			var high = count;
+
+			while (low < high)
+			{
+				var middle = (low + high) / 2;
+
+				if (end(middle) <= offset)
+				{
+					low = middle + 1;
+				}
+				else
+				{
+					high = middle;
+				}
+			}
+
+			return low;
 		}
 	}
 }

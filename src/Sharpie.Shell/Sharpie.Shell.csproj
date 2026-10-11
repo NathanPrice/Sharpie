@@ -36,6 +36,10 @@
          vulnerabilities (NU1903). Pinned to the patched version Spargine's own Tester package uses. -->
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
+    <!-- dman colors the code in examples by asking the compiler what each name is: type, method, parameter or
+         variable. A token-based guess can't tell a type from a variable in Console.WriteLine. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic" Version="4.14.0" />
   </ItemGroup>
 
 </Project>

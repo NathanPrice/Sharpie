@@ -224,4 +224,25 @@ public sealed class AnsiParserTests
 		_ = this.plain.ToString().Should().Be("ok\n");
 		_ = this.runs.Should().Equal(new AnsiRun(0, 3, new AnsiStyle(new AnsiColor(2, 0), null, Bold: false)));
 	}
+
+	/// <summary>
+	/// Checks that OSC 8 hyperlinks, ended by either terminator, are taken out of the text and reported as links when
+	/// the caller asks for them.
+	/// </summary>
+	/// <param name="terminator">The sequence that ends each OSC 8 command.</param>
+	[Theory]
+	[InlineData("\e\\")]
+	[InlineData("\a")]
+	public void Parse_Hyperlink_ReportsLink(string terminator)
+	{
+		// Arrange
+		var links = new List<AnsiLink>();
+
+		// Act
+		this.parser.Parse($"a \e]8;;https://x.test{terminator}link\e]8;;{terminator} b", this.plain, this.runs, links);
+
+		// Assert
+		_ = this.plain.ToString().Should().Be("a link b");
+		_ = links.Should().Equal(new AnsiLink(2, 4, "https://x.test"));
+	}
 }

@@ -1,4 +1,5 @@
 using System.Text;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -7,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AvaloniaEdit;
+using AvaloniaEdit.Rendering;
 using FluentAssertions;
 using Sharpie.Features.ManPages;
 
@@ -232,6 +234,157 @@ public sealed class ManPagerTests
 		Dispatcher.UIThread.RunJobs();
 		this.window.KeyTextInput(pattern);
 		this.Press(Key.Enter, PhysicalKey.Enter);
+	}
+
+	/// <summary>
+	/// Checks that Tab selects the page's links in turn and Enter follows the selected one.
+	/// </summary>
+	[AvaloniaFact]
+	public void TabThenEnter_FollowsSecondLink()
+	{
+		// Arrange
+		string? followed = null;
+
+		this.pager.LinkClicked += (_, url) => followed = url;
+		this.pager.Open("links", "see \e]8;;https://a.test/one\e\\One\e]8;;\e\\ and \e]8;;https://a.test/two\e\\Two\e]8;;\e\\\n");
+		Dispatcher.UIThread.RunJobs();
+
+		// Act
+		this.Press(Key.Tab, PhysicalKey.Tab);
+		this.Press(Key.Tab, PhysicalKey.Tab);
+		var selected = this.View.SelectedText;
+		this.Press(Key.Enter, PhysicalKey.Enter);
+
+		// Assert
+		_ = this.View.Text.Should().Be("see One and Two\n");
+		_ = selected.Should().Be("Two");
+		_ = followed.Should().Be("https://a.test/two");
+	}
+
+	/// <summary>
+	/// Checks that Backspace goes back from a page a link led to, and does nothing on the first page.
+	/// </summary>
+	[AvaloniaFact]
+	public void Backspace_AfterNavigate_ShowsPreviousPage()
+	{
+		// Arrange
+		this.pager.Navigate("next", "the next page\n");
+		Dispatcher.UIThread.RunJobs();
+
+		// Act
+		this.Press(Key.Back, PhysicalKey.Backspace);
+		var back = this.View.Text;
+		this.Press(Key.Back, PhysicalKey.Backspace);
+
+		// Assert
+		_ = back.Should().StartWith("NAME\n");
+		_ = this.View.Text.Should().StartWith("NAME\n");
+		_ = this.closed.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that the pointer is the plain arrow over text and turns into a hand over a link.
+	/// </summary>
+	[AvaloniaFact]
+	public void PointerMove_OverLink_ShowsHandElsewhereArrow()
+	{
+		// Arrange
+		this.pager.Open("links", "\e]8;;https://a.test/one\e\\One\e]8;;\e\\ plain text here\n");
+		Dispatcher.UIThread.RunJobs();
+
+		var textView = this.View.TextArea.TextView;
+
+		// Act
+		this.window.MouseMove(this.PointAt(1, 2));
+		var overLink = textView.Cursor;
+		this.window.MouseMove(this.PointAt(1, 12));
+
+		// Assert
+		_ = overLink.Should().BeSameAs(ManPager.HandCursor);
+		_ = textView.Cursor.Should().BeSameAs(ManPager.ArrowCursor);
+	}
+
+	/// <summary>
+	/// Checks that clicking a link follows it once and leaves no drag-select running, so moving the mouse afterwards
+	/// doesn't select text.
+	/// </summary>
+	[AvaloniaFact]
+	public void ClickLink_ThenMove_FollowsOnceWithoutSelecting()
+	{
+		// Arrange
+		var followed = new List<string>();
+
+		this.pager.LinkClicked += (_, url) => followed.Add(url);
+		this.pager.Open("links", "\e]8;;https://a.test/one\e\\One\e]8;;\e\\ plain text here\nsecond line of plain text\n");
+		Dispatcher.UIThread.RunJobs();
+
+		// Act
+		this.window.MouseDown(this.PointAt(1, 2), MouseButton.Left);
+		this.window.MouseUp(this.PointAt(1, 2), MouseButton.Left);
+		Dispatcher.UIThread.RunJobs();
+		this.window.MouseMove(this.PointAt(2, 15));
+		Dispatcher.UIThread.RunJobs();
+
+		// Assert
+		_ = followed.Should().Equal("https://a.test/one");
+		_ = this.View.SelectionLength.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that dragging from a link selects text to copy instead of following the link.
+	/// </summary>
+	[AvaloniaFact]
+	public void DragFromLink_SelectsWithoutFollowing()
+	{
+		// Arrange
+		var followed = false;
+
+		this.pager.LinkClicked += (_, _) => followed = true;
+		this.pager.Open("links", "\e]8;;https://a.test/one\e\\One\e]8;;\e\\ plain text here\n");
+		Dispatcher.UIThread.RunJobs();
+
+		// Act
+		this.window.MouseDown(this.PointAt(1, 2), MouseButton.Left);
+		this.window.MouseMove(this.PointAt(1, 12));
+		this.window.MouseUp(this.PointAt(1, 12), MouseButton.Left);
+		Dispatcher.UIThread.RunJobs();
+
+		// Assert
+		_ = this.View.SelectionLength.Should().BeGreaterThan(0);
+		_ = followed.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that the page can't be scrolled past its last line, so the end of the page sits at the bottom of the
+	/// reader, as in less.
+	/// </summary>
+	[AvaloniaFact]
+	public void ShiftG_LastLineSitsAtBottom()
+	{
+		// Act
+		this.Press(Key.G, PhysicalKey.G, RawInputModifiers.Shift);
+
+		// Assert
+		var textView = this.View.TextArea.TextView;
+		var lastLineBottom = textView.DocumentHeight - this.Scroller.Offset.Y;
+
+		_ = lastLineBottom.Should().BeGreaterThan(this.Scroller.Viewport.Height - (2 * textView.DefaultLineHeight));
+	}
+
+	/// <summary>
+	/// Gets the window point in the middle of a character of the page.
+	/// </summary>
+	/// <param name="line">The line, from 1.</param>
+	/// <param name="column">The column, from 1.</param>
+	/// <returns>
+	/// The point, in window coordinates.
+	/// </returns>
+	private Point PointAt(int line, int column)
+	{
+		var textView = this.View.TextArea.TextView;
+		var visual = textView.GetVisualPosition(new TextViewPosition(line, column), VisualYPosition.LineMiddle) - textView.ScrollOffset;
+
+		return textView.TranslatePoint(visual, this.window)!.Value;
 	}
 
 	private static string BuildPage()

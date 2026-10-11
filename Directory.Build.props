@@ -10,4 +10,10 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <!-- Sharpie's own text is English only. The Roslyn compiler dman uses to color code ships its error messages in 13
+       languages (about 11 MB), and dman never shows them. -->
+  <PropertyGroup>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
 </Project>
