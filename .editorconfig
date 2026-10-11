@@ -8,9 +8,9 @@ root = true
 [*]
 charset = utf-8
 csharp_style_prefer_method_group_conversion = true:silent
-csharp_style_prefer_primary_constructors = true:suggestion
+csharp_style_prefer_primary_constructors = true:warning
 csharp_style_prefer_top_level_statements = true:silent
-end_of_line = crlf
+end_of_line = lf
 indent_size = 4
 indent_style = tab
 insert_final_newline = true
@@ -57,7 +57,7 @@ end_of_line = lf
 
 # Batch Files
 [*.{cmd,bat}]
-end_of_line = crlf
+end_of_line = lf
 
 # Web Files
 [*.{htm,html,js,jsm,ts,tsx,cjs,cts,ctsx,mjs,mts,mtsx,css,sass,scss,less,pcss,svg,vue}]
@@ -237,10 +237,10 @@ dotnet_naming_symbols.type_parameter_symbol.applicable_accessibilities = *
 dotnet_naming_symbols.type_parameter_symbol.applicable_kinds = type_parameter
 
 # Instance fields are camelCase and start with _
-dotnet_naming_rule.camel_case_for_private_internal_fields.severity = suggestion
+dotnet_naming_rule.camel_case_for_private_internal_fields.severity = warning
 dotnet_naming_rule.camel_case_for_private_internal_fields.style = camel_case_underscore_style
 dotnet_naming_rule.camel_case_for_private_internal_fields.symbols = private_internal_fields
-dotnet_naming_rule.instance_fields_should_be_camel_case.severity = suggestion
+dotnet_naming_rule.instance_fields_should_be_camel_case.severity = warning
 dotnet_naming_rule.instance_fields_should_be_camel_case.style = camel_case_underscore_style
 dotnet_naming_rule.instance_fields_should_be_camel_case.symbols = instance_fields
 dotnet_naming_style.camel_case_underscore_style.capitalization = camel_case
@@ -348,8 +348,8 @@ csharp_new_line_before_open_brace = all
 csharp_new_line_between_query_expression_clauses = true
 
 # C# Unnecessary code rules
-csharp_style_unused_value_assignment_preference = discard_variable:suggestion
-csharp_style_unused_value_expression_statement_preference = discard_variable:suggestion
+csharp_style_unused_value_assignment_preference = discard_variable:warning
+csharp_style_unused_value_expression_statement_preference = discard_variable:warning
 
 # Set the C# language version
 csharp_language_version = latest
@@ -363,8 +363,8 @@ csharp_style_var_when_type_is_apparent = true:warning
 csharp_prefer_static_anonymous_function = true
 csharp_prefer_static_local_function = true:warning
 csharp_preferred_modifier_order = public,private,protected,internal,static,extern,new,virtual,abstract,sealed,override,readonly,unsafe,volatile,async:warning
-csharp_style_prefer_readonly_struct = true:suggestion
-csharp_style_prefer_readonly_struct_member = true:suggestion
+csharp_style_prefer_readonly_struct = true:warning
+csharp_style_prefer_readonly_struct_member = true:warning
 dotnet_style_readonly_field = true:warning
 dotnet_style_require_accessibility_modifiers = always:warning
 
@@ -372,7 +372,7 @@ dotnet_style_require_accessibility_modifiers = always:warning
 csharp_prefer_braces = true: error
 csharp_prefer_simple_using_statement = false:silent
 csharp_prefer_system_threading_lock = true
-dotnet_style_prefer_collection_expression = true:suggestion
+dotnet_style_prefer_collection_expression = true:warning
 
 # Enable foreach explicit cast preference
 dotnet_style_prefer_foreach_explicit_cast_in_source = when_strongly_typed:warning
@@ -381,19 +381,19 @@ dotnet_style_prefer_foreach_explicit_cast_in_source = when_strongly_typed:warnin
 csharp_prefer_system_threading_lock = true:warning
 
 # Prefer parameter null checking
-csharp_style_prefer_parameter_null_checking = true:suggestion
+csharp_style_prefer_parameter_null_checking = true:warning
 
 # Prefer extended property pattern
-csharp_style_prefer_extended_property_pattern = true:suggestion
+csharp_style_prefer_extended_property_pattern = true:warning
 
 # Prefer UTF-8 string literals
-csharp_style_prefer_utf8_string_literals = true:suggestion
+csharp_style_prefer_utf8_string_literals = true:warning
 
 # Prefer tuple swap
-csharp_style_prefer_tuple_swap = true:suggestion
+csharp_style_prefer_tuple_swap = true:warning
 
 # Prefer local over anonymous function
-csharp_style_prefer_local_over_anonymous_function = true:suggestion
+csharp_style_prefer_local_over_anonymous_function = true:warning
 
 # Prefer unbound generic type in nameof
 csharp_style_prefer_unbound_generic_type_in_nameof = true:warning
@@ -425,12 +425,12 @@ csharp_style_expression_bodied_constructors = true:warning
 csharp_style_expression_bodied_indexers = true:warning
 csharp_style_expression_bodied_lambdas = true:warning
 csharp_style_expression_bodied_local_functions = true:warning
-csharp_style_expression_bodied_methods = true:suggestion
+csharp_style_expression_bodied_methods = true:warning
 csharp_style_expression_bodied_operators = true:warning
 csharp_style_expression_bodied_properties = true:warning
 
 # Pattern matching preferences
-csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:warning
 csharp_style_pattern_matching_over_is_with_cast_check = true:warning
 csharp_style_prefer_not_pattern = true:warning
 csharp_style_prefer_pattern_matching = true:warning
@@ -486,8 +486,8 @@ csharp_style_namespace_declarations = file_scoped:warning
 [*.{vb}]
 
 visual_basic_preferred_modifier_order = Partial, Default, Private, Protected, Public, Friend, NotOverridable, Overridable, MustOverride, Overloads, Overrides, MustInherit, NotInheritable, Static, Shared, Shadows, ReadOnly, WriteOnly, Dim, Const, WithEvents, Widening, Narrowing, Custom, Async:warning
-visual_basic_style_prefer_simplified_object_creation = all : suggestion
-visual_basic_style_prefer_isnot_expression = true : suggestion
+visual_basic_style_prefer_simplified_object_creation = all : warning
+visual_basic_style_prefer_isnot_expression = true : warning
 
 ####################################################################################################
 # .NET Style Preferences
@@ -511,8 +511,8 @@ dotnet_style_explicit_tuple_names = true:warning
 dotnet_style_object_initializer = true:warning
 dotnet_style_prefer_auto_properties = true:warning
 dotnet_style_prefer_compound_assignment = true:warning
-dotnet_style_prefer_conditional_expression_over_assignment = true:suggestion
-dotnet_style_prefer_conditional_expression_over_return = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:warning
+dotnet_style_prefer_conditional_expression_over_return = true:warning
 dotnet_style_prefer_foreach_explicit_cast_in_source = when_strongly_typed
 dotnet_style_prefer_inferred_anonymous_type_member_names = true:warning
 dotnet_style_prefer_inferred_tuple_names = true:warning
@@ -539,7 +539,7 @@ dotnet_diagnostic.CS1591.severity = none
 [*.{cs,vb}]
 
 # Do not declare static members on generic types
-dotnet_diagnostic.CA1000.severity = suggestion
+dotnet_diagnostic.CA1000.severity = warning
 
 # Types that own disposable fields should be disposable
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -577,17 +577,17 @@ dotnet_diagnostic.CA1016.severity = error
 dotnet_diagnostic.CA1017.severity = silent
 
 # Mark attributes with AttributeUsageAttribute
-dotnet_diagnostic.CA1018.severity = suggestion
+dotnet_diagnostic.CA1018.severity = warning
 
 # Define accessors for attribute arguments
-dotnet_diagnostic.CA1019.severity = suggestion
+dotnet_diagnostic.CA1019.severity = warning
 
 # Avoid out parameters
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.CA1021.severity = suggestion
+dotnet_diagnostic.CA1021.severity = warning
 
 # Use properties where appropriate
-dotnet_diagnostic.CA1024.severity = suggestion
+dotnet_diagnostic.CA1024.severity = warning
 
 # Mark enums with FlagsAttribute
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -598,34 +598,34 @@ dotnet_diagnostic.CA1027.severity = error
 dotnet_diagnostic.CA1028.severity = error
 
 # Use events where appropriate
-dotnet_diagnostic.CA1030.severity = suggestion
+dotnet_diagnostic.CA1030.severity = warning
 
 # Do not catch general exception types
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
 dotnet_diagnostic.CA1031.severity = error
 
 # Implement standard exception constructors
-dotnet_diagnostic.CA1032.severity = suggestion
+dotnet_diagnostic.CA1032.severity = warning
 
 # Interface methods should be callable by child types
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.CA1033.severity = suggestion
+dotnet_diagnostic.CA1033.severity = warning
 
 # Nested types should not be visible
 dotnet_diagnostic.CA1034.severity = error
 
 # Override methods on comparable types
-dotnet_diagnostic.CA1036.severity = suggestion
+dotnet_diagnostic.CA1036.severity = warning
 
 # Avoid empty interfaces
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.CA1040.severity = suggestion
+dotnet_diagnostic.CA1040.severity = warning
 
 # Provide ObsoleteAttribute message
 dotnet_diagnostic.CA1041.severity = warning
 
 # Use integral or string argument for indexers
-dotnet_diagnostic.CA1043.severity = suggestion
+dotnet_diagnostic.CA1043.severity = warning
 
 # Properties should not be write only
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -712,7 +712,7 @@ dotnet_diagnostic.CA1070.severity = warning
 [*.{cs,vb}]
 
 # Avoid using cref tags with a prefix
-dotnet_diagnostic.CA1200.severity = suggestion
+dotnet_diagnostic.CA1200.severity = warning
 
 ####################################################################################################
 # Globalization Rules (CA1303-CA1311 and CA2101)
@@ -770,19 +770,19 @@ dotnet_diagnostic.CA2101.severity = warning
 dotnet_diagnostic.CA1401.severity = error
 
 # Validate platform compatibility
-dotnet_diagnostic.CA1416.severity = suggestion
+dotnet_diagnostic.CA1416.severity = warning
 
 # Do not use OutAttribute on string parameters for P/Invokes
-dotnet_diagnostic.CA1417.severity = suggestion
+dotnet_diagnostic.CA1417.severity = warning
 
 # Validate platform compatibility
-dotnet_diagnostic.CA1418.severity = suggestion
+dotnet_diagnostic.CA1418.severity = warning
 
 # Provide a parameterless constructor that is as visible as the containing type for concrete types derived from 'System.Runtime.InteropServices.SafeHandle'
-dotnet_diagnostic.CA1419.severity = suggestion
+dotnet_diagnostic.CA1419.severity = warning
 
 # Property, type, or attribute requires runtime marshalling
-dotnet_diagnostic.CA1420.severity = suggestion
+dotnet_diagnostic.CA1420.severity = warning
 
 # Method uses runtime marshalling when DisableRuntimeMarshallingAttribute is applied
 dotnet_diagnostic.CA1421.severity = warning
@@ -844,7 +844,7 @@ dotnet_diagnostic.CA1514.severity = warning
 
 # Consider making public types internal
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.CA1515.severity = suggestion
+dotnet_diagnostic.CA1515.severity = warning
 
 ####################################################################################################
 # Naming Rules (CA1700-CA1727 and IDE0130)
@@ -931,7 +931,7 @@ dotnet_diagnostic.CA1727.severity = error
 
 # Use Literals Where Appropriate
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1802.severity = suggestion
+dotnet_diagnostic.CA1802.severity = warning
 
 # Do not initialize unnecessarily
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
@@ -944,15 +944,15 @@ dotnet_diagnostic.CA1806.severity = error
 
 # Initialize reference type static fields inline
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1810.severity = suggestion 
+dotnet_diagnostic.CA1810.severity = warning 
 
 # Avoid uninstantiated internal classes
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1812.severity = suggestion
+dotnet_diagnostic.CA1812.severity = warning
 
 # Avoid unsealed attributes
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1813.severity = suggestion
+dotnet_diagnostic.CA1813.severity = warning
 
 # Prefer jagged arrays over multidimensional
 dotnet_diagnostic.CA1814.severity = warning
@@ -977,18 +977,18 @@ dotnet_diagnostic.CA1821.severity = error
 # Mark members as static
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1822.severity = suggestion
+dotnet_diagnostic.CA1822.severity = warning
 
 # Avoid unused private fields
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
 dotnet_diagnostic.CA1823.severity = error
 
 # Mark assemblies with NeutralResourcesLanguageAttribute
-dotnet_diagnostic.CA1824.severity = suggestion
+dotnet_diagnostic.CA1824.severity = warning
 
 # Avoid zero-length array allocations
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1825.severity = suggestion
+dotnet_diagnostic.CA1825.severity = warning
 
 # Use property instead of Linq Enumerable method
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
@@ -1024,7 +1024,7 @@ dotnet_diagnostic.CA1833.severity = error
 
 # Use StringBuilder.Append(char) for single character strings
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1834.severity = suggestion
+dotnet_diagnostic.CA1834.severity = warning
 
 # Prefer the memory-based overloads of ReadAsync/WriteAsync methods in stream-based classes
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
@@ -1036,7 +1036,7 @@ dotnet_diagnostic.CA1836.severity = error
 
 # Use Environment.ProcessId instead of Process.GetCurrentProcess().Id
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1837.severity = suggestion
+dotnet_diagnostic.CA1837.severity = warning
 
 # Avoid StringBuilder parameters for P/Invokes
 dotnet_diagnostic.CA1838.severity = warning
@@ -1104,15 +1104,15 @@ dotnet_diagnostic.CA1854.severity = error
 
 # Use Span<T>.Clear() instead of Span<T>.Fill()
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1855.severity = suggestion
+dotnet_diagnostic.CA1855.severity = warning
 
 # Incorrect usage of ConstantExpected attribute
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1856.severity = suggestion
+dotnet_diagnostic.CA1856.severity = warning
 
 # A constant is expected for the parameter
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1857.severity = suggestion
+dotnet_diagnostic.CA1857.severity = warning
 
 # Use StartsWith instead of IndexOf
 dotnet_diagnostic.CA1858.severity = error
@@ -1139,7 +1139,7 @@ dotnet_diagnostic.CA1863.severity = warning
 
 # Prefer the 'IDictionary.TryAdd(TKey, TValue)' method
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.CA1864.severity = suggestion
+dotnet_diagnostic.CA1864.severity = warning
 
 # Use 'string.Method(char)' instead of 'string.Method(string)' for string with single char
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
@@ -1198,7 +1198,7 @@ dotnet_diagnostic.CA2002.severity = error
 dotnet_diagnostic.CA2007.severity = error
 
 # Do not create tasks without passing a TaskScheduler
-dotnet_diagnostic.CA2008.severity = suggestion
+dotnet_diagnostic.CA2008.severity = warning
 
 # Do not call ToImmutableCollection on an ImmutableCollection value
 dotnet_diagnostic.CA2009.severity = error
@@ -1211,7 +1211,7 @@ dotnet_diagnostic.CA2011.severity = error
 dotnet_diagnostic.CA2012.severity = error
 
 # Do not use ReferenceEquals with value types
-dotnet_diagnostic.CA2013.severity = suggestion
+dotnet_diagnostic.CA2013.severity = warning
 
 # Do not use stackalloc in loops
 dotnet_diagnostic.CA2014.severity = error
@@ -1221,7 +1221,7 @@ dotnet_diagnostic.CA2014.severity = error
 dotnet_diagnostic.CA2015.severity = error
 
 # Forward the CancellationToken parameter to methods that take one
-dotnet_diagnostic.CA2016.severity = suggestion
+dotnet_diagnostic.CA2016.severity = warning
 
 # Parameter count mismatch
 dotnet_diagnostic.CA2017.severity = error
@@ -1525,7 +1525,7 @@ dotnet_diagnostic.CA5399.severity = warning
 dotnet_diagnostic.CA5400.severity = warning
 
 # Do not use CreateEncryptor with non-default IV
-dotnet_diagnostic.CA5401.severity = suggestion
+dotnet_diagnostic.CA5401.severity = warning
 
 # Use CreateEncryptor with the default IV
 dotnet_diagnostic.CA5402.severity = warning
@@ -1578,8 +1578,8 @@ dotnet_diagnostic.IDE0001.severity = warning
 dotnet_diagnostic.IDE0002.severity = warning
 
 # this and Me preferences
-dotnet_diagnostic.IDE0003.severity = suggestion
-dotnet_diagnostic.IDE0009.severity = suggestion
+dotnet_diagnostic.IDE0003.severity = warning
+dotnet_diagnostic.IDE0009.severity = warning
 
 # Remove unnecessary cast
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
@@ -1607,7 +1607,7 @@ dotnet_diagnostic.IDE0017.severity = warning
 # Inline variable declaration
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.IDE0018.severity = suggestion
+dotnet_diagnostic.IDE0018.severity = warning
 
 # Use pattern matching to avoid 'as' followed by a 'null' check
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -1632,34 +1632,34 @@ dotnet_diagnostic.IDE0024.severity = silent
 dotnet_diagnostic.IDE0025.severity = silent
 
 # Use expression body for indexers
-dotnet_diagnostic.IDE0026.severity = suggestion
+dotnet_diagnostic.IDE0026.severity = warning
 
 # Use expression body for accessors
 dotnet_diagnostic.IDE0027.severity = silent
 
 # Use collection initializers
-dotnet_diagnostic.IDE0028.severity = suggestion
+dotnet_diagnostic.IDE0028.severity = warning
 
 # Use coalesce expression
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.IDE0029.severity = suggestion
+dotnet_diagnostic.IDE0029.severity = warning
 
 # Use coalesce expression (nullable types)
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.IDE0030.severity = suggestion
+dotnet_diagnostic.IDE0030.severity = warning
 
 # Use null propagation
-dotnet_diagnostic.IDE0031.severity = suggestion
+dotnet_diagnostic.IDE0031.severity = warning
 
 # Use auto property
-dotnet_diagnostic.IDE0032.severity = suggestion
+dotnet_diagnostic.IDE0032.severity = warning
 
 # Use explicitly provided tuple name
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0033.severity = suggestion
+dotnet_diagnostic.IDE0033.severity = warning
 
 # Simplify 'default' expression
-dotnet_diagnostic.IDE0034.severity = suggestion
+dotnet_diagnostic.IDE0034.severity = warning
 
 # Remove unreachable code
 dotnet_diagnostic.IDE0035.severity = error
@@ -1669,24 +1669,24 @@ dotnet_diagnostic.IDE0035.severity = error
 dotnet_diagnostic.IDE0036.severity = warning
 
 # Use inferred member name
-dotnet_diagnostic.IDE0037.severity = suggestion
+dotnet_diagnostic.IDE0037.severity = warning
 
 # Use pattern matching to avoid is check followed by a cast (without variable)
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
 dotnet_diagnostic.IDE0038.severity = warning
 
 # Use local function instead of lambda
-dotnet_diagnostic.IDE0039.severity = suggestion
+dotnet_diagnostic.IDE0039.severity = warning
 
 # Add accessibility modifiers
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
 dotnet_diagnostic.IDE0040.severity = error
 
 # Use is null check
-dotnet_diagnostic.IDE0041.severity = suggestion
+dotnet_diagnostic.IDE0041.severity = warning
 
 # Deconstruct variable declaration
-dotnet_diagnostic.IDE0042.severity = suggestion
+dotnet_diagnostic.IDE0042.severity = warning
 
 # Format string contains invalid placeholder
 dotnet_diagnostic.IDE0043.severity = warning
@@ -1696,10 +1696,10 @@ dotnet_diagnostic.IDE0043.severity = warning
 dotnet_diagnostic.IDE0044.severity = warning
 
 # Use conditional expression for assignment
-dotnet_diagnostic.IDE0045.severity = suggestion
+dotnet_diagnostic.IDE0045.severity = warning
 
 # Use conditional expression for return
-dotnet_diagnostic.IDE0046.severity = suggestion
+dotnet_diagnostic.IDE0046.severity = warning
 
 # Parentheses preferences
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -1711,7 +1711,7 @@ dotnet_diagnostic.IDE0049.severity = warning
 
 # Convert anonymous type to tuple
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0050.severity = suggestion
+dotnet_diagnostic.IDE0050.severity = warning
 
 # Remove unused private member
 dotnet_diagnostic.IDE0051.severity = warning
@@ -1721,23 +1721,23 @@ dotnet_diagnostic.IDE0051.severity = warning
 dotnet_diagnostic.IDE0052.severity = error
 
 # Use expression body for lambdas
-dotnet_diagnostic.IDE0053.severity = suggestion
+dotnet_diagnostic.IDE0053.severity = warning
 
 # Use compound assignment
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.IDE0054.severity = suggestion
+dotnet_diagnostic.IDE0054.severity = warning
 
 # Fix formatting
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0055.severity = suggestion
+dotnet_diagnostic.IDE0055.severity = warning
 
 # Use index operator
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0056.severity = suggestion
+dotnet_diagnostic.IDE0056.severity = warning
 
 # Use range operator
-dotnet_diagnostic.IDE0057.severity = suggestion
+dotnet_diagnostic.IDE0057.severity = warning
 
 # Remove unnecessary expression value
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -1755,17 +1755,17 @@ dotnet_diagnostic.IDE0059.severity = error
 dotnet_diagnostic.IDE0060.severity = error
 
 # Use expression body for local functions
-dotnet_diagnostic.IDE0061.severity = suggestion
+dotnet_diagnostic.IDE0061.severity = warning
 
 # Make local function static
-dotnet_diagnostic.IDE0062.severity = suggestion
+dotnet_diagnostic.IDE0062.severity = warning
 
 # Use simple 'using' statement
-dotnet_diagnostic.IDE0063.severity = suggestion
+dotnet_diagnostic.IDE0063.severity = warning
 
 # Make struct fields writable
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0064.severity = suggestion
+dotnet_diagnostic.IDE0064.severity = warning
 
 # 'using' directive placement
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -1780,7 +1780,7 @@ dotnet_diagnostic.IDE0070.severity = warning
 
 # Add missing cases to switch expression
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0072.severity = suggestion
+dotnet_diagnostic.IDE0072.severity = warning
 
 # Require file header
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -1788,10 +1788,10 @@ dotnet_diagnostic.IDE0073.severity = warning
 
 # Use compound assignment
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0074.severity = suggestion
+dotnet_diagnostic.IDE0074.severity = warning
 
 # Simplify conditional expression
-dotnet_diagnostic.IDE0075.severity = suggestion
+dotnet_diagnostic.IDE0075.severity = warning
 
 # Remove invalid global 'SuppressMessageAttribute'
 dotnet_diagnostic.IDE0076.severity = silent
@@ -1807,7 +1807,7 @@ dotnet_diagnostic.IDE0078.severity = warning
 dotnet_diagnostic.IDE0079.severity = error
 
 # Remove unnecessary suppression operator
-dotnet_diagnostic.IDE0080.severity = suggestion
+dotnet_diagnostic.IDE0080.severity = warning
 
 # Remove ByVal
 dotnet_diagnostic.IDE0081.severity = error
@@ -1822,12 +1822,12 @@ dotnet_diagnostic.IDE0083.severity = warning
 
 # Use pattern matching (IsNot operator)
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0084.severity = suggestion
+dotnet_diagnostic.IDE0084.severity = warning
 
 # Simplify new expression
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.IDE0090.severity = suggestion
+dotnet_diagnostic.IDE0090.severity = warning
 
 # Remove unnecessary equality operator
 dotnet_diagnostic.IDE0100.severity = silent
@@ -1849,22 +1849,22 @@ dotnet_diagnostic.IDE0121.severity = warning
 
 # Simplify object creation
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0140.severity = suggestion
+dotnet_diagnostic.IDE0140.severity = warning
 
 # Prefer 'null' check over type check
 dotnet_diagnostic.IDE0150.severity = warning
 
 # Use block-scoped namespace
-dotnet_diagnostic.IDE0160.severity = suggestion
+dotnet_diagnostic.IDE0160.severity = warning
 
 # Use file-scoped namespace
-dotnet_diagnostic.IDE0161.severity = suggestion
+dotnet_diagnostic.IDE0161.severity = warning
 
 # Simplify property pattern
 dotnet_diagnostic.IDE0170.severity = warning
 
 # Use tuple to swap values
-dotnet_diagnostic.IDE0180.severity = suggestion
+dotnet_diagnostic.IDE0180.severity = warning
 
 # Unnecessary lambda expression
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -1875,7 +1875,7 @@ dotnet_diagnostic.IDE0200.severity = warning
 dotnet_diagnostic.IDE0210.severity = warning
 
 # Convert to 'Program.Main' style program
-dotnet_diagnostic.IDE0211.severity = suggestion
+dotnet_diagnostic.IDE0211.severity = warning
 
 # Add explicit cast in foreach loop
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -1909,14 +1909,14 @@ dotnet_diagnostic.IDE0280.severity = error
 
 # Use primary constructor
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
-dotnet_diagnostic.IDE0290.severity = suggestion
+dotnet_diagnostic.IDE0290.severity = warning
 
 # Use collection expression for array
 dotnet_diagnostic.IDE0300.severity = warning
 
 # Use collection expression for empty
 # Examples in Rock Your Code: Code Performance in Microsoft .NET
-dotnet_diagnostic.IDE0301.severity = suggestion
+dotnet_diagnostic.IDE0301.severity = warning
 
 # Use collection expression for stackalloc
 dotnet_diagnostic.IDE0302.severity = warning
@@ -1946,7 +1946,7 @@ dotnet_diagnostic.IDE0340.severity = warning
 dotnet_diagnostic.IDE0350.severity = warning
 
 # Simplify property accessor
-dotnet_diagnostic.IDE0360.severity = suggestion
+dotnet_diagnostic.IDE0360.severity = warning
 
 # Remove unnecessary `unsafe` modifier
 dotnet_diagnostic.IDE0380.severity = warning
@@ -2071,7 +2071,7 @@ dotnet_diagnostic.CA2231.severity = warning
 dotnet_diagnostic.CA2234.severity = warning
 
 # Mark all non-serializable fields
-dotnet_diagnostic.CA2235.severity = suggestion
+dotnet_diagnostic.CA2235.severity = warning
 
 # Mark ISerializable types with SerializableAttribute
 # Examples in Rock Your Code: Coding Standards for Microsoft .NET
@@ -2113,7 +2113,7 @@ dotnet_diagnostic.CA2250.severity = warning
 dotnet_diagnostic.CA2251.severity = warning
 
 # Opt in to preview features
-dotnet_diagnostic.CA2252.severity = suggestion
+dotnet_diagnostic.CA2252.severity = warning
 
 # Named placeholders should not be numeric values
 dotnet_diagnostic.CA2253.severity = warning
@@ -2181,7 +2181,7 @@ dotnet_diagnostic.SA1000.severity = warning
 dotnet_diagnostic.SA1100.severity = warning
 
 # StatementMustNotUseUnnecessaryParenthesis
-dotnet_diagnostic.SA1119.severity = suggestion
+dotnet_diagnostic.SA1119.severity = warning
 
 # CommentsMustContainText
 dotnet_diagnostic.SA1120.severity = warning
@@ -2543,10 +2543,10 @@ dotnet_diagnostic.RE0001.severity = warning
 ####################################################################################################
 
 # Invalid JSON pattern
-dotnet_diagnostic.JSON001.severity = suggestion
+dotnet_diagnostic.JSON001.severity = warning
 
 # Probable JSON string detected
-dotnet_diagnostic.JSON002.severity = suggestion
+dotnet_diagnostic.JSON002.severity = warning
 
 ####################################################################################################
 # Return Analyzer Rules
@@ -3139,3 +3139,9 @@ dotnet_diagnostic.CA1707.severity = none
 dotnet_diagnostic.CA1062.severity = none
 # The literals are simulated key presses like q and /, not text shown to anyone.
 dotnet_diagnostic.CA1303.severity = none
+# xUnit only runs public test classes, and the fixtures they take in their constructors must be public too.
+dotnet_diagnostic.CA1515.severity = none
+
+[benchmarks/**.cs]
+# BenchmarkDotNet only runs public benchmark classes.
+dotnet_diagnostic.CA1515.severity = none

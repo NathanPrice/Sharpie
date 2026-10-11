@@ -103,12 +103,9 @@ internal static class OfflineDocs
 	/// </remarks>
 	public static Task<bool>? RefreshIfDue(DocsSource source, DateTimeOffset now)
 	{
-		if (source.OfflineSince is not { } since || now - since < RefreshAfter)
-		{
-			return null;
-		}
-
-		return Task.Run(() => Download(source, TextWriter.Null));
+		return source.OfflineSince is not { } since || now - since < RefreshAfter
+			? null
+			: Task.Run(() => Download(source, TextWriter.Null));
 	}
 
 	/// <summary>

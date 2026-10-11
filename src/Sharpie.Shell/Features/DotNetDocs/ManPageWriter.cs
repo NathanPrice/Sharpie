@@ -417,7 +417,7 @@ internal sealed class ManPageWriter(int width, bool styled)
 			SpanStyle.Method => "94",
 			SpanStyle.Parameter => "96",
 			SpanStyle.Variable => "36",
-			_ => null,
+			SpanStyle.Plain or SpanStyle.Bold or SpanStyle.Underline or _ => null,
 		};
 
 		if (color is not null)

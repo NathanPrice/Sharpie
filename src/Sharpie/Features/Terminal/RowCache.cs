@@ -36,9 +36,9 @@ internal sealed class RowCache
 	/// </summary>
 	public void NextFrame()
 	{
-		foreach (var entry in this.previous.Values)
+		foreach (var (_, runs) in this.previous.Values)
 		{
-			Dispose(entry.Runs);
+			Dispose(runs);
 		}
 
 		(this.previous, this.current) = (this.current, this.previous);

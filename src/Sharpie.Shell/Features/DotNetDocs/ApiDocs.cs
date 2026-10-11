@@ -655,21 +655,18 @@ internal static partial class ApiDocs
 	{
 		var name = Attribute(member, "MemberName");
 
-		if (name.Contains('.', StringComparison.Ordinal) && name is not ".ctor" and not ".cctor")
-		{
-			return string.Empty;
-		}
-
-		return member.Element("MemberType")?.Value switch
-		{
-			"Constructor" => "CONSTRUCTORS",
-			"Field" => "FIELDS",
-			"Property" => "PROPERTIES",
-			"Method" when name.StartsWith("op_", StringComparison.Ordinal) => "OPERATORS",
-			"Method" => "METHODS",
-			"Event" => "EVENTS",
-			_ => string.Empty,
-		};
+		return name.Contains('.', StringComparison.Ordinal) && name is not ".ctor" and not ".cctor"
+			? string.Empty
+			: member.Element("MemberType")?.Value switch
+			{
+				"Constructor" => "CONSTRUCTORS",
+				"Field" => "FIELDS",
+				"Property" => "PROPERTIES",
+				"Method" when name.StartsWith("op_", StringComparison.Ordinal) => "OPERATORS",
+				"Method" => "METHODS",
+				"Event" => "EVENTS",
+				_ => string.Empty,
+			};
 	}
 
 	/// <summary>

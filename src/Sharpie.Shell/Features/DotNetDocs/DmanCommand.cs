@@ -126,19 +126,10 @@ internal sealed class DmanCommand : ICommand
 	/// </returns>
 	internal static string? Render(string[] args, int columns, bool styled, DocsSource source)
 	{
-		if (Parse(args) is not var (name, language))
-		{
-			return null;
-		}
-
-		if (Links.TryParse(name, out var api, out var article))
-		{
-			return api is not null
-				? ApiDocs.Render(api, language, source, columns, styled)
-				: LanguageDocs.RenderArticle(article!, null, source, columns, styled);
-		}
-
-		return LanguageDocs.Render(name, language, source, columns, styled) ?? ApiDocs.Render(name, language, source, columns, styled);
+		return Parse(args) is not var (name, language) ? null
+			: !Links.TryParse(name, out var api, out var article) ? LanguageDocs.Render(name, language, source, columns, styled) ?? ApiDocs.Render(name, language, source, columns, styled)
+			: api is not null ? ApiDocs.Render(api, language, source, columns, styled)
+			: LanguageDocs.RenderArticle(article!, null, source, columns, styled);
 	}
 
 	/// <summary>

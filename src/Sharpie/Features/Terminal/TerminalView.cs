@@ -73,7 +73,7 @@ internal sealed partial class TerminalView : Control
 		this.Focusable = true;
 		this.ClipToBounds = true;
 
-		var sample = this.Format("M", this.regular, Palette.Text);
+		var sample = Format("M", this.regular, Palette.Text);
 
 		this.cellWidth = sample.WidthIncludingTrailingWhitespace;
 		this.cellHeight = sample.Height;
@@ -152,12 +152,9 @@ internal sealed partial class TerminalView : Control
 	/// </returns>
 	public string? SelectedText()
 	{
-		if (this.Ordered() is not var ((startLine, startColumn), (endLine, endColumn)))
-		{
-			return null;
-		}
-
-		return this.Screen.GetText(startLine, startColumn, endLine, endColumn);
+		return this.Ordered() is not var ((startLine, startColumn), (endLine, endColumn))
+			? null
+			: this.Screen.GetText(startLine, startColumn, endLine, endColumn);
 	}
 
 	/// <inheritdoc />
@@ -248,7 +245,7 @@ internal sealed partial class TerminalView : Control
 				end++;
 			}
 
-			if (this.Colors(this.Screen.GetStyle(cells[column].Style)).Background is { } background)
+			if (Colors(this.Screen.GetStyle(cells[column].Style)).Background is { } background)
 			{
 				context.FillRectangle(background, this.CellRect(row, column, end - column));
 			}
@@ -379,7 +376,7 @@ internal sealed partial class TerminalView : Control
 			return;
 		}
 
-		var foreground = this.Colors(style).Foreground;
+		var foreground = Colors(style).Foreground;
 		var underline = style.Underline ? this.UnderlinePen(foreground) : null;
 
 		runs.Add(new ShapedRun(new TextLayout(text, style.Bold ? this.bold : this.regular, FontSize, foreground), column, width, underline));
@@ -426,7 +423,7 @@ internal sealed partial class TerminalView : Control
 		{
 			CursorShape.Block => cell,
 			CursorShape.Underline => new Rect(cell.Left, cell.Bottom - 2, cell.Width, 2),
-			_ => new Rect(cell.Left, cell.Top, 2, cell.Height),
+			CursorShape.Bar or _ => new Rect(cell.Left, cell.Top, 2, cell.Height),
 		};
 
 		context.FillRectangle(this.Screen.CursorShape == CursorShape.Block ? Palette.Selection : Palette.Accent, shape);
@@ -439,7 +436,7 @@ internal sealed partial class TerminalView : Control
 	/// <returns>
 	/// The text brush, and the background brush or <see langword="null" /> for the window's own background.
 	/// </returns>
-	private (IBrush Foreground, IBrush? Background) Colors(AnsiStyle style)
+	private static (IBrush Foreground, IBrush? Background) Colors(AnsiStyle style)
 	{
 		var foreground = style.Foreground is { } fg ? Palette.For(fg) : Palette.Text;
 		var background = style.Background is { } bg ? Palette.For(bg) : null;
@@ -468,7 +465,7 @@ internal sealed partial class TerminalView : Control
 	/// <returns>
 	/// The text, ready to draw.
 	/// </returns>
-	private FormattedText Format(string characters, Typeface typeface, IBrush brush) =>
+	private static FormattedText Format(string characters, Typeface typeface, IBrush brush) =>
 		new(characters, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, typeface, FontSize, brush);
 
 	/// <summary>
@@ -480,11 +477,8 @@ internal sealed partial class TerminalView : Control
 	/// </returns>
 	private ((int Line, int Column) Start, (int Line, int Column) End)? Ordered()
 	{
-		if (this.anchor is not { } start || start == this.caret)
-		{
-			return null;
-		}
-
-		return start.CompareTo(this.caret) < 0 ? (start, this.caret) : (this.caret, start);
+		return this.anchor is not { } start || start == this.caret
+			? null
+			: start.CompareTo(this.caret) < 0 ? (start, this.caret) : (this.caret, start);
 	}
 }

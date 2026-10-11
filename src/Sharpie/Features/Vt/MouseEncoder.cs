@@ -67,7 +67,7 @@ internal static class MouseEncoder
 			MouseTracking.PressRelease => action != MouseAction.Move,
 			MouseTracking.Drag => action != MouseAction.Move || button >= 0,
 			MouseTracking.AnyMove => true,
-			_ => false,
+			MouseTracking.None or _ => false,
 		};
 
 		if (!wanted || (action is MouseAction.Press or MouseAction.Release && button < 0))
@@ -81,7 +81,7 @@ internal static class MouseEncoder
 			MouseAction.WheelDown => 65,
 			MouseAction.Release when encoding != MouseEncoding.Sgr => 3,
 			MouseAction.Move => 32 + (button >= 0 ? button : 3),
-			_ => button,
+			MouseAction.Press or MouseAction.Release or _ => button,
 		};
 
 		if (tracking != MouseTracking.Press)
@@ -95,7 +95,7 @@ internal static class MouseEncoder
 		{
 			MouseEncoding.Sgr => string.Create(CultureInfo.InvariantCulture, $"\e[<{code};{column};{row}{(action == MouseAction.Release ? 'm' : 'M')}"),
 			MouseEncoding.Urxvt => string.Create(CultureInfo.InvariantCulture, $"\e[{32 + code};{column};{row}M"),
-			_ => string.Concat("\e[M", ((char)(32 + code)).ToString(), ((char)(32 + Math.Min(column, MaxDefaultPosition))).ToString(), ((char)(32 + Math.Min(row, MaxDefaultPosition))).ToString()),
+			MouseEncoding.Default or _ => string.Concat("\e[M", ((char)(32 + code)).ToString(), ((char)(32 + Math.Min(column, MaxDefaultPosition))).ToString(), ((char)(32 + Math.Min(row, MaxDefaultPosition))).ToString()),
 		};
 	}
 }

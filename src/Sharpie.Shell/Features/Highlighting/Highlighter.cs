@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
 
@@ -6,6 +7,7 @@ namespace Sharpie.Shell.Features.Highlighting;
 /// <summary>
 /// Names what a colored part of the command line is.
 /// </summary>
+[SuppressMessage("Maintainability", "CA1515:Consider making public types internal", Justification = "The xUnit theories in Sharpie.Shell.Tests take it as a parameter, and xUnit only runs public test methods.")]
 public enum TokenKind
 {
 	/// <summary>
@@ -70,10 +72,10 @@ internal static class Highlighter
 		var afterRedirect = false;
 		var argumentCount = 0;
 
-		foreach (var word in SplitRaw(line))
+		foreach (var (start, end, strings) in SplitRaw(line))
 		{
 			// Unquoted by the parser itself, so a quoted word is judged by what the shell will actually run.
-			var value = CommandLine.Split(line[word.Start..word.End]).FirstOrDefault() ?? string.Empty;
+			var value = CommandLine.Split(line[start..end]).FirstOrDefault() ?? string.Empty;
 			TokenKind? kind;
 
 			if (afterRedirect)
@@ -115,11 +117,11 @@ internal static class Highlighter
 
 			if (kind is { } wholeWord)
 			{
-				tokens.Add(new Token(word.Start, word.End - word.Start, wholeWord));
+				tokens.Add(new Token(start, end - start, wholeWord));
 			}
 			else
 			{
-				tokens.AddRange(word.Strings);
+				tokens.AddRange(strings);
 			}
 		}
 

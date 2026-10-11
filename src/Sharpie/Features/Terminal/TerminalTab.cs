@@ -25,7 +25,6 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	/// </summary>
 	public static readonly StyledProperty<string> TitleProperty = AvaloniaProperty.Register<TerminalTab, string>(nameof(Title), "Sharpie");
 
-	private readonly TerminalView view;
 	private readonly ScrollBar scrollBar;
 	private readonly ManPager pager;
 	private readonly ShellConnection shell;
@@ -41,10 +40,10 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	public TerminalTab(bool useSavedHistory, string? workingDirectory)
 	{
 		// The shell is started below, after the view knows its first size. Anything typed before then is dropped.
-		this.view = new TerminalView(bytes => this.shell?.Write(bytes));
-		this.view.GridResized += this.OnGridResized;
-		this.view.Scrolled += this.OnViewScrolled;
-		this.view.Screen.ManPageRequested += this.OnManPageRequested;
+		this.View = new TerminalView(bytes => this.shell?.Write(bytes));
+		this.View.GridResized += this.OnGridResized;
+		this.View.Scrolled += this.OnViewScrolled;
+		this.View.Screen.ManPageRequested += this.OnManPageRequested;
 
 		// Fluent's scroll bar shrinks to a thin line until the pointer comes near, close to the old screen's.
 		this.scrollBar = new ScrollBar
@@ -60,9 +59,9 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 		this.pager.Closed += this.OnPagerClosed;
 		this.pager.LinkClicked += this.OnPagerLinkClicked;
 
-		this.Children.AddRange([this.view, this.scrollBar, this.pager]);
+		this.Children.AddRange([this.View, this.scrollBar, this.pager]);
 
-		this.shell = ShellConnection.Start(this.OnOutput, useSavedHistory, this.view.Screen.Columns, this.view.Screen.Rows, workingDirectory);
+		this.shell = ShellConnection.Start(this.OnOutput, useSavedHistory, this.View.Screen.Columns, this.View.Screen.Rows, workingDirectory);
 		this.shell.Exited += this.OnShellExited;
 	}
 
@@ -90,7 +89,7 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	/// <value>
 	/// The view the shell's output is drawn in.
 	/// </value>
-	internal TerminalView View => this.view;
+	internal TerminalView View { get; }
 
 	/// <summary>
 	/// Gives the keyboard to the open man page, or to the terminal when no page is open.
@@ -103,7 +102,7 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 		}
 		else
 		{
-			_ = this.view.Focus();
+			_ = this.View.Focus();
 		}
 	}
 
@@ -113,9 +112,9 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	/// <param name="output">The text the terminal printed.</param>
 	private void OnOutput(string output)
 	{
-		this.view.Feed(output);
+		this.View.Feed(output);
 
-		if (this.view.Screen.WorkingDirectory is { Length: > 0 } directory)
+		if (this.View.Screen.WorkingDirectory is { Length: > 0 } directory)
 		{
 			this.Title = $"{PromptHeader.SplitForDisplay(directory).Name} · Sharpie";
 		}
@@ -127,7 +126,7 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	/// <param name="sender">The source of the event.</param>
 	/// <param name="e">The data for the event.</param>
 	private void OnGridResized(object? sender, EventArgs e) =>
-		this.shell?.Resize(this.view.Screen.Columns, this.view.Screen.Rows);
+		this.shell?.Resize(this.View.Screen.Columns, this.View.Screen.Rows);
 
 	/// <summary>
 	/// Moves the scroll bar to match the view, and shows it only when there's scrollback.
@@ -136,12 +135,12 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	/// <param name="e">The data for the event.</param>
 	private void OnViewScrolled(object? sender, EventArgs e)
 	{
-		var scrollback = this.view.Screen.ScrollbackCount;
+		var scrollback = this.View.Screen.ScrollbackCount;
 
 		this.scrollBar.IsVisible = scrollback > 0;
 		this.scrollBar.Maximum = scrollback;
-		this.scrollBar.ViewportSize = this.view.Screen.Rows;
-		this.scrollBar.Value = scrollback - this.view.ScrollOffset;
+		this.scrollBar.ViewportSize = this.View.Screen.Rows;
+		this.scrollBar.Value = scrollback - this.View.ScrollOffset;
 	}
 
 	/// <summary>
@@ -150,7 +149,7 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	/// <param name="sender">The source of the event.</param>
 	/// <param name="e">The data for the event.</param>
 	private void OnScrollBarScroll(object? sender, ScrollEventArgs e) =>
-		this.view.ScrollTo((int)Math.Round(this.scrollBar.Maximum - e.NewValue));
+		this.View.ScrollTo((int)Math.Round(this.scrollBar.Maximum - e.NewValue));
 
 	/// <summary>
 	/// Passes the shell's exit on as <see cref="Exited" />, on the UI thread.

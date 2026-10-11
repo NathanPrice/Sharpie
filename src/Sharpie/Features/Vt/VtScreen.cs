@@ -512,12 +512,12 @@ internal sealed partial class VtScreen : IVtHandler
 			this.InsertBlanks(width);
 		}
 
-		this.SplitWide(cells, this.CursorColumn);
+		SplitWide(cells, this.CursorColumn);
 		cells[this.CursorColumn] = new Cell(character, low, (byte)width, this.styleId);
 
 		if (width == 2 && this.CursorColumn + 1 < this.Columns)
 		{
-			this.SplitWide(cells, this.CursorColumn + 1);
+			SplitWide(cells, this.CursorColumn + 1);
 			cells[this.CursorColumn + 1] = new Cell('\0', '\0', 0, this.styleId);
 		}
 
@@ -548,7 +548,7 @@ internal sealed partial class VtScreen : IVtHandler
 	/// </summary>
 	/// <param name="cells">The row.</param>
 	/// <param name="column">The column about to change.</param>
-	private void SplitWide(Cell[] cells, int column)
+	private static void SplitWide(Cell[] cells, int column)
 	{
 		if (cells[column].Width == 0 && column > 0)
 		{
@@ -692,8 +692,8 @@ internal sealed partial class VtScreen : IVtHandler
 
 		if (start < end)
 		{
-			this.SplitWide(cells, start);
-			this.SplitWide(cells, end - 1);
+			SplitWide(cells, start);
+			SplitWide(cells, end - 1);
 			Array.Fill(cells, Cell.Blank(this.EraseStyle()), start, end - start);
 		}
 

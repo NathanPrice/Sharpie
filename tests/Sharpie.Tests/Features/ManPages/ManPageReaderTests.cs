@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using FluentAssertions;
 using Sharpie.Features.ManPages;
 
@@ -87,6 +88,7 @@ public sealed class ManPageReaderTests : IDisposable
 	/// <returns>
 	/// The script's path.
 	/// </returns>
+	[UnsupportedOSPlatform("windows")]
 	private string Script(string body)
 	{
 		var path = Path.Combine(this.folder, "man");

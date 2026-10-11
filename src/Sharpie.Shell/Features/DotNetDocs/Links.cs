@@ -58,22 +58,11 @@ internal static partial class Links
 	/// </returns>
 	public static string? Resolve(string href, Uri? page)
 	{
-		if (href.StartsWith("xref:", StringComparison.Ordinal))
-		{
-			return ApiUrl(href[5..]);
-		}
-
-		if (href.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || href.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-		{
-			return href;
-		}
-
-		if (href.StartsWith('/'))
-		{
-			return Learn + href;
-		}
-
-		return page is null || href.Length == 0 ? null : ArticleUrl(new Uri(page, href));
+		return href.StartsWith("xref:", StringComparison.Ordinal) ? ApiUrl(href[5..])
+			: href.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || href.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? href
+			: href.StartsWith('/') ? Learn + href
+			: page is null || href.Length == 0 ? null
+			: ArticleUrl(new Uri(page, href));
 	}
 
 	/// <summary>
@@ -89,12 +78,9 @@ internal static partial class Links
 		var docs = ArticleRepository.AbsolutePath + "docs/";
 		var path = article.AbsolutePath;
 
-		if (!path.StartsWith(docs, StringComparison.Ordinal) || !path.EndsWith(".md", StringComparison.Ordinal))
-		{
-			return article.AbsoluteUri;
-		}
-
-		return $"{Learn}/dotnet/{path[docs.Length..^".md".Length]}{article.Fragment}";
+		return !path.StartsWith(docs, StringComparison.Ordinal) || !path.EndsWith(".md", StringComparison.Ordinal)
+			? article.AbsoluteUri
+			: $"{Learn}/dotnet/{path[docs.Length..^".md".Length]}{article.Fragment}";
 	}
 
 	/// <summary>

@@ -158,7 +158,7 @@ public sealed class ApiDocsTests : IDisposable
 		""";
 
 	// No members element, and the index lists a member the file doesn't have.
-	private static readonly string TupleType = """
+	private const string TupleType = """
 		<Type Name="Tuple&lt;T1,T2&gt;" FullName="System.Tuple&lt;T1,T2&gt;">
 		  <TypeSignature Language="C#" Value="public class Tuple&lt;T1,T2&gt;" />
 		  <Docs><summary>A pair.</summary></Docs>
@@ -167,7 +167,7 @@ public sealed class ApiDocsTests : IDisposable
 
 	// One assembly only, for no .NET version in particular. MaxValue has no docs, its signature is only for an older
 	// .NET, and it has a second doc id the index doesn't list.
-	private static readonly string Int32Type = """
+	private const string Int32Type = """
 		<Type Name="Int32" FullName="System.Int32">
 		  <TypeSignature Language="C#" Value="public struct Int32" />
 		  <AssemblyInfo><AssemblyName>mscorlib</AssemblyName><AssemblyVersion>4.0.0.0</AssemblyVersion></AssemblyInfo>
@@ -183,14 +183,14 @@ public sealed class ApiDocsTests : IDisposable
 		</Type>
 		""";
 
-	private static readonly string ListType = """
+	private const string ListType = """
 		<Type Name="List&lt;T&gt;" FullName="System.Collections.Generic.List&lt;T&gt;">
 		  <TypeSignature Language="C#" Value="public class List&lt;T&gt;" />
 		  <Docs><summary>A list.</summary></Docs>
 		</Type>
 		""";
 
-	private static readonly string SystemNamespace = """
+	private const string SystemNamespace = """
 		<Namespace Name="System">
 		  <Docs><summary>Fundamental classes.</summary></Docs>
 		</Namespace>

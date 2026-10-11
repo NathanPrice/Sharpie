@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using DotNetTips.Spargine.Core;
@@ -108,11 +109,11 @@ internal sealed class LineEditor(
 	/// <returns>
 	/// Whether the line is done, and how.
 	/// </returns>
+	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "ConsoleKey has a member for every key on the keyboard. Only the keys the line editor handles need an arm.")]
 	private Outcome Handle(ConsoleKeyInfo key, string header)
 	{
-		if ((key.Modifiers & ConsoleModifiers.Control) != 0)
-		{
-			return key.Key switch
+		return (key.Modifiers & ConsoleModifiers.Control) != 0
+			? key.Key switch
 			{
 				ConsoleKey.C => Outcome.Cancel,
 				ConsoleKey.D when this.line.Length == 0 => Outcome.EndOfInput,
@@ -124,25 +125,23 @@ internal sealed class LineEditor(
 				ConsoleKey.W => this.DeleteRange(this.WordStartBefore(this.cursor), this.cursor),
 				ConsoleKey.L => this.ClearScreen(header),
 				_ => Outcome.Continue,
+			}
+			: key.Key switch
+			{
+				ConsoleKey.Enter => Outcome.Submit,
+				ConsoleKey.Backspace when this.cursor > 0 => this.DeleteRange(this.cursor - 1, this.cursor),
+				ConsoleKey.Delete => this.DeleteAt(this.cursor),
+				ConsoleKey.RightArrow when this.suggestion.Length > 0 => this.Accept(),
+				ConsoleKey.LeftArrow => this.MoveTo(this.cursor - 1),
+				ConsoleKey.RightArrow => this.MoveTo(this.cursor + 1),
+				ConsoleKey.Home => this.MoveTo(0),
+				ConsoleKey.End => this.Accept(),
+				ConsoleKey.UpArrow => this.Recall(-1),
+				ConsoleKey.DownArrow => this.Recall(1),
+				ConsoleKey.Tab => this.Complete(),
+				_ when !char.IsControl(key.KeyChar) => this.Insert(key.KeyChar),
+				_ => Outcome.Continue,
 			};
-		}
-
-		return key.Key switch
-		{
-			ConsoleKey.Enter => Outcome.Submit,
-			ConsoleKey.Backspace when this.cursor > 0 => this.DeleteRange(this.cursor - 1, this.cursor),
-			ConsoleKey.Delete => this.DeleteAt(this.cursor),
-			ConsoleKey.RightArrow when this.suggestion.Length > 0 => this.Accept(),
-			ConsoleKey.LeftArrow => this.MoveTo(this.cursor - 1),
-			ConsoleKey.RightArrow => this.MoveTo(this.cursor + 1),
-			ConsoleKey.Home => this.MoveTo(0),
-			ConsoleKey.End => this.Accept(),
-			ConsoleKey.UpArrow => this.Recall(-1),
-			ConsoleKey.DownArrow => this.Recall(1),
-			ConsoleKey.Tab => this.Complete(),
-			_ when !char.IsControl(key.KeyChar) => this.Insert(key.KeyChar),
-			_ => Outcome.Continue,
-		};
 	}
 
 	/// <summary>
@@ -465,7 +464,7 @@ internal sealed class LineEditor(
 				TokenKind.Quoted => "\e[33m",
 				TokenKind.Redirect => "\e[36m",
 				TokenKind.MissingPath => "\e[31;4m",
-				_ => "\e[31m",
+				TokenKind.UnknownCommand or _ => "\e[31m",
 			};
 
 			_ = screen.Append(text, copied, token.Start - copied)

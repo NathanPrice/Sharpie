@@ -38,8 +38,8 @@ internal sealed partial class TerminalTab
 	{
 		// One column short, since a line that exactly fills the reader gets a horizontal scrollbar. At least 20 so a
 		// tiny window still gets a readable page.
-		var columns = Math.Max(20, this.view.Screen.Columns - 1);
-		var directory = this.view.Screen.WorkingDirectory;
+		var columns = Math.Max(20, this.View.Screen.Columns - 1);
+		var directory = this.View.Screen.WorkingDirectory;
 		var arguments = words[1..];
 		var output = await Task.Run(() => words[0] == "dman"
 			? DmanCommand.Render(arguments, columns)
@@ -50,7 +50,7 @@ internal sealed partial class TerminalTab
 			return;
 		}
 
-		this.view.IsVisible = false;
+		this.View.IsVisible = false;
 		this.scrollBar.IsVisible = false;
 		this.pager.Open(arguments[^1], output);
 	}
@@ -79,7 +79,7 @@ internal sealed partial class TerminalTab
 	/// </remarks>
 	private async Task FollowLinkAsync(string url)
 	{
-		var columns = Math.Max(20, this.view.Screen.Columns - 1);
+		var columns = Math.Max(20, this.View.Screen.Columns - 1);
 		var page = await Task.Run(() => DmanCommand.Render([url], columns)).ConfigureAwait(true);
 
 		if (page is not null)
@@ -106,8 +106,8 @@ internal sealed partial class TerminalTab
 	/// <param name="e">The data for the event.</param>
 	private void OnPagerClosed(object? sender, EventArgs e)
 	{
-		this.view.IsVisible = true;
+		this.View.IsVisible = true;
 		this.OnViewScrolled(this, EventArgs.Empty);
-		_ = this.view.Focus();
+		_ = this.View.Focus();
 	}
 }

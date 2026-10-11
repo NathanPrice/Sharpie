@@ -181,7 +181,9 @@ internal sealed partial class TerminalView
 			PointerUpdateKind.LeftButtonPressed => 0,
 			PointerUpdateKind.MiddleButtonPressed => 1,
 			PointerUpdateKind.RightButtonPressed => 2,
-			_ => -1,
+			PointerUpdateKind.XButton1Pressed or PointerUpdateKind.XButton2Pressed or PointerUpdateKind.LeftButtonReleased
+				or PointerUpdateKind.MiddleButtonReleased or PointerUpdateKind.RightButtonReleased or PointerUpdateKind.XButton1Released
+				or PointerUpdateKind.XButton2Released or PointerUpdateKind.Other or _ => -1,
 		};
 
 		if (this.ReportMouse(MouseAction.Press, button, e.KeyModifiers, point.Position))
@@ -251,7 +253,7 @@ internal sealed partial class TerminalView
 			MouseButton.Left => 0,
 			MouseButton.Middle => 1,
 			MouseButton.Right => 2,
-			_ => -1,
+			MouseButton.None or MouseButton.XButton1 or MouseButton.XButton2 or _ => -1,
 		};
 
 		_ = this.ReportMouse(MouseAction.Release, button, e.KeyModifiers, e.GetPosition(this));

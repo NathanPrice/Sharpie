@@ -52,7 +52,7 @@ public sealed class ManPagerTests
 
 	private TextBlock Status =>
 		this.pager.GetVisualDescendants().OfType<TextBlock>().First(block => block.Text?.Contains(" · ", StringComparison.Ordinal) == true
-		                                                                      || block.Text?.StartsWith("Pattern", StringComparison.Ordinal) == true);
+			|| block.Text?.StartsWith("Pattern", StringComparison.Ordinal) == true);
 
 	private TextEditor View => this.pager.GetVisualDescendants().OfType<TextEditor>().First();
 

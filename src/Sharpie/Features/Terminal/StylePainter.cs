@@ -72,7 +72,7 @@ internal sealed class StylePainter
 
 			if (bold)
 			{
-				element.TextRunProperties.SetTypeface( new Typeface(element.TextRunProperties.Typeface.FontFamily, weight: FontWeight.Bold));
+				element.TextRunProperties.SetTypeface(new Typeface(element.TextRunProperties.Typeface.FontFamily, weight: FontWeight.Bold));
 			}
 		};
 

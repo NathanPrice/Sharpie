@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Avalonia.Input;
 
@@ -24,6 +25,7 @@ internal static class KeyEncoder
 	/// Keys with modifiers use xterm's <c>1;m</c> form, where <c>m</c> is 1 plus 1 for Shift, 2 for Alt and 4 for
 	/// Ctrl. Alt with a key that types text sends ESC first, as xterm does with its meta key sending escape.
 	/// </remarks>
+	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "Avalonia's Key enum has a member for every key on every keyboard. Only the keys a terminal sends need an arm.")]
 	public static string? Encode(Key key, KeyModifiers modifiers, string? symbol, bool applicationCursorKeys)
 	{
 		var shift = (modifiers & KeyModifiers.Shift) != 0;
@@ -66,6 +68,7 @@ internal static class KeyEncoder
 	/// <returns>
 	/// The letter, or <see langword="null" /> for other keys.
 	/// </returns>
+	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "Avalonia's Key enum has a member for every key on every keyboard. Only the keys a terminal sends need an arm.")]
 	private static char? Cursor(Key key) => key switch
 	{
 		Key.Up => 'A',
@@ -85,6 +88,7 @@ internal static class KeyEncoder
 	/// The number for keys sent as <c>ESC [ n ~</c>, or the letter for F1 to F4, sent as <c>ESC O</c> and a letter.
 	/// <see langword="null" /> for other keys.
 	/// </returns>
+	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "Avalonia's Key enum has a member for every key on every keyboard. Only the keys a terminal sends need an arm.")]
 	private static (int? Number, char Letter)? Function(Key key) => key switch
 	{
 		Key.Insert => (2, '\0'),
@@ -113,6 +117,7 @@ internal static class KeyEncoder
 	/// <returns>
 	/// The character, such as 0x01 for Ctrl+A or 0x1B for Ctrl+[, or <see langword="null" /> when the key has none.
 	/// </returns>
+	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "Avalonia's Key enum has a member for every key on every keyboard. Only the keys a terminal sends need an arm.")]
 	private static string? ControlCharacter(Key key) => key switch
 	{
 		>= Key.A and <= Key.Z => ((char)(key - Key.A + 1)).ToString(CultureInfo.InvariantCulture),

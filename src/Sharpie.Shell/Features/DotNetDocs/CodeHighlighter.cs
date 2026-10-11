@@ -220,19 +220,16 @@ internal static class CodeHighlighter
 		}
 
 		// A declared name's token sits on a ModifiedIdentifier, whose parent is the declaration the symbol belongs to.
-		if (StyleOf(SymbolOf(node, model) ?? (node is VBSyntax.ModifiedIdentifierSyntax ? SymbolOf(node.Parent!, model) : null)) is { } style)
-		{
-			return style;
-		}
-
-		return node switch
-		{
-			VBSyntax.IdentifierNameSyntax name when name.Parent is VBSyntax.InvocationExpressionSyntax call && call.Expression == name => SpanStyle.Method,
-			VBSyntax.IdentifierNameSyntax name when name.Parent is VBSyntax.MemberAccessExpressionSyntax access && access.Name == name
-				&& access.Parent is VBSyntax.InvocationExpressionSyntax => SpanStyle.Method,
-			VBSyntax.IdentifierNameSyntax name when name.Parent is VBSyntax.SimpleAsClauseSyntax or VBSyntax.ObjectCreationExpressionSyntax => SpanStyle.Type,
-			_ => SpanStyle.Plain,
-		};
+		return StyleOf(SymbolOf(node, model) ?? (node is VBSyntax.ModifiedIdentifierSyntax ? SymbolOf(node.Parent!, model) : null)) is { } style
+			? style
+			: node switch
+			{
+				VBSyntax.IdentifierNameSyntax name when name.Parent is VBSyntax.InvocationExpressionSyntax call && call.Expression == name => SpanStyle.Method,
+				VBSyntax.IdentifierNameSyntax name when name.Parent is VBSyntax.MemberAccessExpressionSyntax access && access.Name == name
+					&& access.Parent is VBSyntax.InvocationExpressionSyntax => SpanStyle.Method,
+				VBSyntax.IdentifierNameSyntax name when name.Parent is VBSyntax.SimpleAsClauseSyntax or VBSyntax.ObjectCreationExpressionSyntax => SpanStyle.Type,
+				_ => SpanStyle.Plain,
+			};
 	}
 
 	/// <summary>

@@ -14,7 +14,7 @@ internal class CompleteCommand : ICommand
 	public string Description => "Registers programmable completions for commands";
 
 	// Command name to the completer script path registered for it with -C.
-	private readonly Dictionary<string, string> completers = new();
+	private readonly Dictionary<string, string> completers = [];
 
 	/// <inheritdoc />
 	public void Run(string[] args)
