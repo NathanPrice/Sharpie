@@ -36,7 +36,7 @@ internal sealed partial class AliasCommand : ICommand
 	public string Description => "Defines and lists command aliases";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
@@ -47,8 +47,10 @@ internal sealed partial class AliasCommand : ICommand
 				Console.WriteLine(Format(name, value));
 			}
 
-			return;
+			return 0;
 		}
+
+		var status = 0;
 
 		foreach (var arg in args)
 		{
@@ -66,8 +68,11 @@ internal sealed partial class AliasCommand : ICommand
 			else
 			{
 				Console.Error.WriteLine($"{this.Name}: {arg}: not found");
+				status = 1;
 			}
 		}
+
+		return status;
 	}
 
 	/// <summary>

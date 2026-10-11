@@ -17,26 +17,29 @@ internal class CompleteCommand : ICommand
 	private readonly Dictionary<string, string> completers = [];
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		switch (args)
 		{
 			case ["-C", var script, var command, ..]:
 				this.completers[command] = script;
 
-				break;
+				return 0;
 			case ["-r", var command, ..]:
 				_ = this.completers.Remove(command);
 
-				break;
-			case ["-p", var command, ..]:
+				return 0;
+			case ["-p", var command, ..] when this.completers.TryGetValue(command, out var registered):
 				// Rebuilt from the stored parts, not echoed, so the output is normalized however it was typed.
-				Console.WriteLine(this.completers.TryGetValue(command, out var registered)
-					? $"{this.Name} -C '{registered}' {command}"
-					: $"{this.Name}: {command}: no completion specification");
-				break;
+				Console.WriteLine($"{this.Name} -C '{registered}' {command}");
+
+				return 0;
+			case ["-p", var command, ..]:
+				Console.WriteLine($"{this.Name}: {command}: no completion specification");
+
+				return 1;
 			default:
-				break;
+				return 0;
 		}
 	}
 

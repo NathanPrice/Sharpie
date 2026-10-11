@@ -34,7 +34,7 @@ public sealed class TypeCommandTests : IDisposable
 	public void Run_WithBuiltinName_ReportsShellBuiltin()
 	{
 		// Act
-		this.sut.Run(["echo"]);
+		_ = this.sut.Run(["echo"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"echo is a shell builtin{Environment.NewLine}");
@@ -50,7 +50,7 @@ public sealed class TypeCommandTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.folder, "echo", executable: true);
 
 		// Act
-		this.sut.Run(["echo"]);
+		_ = this.sut.Run(["echo"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"echo is a shell builtin{Environment.NewLine}");
@@ -66,7 +66,7 @@ public sealed class TypeCommandTests : IDisposable
 		var fullPath = ShellEnvironment.CreateFile(this.folder, "mytool", executable: true);
 
 		// Act
-		this.sut.Run(["mytool"]);
+		_ = this.sut.Run(["mytool"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"mytool is {fullPath}{Environment.NewLine}");
@@ -79,7 +79,7 @@ public sealed class TypeCommandTests : IDisposable
 	public void Run_WithUnknownName_ReportsNotFound()
 	{
 		// Act
-		this.sut.Run(["nosuchcommand"]);
+		_ = this.sut.Run(["nosuchcommand"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"nosuchcommand: not found{Environment.NewLine}");
@@ -95,7 +95,7 @@ public sealed class TypeCommandTests : IDisposable
 		var fullPath = ShellEnvironment.CreateFile(this.folder, "mytool", executable: true);
 
 		// Act
-		this.sut.Run(["nosuchcommand", "echo", "mytool"]);
+		_ = this.sut.Run(["nosuchcommand", "echo", "mytool"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be(
@@ -111,7 +111,7 @@ public sealed class TypeCommandTests : IDisposable
 	public void Run_WithNoArguments_PrintsNothing()
 	{
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -131,7 +131,7 @@ public sealed class TypeCommandTests : IDisposable
 		this.builtins.Add(this.sut.Name, this.sut);
 
 		// Act
-		this.sut.Run(["type"]);
+		_ = this.sut.Run(["type"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"type is a shell builtin{Environment.NewLine}");
@@ -147,7 +147,7 @@ public sealed class TypeCommandTests : IDisposable
 		this.aliases["echo"] = "echo -n";
 
 		// Act
-		this.sut.Run(["echo"]);
+		_ = this.sut.Run(["echo"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"echo is an alias for echo -n{Environment.NewLine}");

@@ -152,13 +152,13 @@ public sealed class ShellImportTests : IDisposable
 	{
 		// Arrange
 		var shell = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "fake-shell", executable: true,
-			$"#!/bin/sh\necho banner\nexport {SampleVariable}=imported\nalias sample_alias='echo it'\\''s here'\nalias zsh_only='nocorrect-like echo'\neval \"$4\"\n");
+			$"#!/bin/sh\necho banner\nexport {SampleVariable}=\"imported $1 $2 $3\"\nalias sample_alias='echo it'\\''s here'\nalias zsh_only='nocorrect-like echo'\neval \"$4\"\n");
 
 		// Act
 		ShellImport.Run(shell, ShellPath, this.aliases, Builtins);
 
 		// Assert
-		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("imported");
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("imported -l -i -c");
 		_ = this.aliases.Aliases.Should().Contain("sample_alias", "echo it's here");
 		_ = this.aliases.Aliases.Should().NotContainKey("zsh_only");
 		_ = this.environment.Output.Should().BeEmpty();
@@ -182,6 +182,65 @@ public sealed class ShellImportTests : IDisposable
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().BeNull();
 		_ = this.aliases.Aliases.Should().BeEmpty();
 		_ = this.environment.Error.Should().Be($"sharpie: couldn't read settings from {shell}{Environment.NewLine}");
+	}
+
+	/// <summary>
+	/// Checks that a shell given by name is found on <c>PATH</c>, and one given by full path is run even when
+	/// <c>PATH</c> is empty.
+	/// </summary>
+	/// <param name="byName"><see langword="true" /> to pass the bare name; otherwise, the full path.</param>
+	[Theory]
+	[InlineData(true)]
+	[InlineData(false)]
+	public void Run_WithShellNameOrPath_FindsIt(bool byName)
+	{
+		// Arrange
+		var folder = this.environment.CreateFolder();
+		var shell = ShellEnvironment.CreateFile(folder, "fake-shell", executable: true, $"#!/bin/sh\nexport {SampleVariable}=imported\neval \"$4\"\n");
+		ShellEnvironment.SetPath(byName ? [folder] : []);
+
+		// Act
+		ShellImport.Run(byName ? "fake-shell" : shell, ShellPath, this.aliases, Builtins);
+
+		// Assert
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("imported");
+		_ = this.environment.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that an unset or empty <c>$SHELL</c> imports nothing and says nothing.
+	/// </summary>
+	/// <param name="shell">The <c>$SHELL</c> value.</param>
+	[Theory]
+	[InlineData(null)]
+	[InlineData("")]
+	public void Run_WithNoShell_DoesNothing(string? shell)
+	{
+		// Act
+		ShellImport.Run(shell, ShellPath, this.aliases, Builtins);
+
+		// Assert
+		_ = this.aliases.Aliases.Should().BeEmpty();
+		_ = this.environment.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that the answer is read as soon as the last marker arrives, even while a program the startup files left
+	/// running still holds the output open.
+	/// </summary>
+	[Fact]
+	public void Run_WithProgramHoldingOutput_StillImports()
+	{
+		// Arrange
+		var shell = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "fake-shell", executable: true,
+			$"#!/bin/sh\nexport {SampleVariable}=imported\neval \"$4\"\nsleep 30\n");
+
+		// Act
+		ShellImport.Run(shell, ShellPath, this.aliases, Builtins, TimeSpan.FromSeconds(3));
+
+		// Assert
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("imported");
+		_ = this.environment.Error.Should().BeEmpty();
 	}
 
 	/// <summary>
@@ -226,5 +285,25 @@ public sealed class ShellImportTests : IDisposable
 	{
 		Environment.SetEnvironmentVariable(SampleVariable, null);
 		this.environment.Dispose();
+	}
+
+	/// <summary>
+	/// Checks that <see cref="ShellImport.RunProfile" /> sets what <c>~/.profile</c> exports, through
+	/// <c>/bin/sh -l</c>.
+	/// </summary>
+	[Fact]
+	public void RunProfile_WithProfileInHome_ImportsItsVariables()
+	{
+		// Arrange
+		var home = this.environment.CreateFolder();
+		_ = ShellEnvironment.CreateFile(home, ".profile", executable: false, $"export {SampleVariable}=from-profile\n");
+		ShellEnvironment.SetHome(home);
+
+		// Act
+		ShellImport.RunProfile(ShellPath, this.aliases, Builtins);
+
+		// Assert
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("from-profile");
+		_ = this.environment.Error.Should().BeEmpty();
 	}
 }

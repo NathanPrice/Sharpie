@@ -11,7 +11,7 @@ public sealed class ShellProcessTests
 {
 	/// <summary>
 	/// Checks that commands piped to standard input run in order, each after a <c>$ </c> prompt, and that <c>exit</c>
-	/// ends the process with code 0.
+	/// ends the process with the last command's status, which is 127 for one that wasn't found.
 	/// </summary>
 	[Fact]
 	public async Task Shell_WithPipedCommands_PrintsPromptsAndOutputThenExits()
@@ -22,7 +22,7 @@ public sealed class ShellProcessTests
 		// Assert
 		_ = run.Output.Should().Be("$ hi\n$ nosuchcommand: command not found\n$ ");
 		_ = run.Exited.Should().BeTrue();
-		_ = run.ExitCode.Should().Be(0);
+		_ = run.ExitCode.Should().Be(127);
 	}
 
 	/// <summary>

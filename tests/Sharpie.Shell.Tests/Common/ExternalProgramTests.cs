@@ -26,51 +26,70 @@ public sealed partial class ExternalProgramTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a program missing from <c>PATH</c> returns <see langword="false" /> and prints nothing.
+	/// Checks that a program missing from <c>PATH</c> returns <see langword="null" /> and prints nothing.
 	/// </summary>
 	[Fact]
-	public void TryRun_WhenNotOnPath_ReturnsFalseAndPrintsNothing()
+	public void Run_WhenNotOnPath_ReturnsNullAndPrintsNothing()
 	{
 		// Act
-		var result = ExternalProgram.TryRun("nosuchcommand", []);
+		var result = ExternalProgram.Run("nosuchcommand", []);
 
 		// Assert
-		_ = result.Should().BeFalse();
+		_ = result.Should().BeNull();
 		_ = this.environment.Output.Should().BeEmpty();
 	}
 
 	/// <summary>
-	/// Checks that a runnable program on <c>PATH</c> returns <see langword="true" />.
+	/// Checks that a runnable program on <c>PATH</c> returns its exit status.
 	/// </summary>
-	[Fact]
-	public void TryRun_WhenExecutableOnPath_ReturnsTrue()
+	/// <param name="code">The status the program exits with.</param>
+	[Theory]
+	[InlineData(0)]
+	[InlineData(3)]
+	public void Run_WhenExecutableOnPath_ReturnsExitStatus(int code)
 	{
 		// Arrange
-		_ = ShellEnvironment.CreateFile(this.folder, "mytool", executable: true, "#!/bin/sh\nexit 0\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "mytool", executable: true, $"#!/bin/sh\nexit {code}\n");
 
 		// Act
-		var result = ExternalProgram.TryRun("mytool", ["one", "two"]);
+		var result = ExternalProgram.Run("mytool", ["one", "two"]);
 
 		// Assert
-		_ = result.Should().BeTrue();
+		_ = result.Should().Be(code);
 	}
 
 	/// <summary>
-	/// Checks that a program found on <c>PATH</c> that fails to start still returns <see langword="true" /> and
-	/// prints the error after its name.
+	/// Checks that a program ended by a signal returns 128 plus the signal number, as POSIX shells report it.
 	/// </summary>
 	[Fact]
-	public void TryRun_WhenProgramFailsToStart_ReturnsTrueAndPrintsError()
+	public void Run_WhenProgramIsKilled_ReturnsSignalStatus()
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "victim", executable: true, "#!/bin/sh\nkill -9 $$\n");
+
+		// Act
+		var result = ExternalProgram.Run("victim", []);
+
+		// Assert
+		_ = result.Should().Be(128 + 9);
+	}
+
+	/// <summary>
+	/// Checks that a program found on <c>PATH</c> that fails to start returns <see cref="ExternalProgram.CannotRun" />
+	/// and prints the error after its name.
+	/// </summary>
+	[Fact]
+	public void Run_WhenProgramFailsToStart_ReturnsCannotRunAndPrintsError()
 	{
 		// Arrange
 		// No shebang and not a binary, so the OS refuses to run it and Process.Start throws Win32Exception.
 		_ = ShellEnvironment.CreateFile(this.folder, "broken", executable: true, "not a program");
 
 		// Act
-		var result = ExternalProgram.TryRun("broken", []);
+		var result = ExternalProgram.Run("broken", []);
 
 		// Assert
-		_ = result.Should().BeTrue();
+		_ = result.Should().Be(ExternalProgram.CannotRun);
 		_ = this.environment.Output.Should().StartWith("broken: ");
 	}
 
@@ -78,14 +97,14 @@ public sealed partial class ExternalProgramTests : IDisposable
 	/// Checks that a program's standard error goes to the stream passed as the error target.
 	/// </summary>
 	[Fact]
-	public void TryRun_WithErrorStream_WritesStderrToStream()
+	public void Run_WithErrorStream_WritesStderrToStream()
 	{
 		// Arrange
 		_ = ShellEnvironment.CreateFile(this.folder, "complain", executable: true, "#!/bin/sh\necho oops >&2\n");
 		using var error = new MemoryStream();
 
 		// Act
-		_ = ExternalProgram.TryRun("complain", [], error: error);
+		_ = ExternalProgram.Run("complain", [], error: error);
 
 		// Assert
 		_ = System.Text.Encoding.UTF8.GetString(error.ToArray()).Should().Be("oops\n");
@@ -96,7 +115,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 	/// its place.
 	/// </summary>
 	[Fact]
-	public void TryRun_WhenCurrentFolderHasSameName_RunsThePathProgram()
+	public void Run_WhenCurrentFolderHasSameName_RunsThePathProgram()
 	{
 		// Arrange
 		_ = ShellEnvironment.CreateFile(this.folder, "mytool", executable: true, "#!/bin/sh\necho real\n");
@@ -109,7 +128,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 		// Act
 		try
 		{
-			_ = ExternalProgram.TryRun("mytool", [], output);
+			_ = ExternalProgram.Run("mytool", [], output);
 		}
 		finally
 		{
@@ -125,7 +144,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 	/// running.
 	/// </summary>
 	[Fact]
-	public void TryRun_InBackground_PrintsJobAndPidWithoutWaiting()
+	public void Run_InBackground_PrintsJobAndPidWithoutWaiting()
 	{
 		// Arrange
 		// sleep is called by full path because PATH holds only the test folder. A bare name made the script exit
@@ -134,7 +153,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 		var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
 		// Act
-		_ = ExternalProgram.TryRun("napper", [], background: true);
+		var result = ExternalProgram.Run("napper", [], background: true);
 		stopwatch.Stop();
 
 		// Assert
@@ -143,6 +162,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 		_ = match.Success.Should().BeTrue();
 		System.Diagnostics.Process.GetProcessById(int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture)).Kill();
 		_ = stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
+		_ = result.Should().Be(0);
 	}
 
 	/// <summary>
@@ -164,7 +184,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 		var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
 		// Act
-		ExternalProgram.RunPipeline([["spew"], ["firstline"]]);
+		_ = ExternalProgram.RunPipeline([["spew"], ["firstline"]]);
 
 		// Assert
 		_ = stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
@@ -181,11 +201,50 @@ public sealed partial class ExternalProgramTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.folder, "toucher", executable: true, $"#!/bin/sh\n/usr/bin/touch {marker}\n");
 
 		// Act
-		ExternalProgram.RunPipeline([["nope1"], ["toucher"], ["nope2"]]);
+		var result = ExternalProgram.RunPipeline([["nope1"], ["toucher"], ["nope2"]]);
 
 		// Assert
+		_ = result.Should().Be(ExternalProgram.NotFound);
 		_ = this.environment.Output.Should().Be($"nope1: command not found{Environment.NewLine}nope2: command not found{Environment.NewLine}");
 		_ = File.Exists(marker).Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that a pipeline returns its last program's status, not the first one's.
+	/// </summary>
+	/// <param name="first">The status the first program exits with.</param>
+	/// <param name="last">The status the last program exits with.</param>
+	[Theory]
+	[InlineData(0, 4)]
+	[InlineData(5, 0)]
+	public void RunPipeline_WhenStagesFinish_ReturnsLastStatus(int first, int last)
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "first", executable: true, $"#!/bin/sh\nexit {first}\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "last", executable: true, $"#!/bin/sh\nexit {last}\n");
+
+		// Act
+		var result = ExternalProgram.RunPipeline([["first"], ["last"]]);
+
+		// Assert
+		_ = result.Should().Be(last);
+	}
+
+	/// <summary>
+	/// Checks that a pipeline whose later program can't start returns <see cref="ExternalProgram.CannotRun" />.
+	/// </summary>
+	[Fact]
+	public void RunPipeline_WhenLaterStageFailsToStart_ReturnsCannotRun()
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "fine", executable: true, "#!/bin/sh\nexit 0\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "broken", executable: true, "not a program");
+
+		// Act
+		var result = ExternalProgram.RunPipeline([["fine"], ["broken"]]);
+
+		// Assert
+		_ = result.Should().Be(ExternalProgram.CannotRun);
 	}
 
 	/// <summary>

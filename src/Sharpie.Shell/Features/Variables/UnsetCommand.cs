@@ -20,9 +20,11 @@ internal sealed class UnsetCommand(DeclareCommand declare) : ICommand
 	public string Description => "Removes shell variables";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
+
+		var status = 0;
 
 		foreach (var name in args is ["-v", .. var rest] ? rest : args)
 		{
@@ -33,7 +35,10 @@ internal sealed class UnsetCommand(DeclareCommand declare) : ICommand
 			else
 			{
 				Console.Error.WriteLine($"{this.Name}: `{name}': not a valid identifier");
+				status = 1;
 			}
 		}
+
+		return status;
 	}
 }

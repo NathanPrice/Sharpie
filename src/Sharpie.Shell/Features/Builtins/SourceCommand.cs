@@ -9,12 +9,12 @@ namespace Sharpie.Shell.Features.Builtins;
 /// <param name="name">
 /// The name the command is typed as: <c>.</c>, the POSIX name, or <c>source</c>, the one bash and zsh add.
 /// </param>
-/// <param name="runLine">Runs one command line, the same way the shell runs a typed one.</param>
+/// <param name="runLine">Runs one command line, the same way the shell runs a typed one, and gives its status.</param>
 /// <remarks>
 /// The shell also runs <c>~/.sharpierc</c> with it at startup. Arguments after the file name are ignored, since
 /// Sharpie has no positional parameters.
 /// </remarks>
-internal sealed class SourceCommand(string name, Action<string> runLine) : ICommand
+internal sealed class SourceCommand(string name, Func<string, int> runLine) : ICommand
 {
 	/// <summary>
 	/// How many files may be running inside one another before the next one is refused.
@@ -37,7 +37,10 @@ internal sealed class SourceCommand(string name, Action<string> runLine) : IComm
 	public string Description => "Runs the commands in a file in the current shell";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	/// <remarks>
+	/// The status is the last line's, 0 for a file with no commands, or 1 when the file can't be run.
+	/// </remarks>
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
@@ -45,14 +48,14 @@ internal sealed class SourceCommand(string name, Action<string> runLine) : IComm
 		{
 			Console.Error.WriteLine($"{this.Name}: filename argument required");
 
-			return;
+			return 1;
 		}
 
 		if (this.depth >= MaxDepth)
 		{
 			Console.Error.WriteLine($"{this.Name}: {args[0]}: files nested more than {MaxDepth} deep");
 
-			return;
+			return 1;
 		}
 
 		string[] lines;
@@ -65,17 +68,21 @@ internal sealed class SourceCommand(string name, Action<string> runLine) : IComm
 		{
 			Console.Error.WriteLine($"{this.Name}: {args[0]}: {exception.Message}");
 
-			return;
+			return 1;
 		}
 
 		this.depth++;
 
 		try
 		{
+			var status = 0;
+
 			foreach (var line in JoinContinuedLines(lines))
 			{
-				runLine(line);
+				status = runLine(line);
 			}
+
+			return status;
 		}
 		finally
 		{

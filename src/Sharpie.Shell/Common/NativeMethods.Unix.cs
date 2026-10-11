@@ -359,4 +359,51 @@ internal static unsafe partial class NativeMethods
 	[LibraryImport("libc", EntryPoint = "signal")]
 	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
 	internal static partial nint SetSignalHandler(int signal, nint handler);
+
+	/// <summary>
+	/// Gets the name this process was started under, its <c>argv[0]</c>.
+	/// </summary>
+	/// <returns>
+	/// The name, or <see langword="null" /> on Windows or when it can't be read.
+	/// </returns>
+	/// <remarks>
+	/// login, su and tmux start a login shell with a <c>-</c> in front of its name, and
+	/// <see cref="Environment.GetCommandLineArgs" /> puts the program's own path in that place instead. Linux keeps the
+	/// name in <c>/proc/self/cmdline</c>, and macOS keeps the C runtime's <c>argv</c>, which the .NET launcher leaves
+	/// alone.
+	/// </remarks>
+	internal static string? ProgramName()
+	{
+		if (OperatingSystem.IsMacOS())
+		{
+			return Marshal.PtrToStringUTF8((nint)(*GetArgv())[0]);
+		}
+
+		if (!OperatingSystem.IsLinux())
+		{
+			return null;
+		}
+
+		try
+		{
+			var commandLine = File.ReadAllBytes("/proc/self/cmdline");
+			var end = Array.IndexOf(commandLine, (byte)0);
+
+			return System.Text.Encoding.UTF8.GetString(commandLine, 0, end < 0 ? commandLine.Length : end);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>
+	/// Gets where macOS keeps the process's <c>argv</c>.
+	/// </summary>
+	/// <returns>
+	/// A pointer to the <c>argv</c> pointer.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "_NSGetArgv")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial byte*** GetArgv();
 }

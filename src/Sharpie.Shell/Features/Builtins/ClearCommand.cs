@@ -22,5 +22,10 @@ internal class ClearCommand : ICommand
 	public string Description => "Clears the terminal screen";
 
 	/// <inheritdoc />
-	public void Run(string[] args) => Console.Write(ClearScreen);
+	public int Run(string[] args)
+	{
+		Console.Write(ClearScreen);
+
+		return 0;
+	}
 }

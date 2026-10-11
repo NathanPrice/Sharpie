@@ -22,7 +22,12 @@ internal class JobsCommand : ICommand
 	/// Reaps finished jobs like the shell does before each prompt, and also lists the ones still running or stopped,
 	/// like <c>[1]+  Running                 sleep 10 &amp;</c>.
 	/// </remarks>
-	public void Run(string[] args) => Reap(listRunning: true);
+	public int Run(string[] args)
+	{
+		Reap(listRunning: true);
+
+		return 0;
+	}
 
 	/// <summary>
 	/// Prints a <c>Done</c> line, or <c>Exit N</c> for a program that failed, for each job in <see cref="ExternalProgram.Jobs" /> whose program has exited, then

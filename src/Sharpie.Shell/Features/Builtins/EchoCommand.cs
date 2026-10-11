@@ -14,10 +14,12 @@ internal class EchoCommand : ICommand
 	public string Description => "Prints the text you give it";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
 		Console.WriteLine(string.Join(" ", args));
+
+		return 0;
 	}
 }

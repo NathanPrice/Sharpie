@@ -18,11 +18,11 @@ internal class FgCommand : ICommand
 	/// Takes <c>%n</c> for job <c>n</c>, or nothing for the newest job. Prints the job's command line first, as bash
 	/// does.
 	/// </remarks>
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		if (JobsCommand.Find(this.Name, args.ArgumentNotNull()) is not { } job)
 		{
-			return;
+			return 1;
 		}
 
 		Console.WriteLine(job.Command);
@@ -34,5 +34,7 @@ internal class FgCommand : ICommand
 			ExternalProgram.AddJob(job);
 			Console.WriteLine($@"{Environment.NewLine}[{job.Number}]+  {"Stopped",-24}{job.Command}");
 		}
+
+		return job.ExitCode;
 	}
 }

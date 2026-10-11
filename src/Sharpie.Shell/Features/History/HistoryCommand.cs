@@ -176,7 +176,7 @@ internal class HistoryCommand : ICommand
 	/// path writes the list to that file in the same plain format, replacing what was there. <c>-a</c> followed by a
 	/// path appends only the lines added since the last <c>-a</c> or <c>-w</c>, as bash does.
 	/// </remarks>
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
@@ -184,22 +184,29 @@ internal class HistoryCommand : ICommand
 		{
 			var append = flag == "-a";
 
-			if (WriteFile(writePath, append ? this.Lines.Skip(this.AppendedCount) : this.Lines, append))
+			if (!WriteFile(writePath, append ? this.Lines.Skip(this.AppendedCount) : this.Lines, append))
 			{
-				this.AppendedCount = this.Lines.Count;
+				return 1;
 			}
 
-			return;
+			this.AppendedCount = this.Lines.Count;
+
+			return 0;
 		}
 
 		if (args is ["-r", var path])
 		{
-			foreach (var line in ReadFile(path) ?? [])
+			if (ReadFile(path) is not { } read)
+			{
+				return 1;
+			}
+
+			foreach (var line in read)
 			{
 				this.Add(line);
 			}
 
-			return;
+			return 0;
 		}
 
 		var count = this.Lines.Count;
@@ -207,12 +214,14 @@ internal class HistoryCommand : ICommand
 		{
 			Console.Error.WriteLine($"history: {args[0]}: numeric argument required");
 
-			return;
+			return 1;
 		}
 
 		for (var i = Math.Max(0, this.Lines.Count - count); i < this.Lines.Count; i++)
 		{
 			Console.WriteLine($@"{i + 1,5}  {this.Lines[i]}");
 		}
+
+		return 0;
 	}
 }

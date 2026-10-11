@@ -16,12 +16,17 @@ public sealed class SourceCommandTests : IDisposable
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="SourceCommandTests" /> class with a command that records each line
-	/// it runs.
+	/// it runs, and gives the line's length as its status.
 	/// </summary>
 	public SourceCommandTests()
 	{
 		this.folder = this.environment.CreateFolder();
-		this.sut = new SourceCommand(".", this.ran.Add);
+		this.sut = new SourceCommand(".", line =>
+		{
+			this.ran.Add(line);
+
+			return line.Length;
+		});
 	}
 
 	/// <summary>
@@ -31,7 +36,7 @@ public sealed class SourceCommandTests : IDisposable
 	public void Name_WithSourceName_ReturnsIt()
 	{
 		// Act
-		var command = new SourceCommand("source", _ => { });
+		var command = new SourceCommand("source", _ => 0);
 
 		// Assert
 		_ = command.Name.Should().Be("source");
@@ -50,7 +55,7 @@ public sealed class SourceCommandTests : IDisposable
 		var path = ShellEnvironment.CreateFile(this.folder, "sample.rc", executable: false, $"alias a=b{newline}# note{newline}{newline}export X=1{newline}");
 
 		// Act
-		this.sut.Run([path]);
+		_ = this.sut.Run([path]);
 
 		// Assert
 		_ = this.ran.Should().Equal("alias a=b", "# note", string.Empty, "export X=1");
@@ -68,7 +73,7 @@ public sealed class SourceCommandTests : IDisposable
 		ShellEnvironment.SetPath(this.environment.CreateFolder(), this.folder);
 
 		// Act
-		this.sut.Run(["sample.rc"]);
+		_ = this.sut.Run(["sample.rc"]);
 
 		// Assert
 		_ = this.ran.Should().Equal("echo from-path");
@@ -86,7 +91,7 @@ public sealed class SourceCommandTests : IDisposable
 		Directory.SetCurrentDirectory(this.folder);
 
 		// Act
-		this.sut.Run(["sample.rc"]);
+		_ = this.sut.Run(["sample.rc"]);
 
 		// Assert
 		_ = this.ran.Should().Equal("echo from-here");
@@ -104,7 +109,7 @@ public sealed class SourceCommandTests : IDisposable
 		Directory.SetCurrentDirectory(this.folder);
 
 		// Act
-		this.sut.Run(["sample.rc"]);
+		_ = this.sut.Run(["sample.rc"]);
 
 		// Assert
 		_ = this.ran.Should().Equal("echo from-here");
@@ -125,7 +130,7 @@ public sealed class SourceCommandTests : IDisposable
 		Directory.SetCurrentDirectory(this.folder);
 
 		// Act
-		this.sut.Run(["./sample.rc"]);
+		_ = this.sut.Run(["./sample.rc"]);
 
 		// Assert
 		_ = this.ran.Should().Equal("echo from-here");
@@ -141,7 +146,7 @@ public sealed class SourceCommandTests : IDisposable
 		var path = Path.Combine(this.folder, "missing.rc");
 
 		// Act
-		this.sut.Run([path]);
+		_ = this.sut.Run([path]);
 
 		// Assert
 		_ = this.ran.Should().BeEmpty();
@@ -155,8 +160,8 @@ public sealed class SourceCommandTests : IDisposable
 	public void Run_WithFolderOrEmptyName_ReportsBoth()
 	{
 		// Act
-		this.sut.Run([this.folder]);
-		this.sut.Run([string.Empty]);
+		_ = this.sut.Run([this.folder]);
+		_ = this.sut.Run([string.Empty]);
 
 		// Assert
 		_ = this.ran.Should().BeEmpty();
@@ -170,7 +175,7 @@ public sealed class SourceCommandTests : IDisposable
 	public void Run_WithNoArguments_ReportsMissingName()
 	{
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Error.Should().Be($".: filename argument required{Environment.NewLine}");
@@ -191,14 +196,15 @@ public sealed class SourceCommandTests : IDisposable
 		command = new SourceCommand(".", _ =>
 		{
 			runs++;
-			command!.Run([path]);
+
+			return command!.Run([path]);
 		});
 
 		// Act
-		command.Run([path]);
+		_ = command.Run([path]);
 		var afterLoop = runs;
 
-		command.Run([path]);
+		_ = command.Run([path]);
 
 		// Assert
 		_ = afterLoop.Should().Be(SourceCommand.MaxDepth);

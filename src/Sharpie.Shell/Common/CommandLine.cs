@@ -36,7 +36,8 @@ internal static class CommandLine
 	/// no shell variable has that name, and a name set in neither gives nothing. An
 	/// unquoted <c>$NAME</c> that comes out empty adds no argument, like bash. A <c>$</c> not followed by a letter or
 	/// underscore stays as typed. <c>${NAME}</c> marks where the name ends, so <c>${A}b</c> expands <c>A</c> and keeps
-	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. Values aren't split on spaces.
+	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. <c>$?</c> is the last command's exit status. Values
+	/// aren't split on spaces.
 	/// </para>
 	/// </remarks>
 	public static string[] Split(string line, IReadOnlyDictionary<string, string>? variables = null)
@@ -138,7 +139,7 @@ internal static class CommandLine
 	}
 
 	/// <summary>
-	/// Reads the <c>$NAME</c> or <c>${NAME}</c> that starts at the <c>$</c> at <paramref name="index" />.
+	/// Reads the <c>$NAME</c>, <c>${NAME}</c> or <c>$?</c> that starts at the <c>$</c> at <paramref name="index" />.
 	/// </summary>
 	/// <param name="line">The command line being split.</param>
 	/// <param name="index">The position of the <c>$</c>.</param>
@@ -148,10 +149,18 @@ internal static class CommandLine
 	/// <param name="value">The variable's value, or an empty string when no name follows.</param>
 	/// <param name="end">The position of the last character the expansion used.</param>
 	/// <returns>
-	/// <see langword="false" /> when neither form follows the <c>$</c>, so it stays as typed.
+	/// <see langword="false" /> when no form follows the <c>$</c>, so it stays as typed.
 	/// </returns>
 	private static bool TryExpandVariable(string line, int index, IReadOnlyDictionary<string, string> variables, out string value, out int end)
 	{
+		if (index + 1 < line.Length && line[index + 1] == '?')
+		{
+			value = Lookup(variables, "?");
+			end = index + 1;
+
+			return true;
+		}
+
 		if (index + 1 < line.Length && line[index + 1] == '{' && line.IndexOf('}', index + 2) is var close and > 0)
 		{
 			value = Lookup(variables, line[(index + 2)..close]);
@@ -179,6 +188,16 @@ internal static class CommandLine
 
 		return false;
 	}
+
+	/// <summary>
+	/// Quotes <paramref name="text" /> as one word for a POSIX shell, which <see cref="Split" /> also reads back as one
+	/// word.
+	/// </summary>
+	/// <param name="text">The text, such as a path.</param>
+	/// <returns>
+	/// The text in single quotes, with each <c>'</c> inside written as <c>'\''</c>.
+	/// </returns>
+	internal static string Quote(string text) => $"'{text.ArgumentNotNull().Replace("'", @"'\''", StringComparison.Ordinal)}'";
 
 	/// <summary>
 	/// Gets the value of the variable <paramref name="name" />.
@@ -304,12 +323,17 @@ internal static class CommandLine
 	/// <param name="line">The line the user entered.</param>
 	/// <returns>
 	/// The words, starting with <c>man</c> or <c>dman</c>, or <see langword="null" /> when the line is anything else,
-	/// including either command with no page or with a redirect or pipe. The shell runs those itself, and the page
-	/// prints as text.
+	/// including either command with no page, with a redirect or pipe, or with other commands after <c>;</c>,
+	/// <c>&amp;&amp;</c> or <c>||</c>. The shell runs those itself, and the page prints as text.
 	/// </returns>
 	public static string[]? PagedCommand(string line)
 	{
-		var (words, outputPath, _, errorPath, _) = SplitRedirect(Split(line.ArgumentNotNull()));
+		if (CommandList.Split(line.ArgumentNotNull()) is not { Count: 1 })
+		{
+			return null;
+		}
+
+		var (words, outputPath, _, errorPath, _) = SplitRedirect(Split(line));
 
 		return words is ["man" or "dman", _, ..] && outputPath is null && errorPath is null && !words.Contains("|")
 			? words

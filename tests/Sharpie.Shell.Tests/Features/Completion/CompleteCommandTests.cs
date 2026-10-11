@@ -23,7 +23,7 @@ public sealed class CompleteCommandTests : IDisposable
 	public void Run_WithPFlag_PrintsNoSpecificationError(string command)
 	{
 		// Act
-		this.sut.Run(["-p", command]);
+		_ = this.sut.Run(["-p", command]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"complete: {command}: no completion specification" + Environment.NewLine);
@@ -39,7 +39,7 @@ public sealed class CompleteCommandTests : IDisposable
 	public void Run_WithoutPFlagAndCommand_PrintsNothing(string[] arguments)
 	{
 		// Act
-		this.sut.Run(arguments);
+		_ = this.sut.Run(arguments);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -52,7 +52,7 @@ public sealed class CompleteCommandTests : IDisposable
 	public void Run_WithCFlag_PrintsNothing()
 	{
 		// Act
-		this.sut.Run(["-C", "/path/to/git/completer", "git"]);
+		_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -70,10 +70,10 @@ public sealed class CompleteCommandTests : IDisposable
 	public void Run_WithPFlagAfterCFlag_PrintsNormalizedSpecification(string script, string command)
 	{
 		// Arrange
-		this.sut.Run(["-C", script, command]);
+		_ = this.sut.Run(["-C", script, command]);
 
 		// Act
-		this.sut.Run(["-p", command]);
+		_ = this.sut.Run(["-p", command]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"complete -C '{script}' {command}" + Environment.NewLine);
@@ -86,11 +86,11 @@ public sealed class CompleteCommandTests : IDisposable
 	public void Run_WithCFlagTwice_PrintsLatestScript()
 	{
 		// Arrange
-		this.sut.Run(["-C", "/old", "git"]);
-		this.sut.Run(["-C", "/new", "git"]);
+		_ = this.sut.Run(["-C", "/old", "git"]);
+		_ = this.sut.Run(["-C", "/new", "git"]);
 
 		// Act
-		this.sut.Run(["-p", "git"]);
+		_ = this.sut.Run(["-p", "git"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("complete -C '/new' git" + Environment.NewLine);
@@ -104,7 +104,7 @@ public sealed class CompleteCommandTests : IDisposable
 	public void FindCompleter_AfterCFlag_ReturnsScriptOnlyForThatCommand()
 	{
 		// Arrange
-		this.sut.Run(["-C", "/path/to/git/completer", "git"]);
+		_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
 
 		// Act / Assert
 		_ = this.sut.FindCompleter("git").Should().Be("/path/to/git/completer");
@@ -118,11 +118,11 @@ public sealed class CompleteCommandTests : IDisposable
 	public void Run_WithRFlagAfterCFlag_PrintsNoSpecification()
 	{
 		// Arrange
-		this.sut.Run(["-C", "/path/to/git/completer", "git"]);
-		this.sut.Run(["-r", "git"]);
+		_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
+		_ = this.sut.Run(["-r", "git"]);
 
 		// Act
-		this.sut.Run(["-p", "git"]);
+		_ = this.sut.Run(["-p", "git"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("complete: git: no completion specification" + Environment.NewLine);
@@ -141,11 +141,11 @@ public sealed class CompleteCommandTests : IDisposable
 		// Arrange
 		if (registerFirst)
 		{
-			this.sut.Run(["-C", "/path/to/git/completer", "git"]);
+			_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
 		}
 
 		// Act
-		this.sut.Run(["-r", "git"]);
+		_ = this.sut.Run(["-r", "git"]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -159,10 +159,10 @@ public sealed class CompleteCommandTests : IDisposable
 	public void FindCompleter_AfterRFlag_ReturnsNull()
 	{
 		// Arrange
-		this.sut.Run(["-C", "/path/to/git/completer", "git"]);
+		_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
 
 		// Act
-		this.sut.Run(["-r", "git"]);
+		_ = this.sut.Run(["-r", "git"]);
 
 		// Assert
 		_ = this.sut.FindCompleter("git").Should().BeNull();

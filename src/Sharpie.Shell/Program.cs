@@ -86,7 +86,7 @@ internal static class Program
 		[
 			alias,
 			new EchoCommand(),
-			new ExitCommand(),
+			new ExitCommand(declare),
 			new PwdCommand(),
 			new CdCommand(),
 			new ClearCommand(),
@@ -98,8 +98,8 @@ internal static class Program
 			declare,
 			new ExportCommand(declare),
 			new UnsetCommand(declare),
-			new SourceCommand(".", line => RunLine(commands, alias, declare.Variables, line)),
-			new SourceCommand("source", line => RunLine(commands, alias, declare.Variables, line)),
+			new SourceCommand(".", line => RunLine(commands, alias, declare, line)),
+			new SourceCommand("source", line => RunLine(commands, alias, declare, line)),
 			new DmanCommand(),
 
 			// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
@@ -108,29 +108,39 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Registers the builtins, then reads and runs one command line at a time until <c>exit</c> ends the process or
-	/// standard input closes.
+	/// Registers the builtins, then runs the <c>-c</c> command or the script file, or else reads and runs one command
+	/// line at a time until <c>exit</c> ends the process or standard input closes.
 	/// </summary>
 	/// <remarks>
-	/// As POSIX defines it, the shell is interactive when standard input and standard error are both terminals. Then it
-	/// edits lines itself with <see cref="LineEditor" />. Otherwise it reads plain lines after a <c>$ </c> prompt, which
-	/// is how its own process tests drive it.
+	/// When standard input and standard error are both terminals, the shell edits lines itself with
+	/// <see cref="LineEditor" /> and controls jobs. Otherwise it reads plain lines after a <c>$ </c> prompt, which is
+	/// how its own process tests drive it.
 	/// </remarks>
 	/// <param name="args">
-	/// Empty, <see cref="NoRcOption" /> to skip the startup file, or <see cref="ShellImport.PrintEnvironmentOption" />
-	/// alone to print the environment and exit.
+	/// The options <see cref="ShellOptions.Parse" /> reads, or <see cref="ShellImport.PrintEnvironmentOption" /> alone
+	/// to print the environment and exit.
 	/// </param>
-	private static void Main(string[] args)
+	/// <returns>
+	/// The last command's status, or 2 when the arguments were refused.
+	/// </returns>
+	private static int Main(string[] args)
 	{
 		if (args is [ShellImport.PrintEnvironmentOption])
 		{
 			ShellImport.PrintEnvironment();
 
-			return;
+			return 0;
+		}
+
+		if (ShellOptions.Parse(NativeMethods.ProgramName(), args, out var error) is not { } options)
+		{
+			Console.Error.WriteLine($"sharpie: {error}");
+
+			return 2;
 		}
 
 		var commands = new Dictionary<string, ICommand>();
-		var interactive = !Console.IsInputRedirected && !Console.IsErrorRedirected;
+		var terminal = !Console.IsInputRedirected && !Console.IsErrorRedirected;
 
 		// Ctrl+C stops the running program but not the shell. Without this, .NET ends the shell on SIGINT. On a terminal
 		// the line discipline already sends SIGINT to the program, so passing it on would make a second one.
@@ -138,7 +148,7 @@ internal static class Program
 		{
 			context.Cancel = true;
 
-			if (!interactive)
+			if (!terminal)
 			{
 				ExternalProgram.InterruptRunning();
 			}
@@ -149,13 +159,54 @@ internal static class Program
 			commands.Add(command.Name, command);
 		}
 
-		var variables = ((DeclareCommand)commands["declare"]).Variables;
+		var declare = (DeclareCommand)commands["declare"];
 		var aliases = (AliasCommand)commands["alias"];
+		var interactive = options.IsInteractive(terminal);
+
+		if (options.Login)
+		{
+			ShellImport.RunProfile(Environment.ProcessPath!, aliases, commands.Keys);
+		}
+
+		// A command or script runs on its own, with no banner, import, history or job control. Programs started from a
+		// tab inherit the window variable, and vim's :! would otherwise print fastfetch above every command's output.
+		if (options.Command is not null || options.ScriptFile is not null)
+		{
+			if (interactive && !options.NoRc)
+			{
+				RunRcFile(commands["."]);
+			}
+
+			return options.Command is not null
+				? RunLine(commands, aliases, declare, options.Command)
+				: commands["."].Run([options.ScriptFile!]);
+		}
+
+		return RunPrompts(commands, declare, aliases, terminal, interactive && !options.NoRc);
+	}
+
+	/// <summary>
+	/// Reads and runs one command line at a time until <c>exit</c> ends the process or standard input closes.
+	/// </summary>
+	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and the last status.</param>
+	/// <param name="aliases">The <c>alias</c> builtin.</param>
+	/// <param name="terminal">
+	/// <see langword="true" /> when standard input and standard error are both terminals, so lines are edited and jobs
+	/// controlled.
+	/// </param>
+	/// <param name="runRcFile"><see langword="true" /> to run <see cref="RcFileName" /> before the first prompt.</param>
+	/// <returns>
+	/// The last command's status once standard input closes.
+	/// </returns>
+	private static int RunPrompts(Dictionary<string, ICommand> commands, DeclareCommand declare, AliasCommand aliases, bool terminal, bool runRcFile)
+	{
+		var variables = declare.Variables;
 
 		// The window features below are off when the variable is unset, so the shell's own process tests never touch
-		// the keyring. TryRun prints nothing when fastfetch isn't installed.
+		// the keyring. Run gives null when fastfetch isn't installed, and prints nothing.
 		var inWindow = Environment.GetEnvironmentVariable(WindowVariable) == "1";
-		var bannerShown = inWindow && ExternalProgram.TryRun("fastfetch", []);
+		var bannerShown = inWindow && ExternalProgram.Run("fastfetch", []) is not null;
 
 		// After the banner, so the window isn't blank while the user's shell starts up.
 		if (inWindow && Environment.GetEnvironmentVariable(ImportVariable) != "0")
@@ -164,7 +215,7 @@ internal static class Program
 		}
 
 		// After the import so the user's own settings win, and before the history starts so a HISTFILE set there is used.
-		if (interactive && !args.Contains(NoRcOption))
+		if (runRcFile)
 		{
 			RunRcFile(commands["."]);
 		}
@@ -181,13 +232,13 @@ internal static class Program
 		// Closing the window sends SIGHUP, and the runtime ends the process on it without raising ProcessExit. bash also
 		// saves its history on hangup.
 		using var hangup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, _ => history.WriteHistFile());
-		var editor = interactive ? CreateEditor(commands, aliases, historyCommand) : null;
+		var editor = terminal ? CreateEditor(commands, aliases, historyCommand) : null;
 
-		if (interactive && OperatingSystem.IsWindows())
+		if (terminal && OperatingSystem.IsWindows())
 		{
 			NativeMethods.EnableVirtualTerminalOutput();
 		}
-		else if (interactive)
+		else if (terminal)
 		{
 			JobControl.Initialize();
 		}
@@ -211,7 +262,7 @@ internal static class Program
 			// and looping on would spin forever.
 			if (line is null)
 			{
-				return;
+				return declare.Status;
 			}
 
 			history.Record(line);
@@ -227,7 +278,7 @@ internal static class Program
 
 			var clock = Stopwatch.StartNew();
 
-			RunLine(commands, aliases, variables, line);
+			_ = RunLine(commands, aliases, declare, line);
 			took = clock.Elapsed;
 			blankLine = line.Trim() != "clear";
 		}
@@ -276,7 +327,7 @@ internal static class Program
 
 		if (File.Exists(rcFile))
 		{
-			source.Run([rcFile]);
+			_ = source.Run([rcFile]);
 		}
 	}
 
@@ -362,13 +413,35 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Splits one command line and runs it as a pipeline, a builtin, or a program on <c>PATH</c>.
+	/// Runs the commands of one line, joined by <c>;</c>, <c>&amp;&amp;</c> and <c>||</c>, as
+	/// <see cref="CommandList.Run" /> describes.
+	/// </summary>
+	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and the last status.</param>
+	/// <param name="line">The line the user entered.</param>
+	/// <returns>
+	/// The last command's status.
+	/// </returns>
+	/// <remarks>
+	/// The status is stored after each command, so <c>false; echo $?</c> prints 1, and again after the line, for one
+	/// that <see cref="CommandList" /> refuses.
+	/// </remarks>
+	private static int RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line) =>
+		declare.Status = CommandList.Run(line, declare.Status, command => declare.Status = RunCommand(commands, aliases, declare.Variables, command));
+
+	/// <summary>
+	/// Splits one command and runs it as a pipeline, a builtin, or a program on <c>PATH</c>.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
 	/// <param name="variables">The shell variables that <c>$NAME</c> expands to.</param>
-	/// <param name="line">The line the user entered.</param>
-	private static void RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, IReadOnlyDictionary<string, string> variables, string line)
+	/// <param name="line">The command, with no <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> left in it.</param>
+	/// <returns>
+	/// The command's status: <see cref="ExternalProgram.NotFound" /> when it isn't found, and 1 when a redirect file
+	/// can't be opened.
+	/// </returns>
+	private static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, IReadOnlyDictionary<string, string> variables, string line)
 	{
 		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(aliases.Expand(CommandLine.Split(line, variables), variables));
 
@@ -382,15 +455,13 @@ internal static class Program
 
 		if (words.Length == 0)
 		{
-			return;
+			return 0;
 		}
 
 		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
 		if (Array.TrueForAll(words, DeclareCommand.IsAssignment))
 		{
-			commands["declare"].Run(words);
-
-			return;
+			return commands["declare"].Run(words);
 		}
 
 		var commandName = words[0];
@@ -400,33 +471,22 @@ internal static class Program
 
 		if (outputFailed)
 		{
-			return;
+			return 1;
 		}
 
 		using var error = OpenRedirect(errorPath, appendError, out var errorFailed);
 
 		if (errorFailed)
 		{
-			return;
+			return 1;
 		}
 
 		// Redirects and & aren't applied to a pipeline.
 		var stages = CommandLine.SplitPipeline(words);
 
-		if (stages.Length > 1)
-		{
-			RunPipeline(commands, stages);
-		}
-		else if (commands.TryGetValue(commandName, out var command))
-		{
-			RunBuiltin(command, arguments, output, error);
-		}
-		else if (!ExternalProgram.TryRun(commandName, arguments, output, error, background))
-		{
-			Console.WriteLine($@"{commandName}: command not found");
-		}
-
-		return;
+		return stages.Length > 1 ? RunPipeline(commands, stages)
+			: commands.TryGetValue(commandName, out var command) ? RunBuiltin(command, arguments, output, error)
+			: RunProgram(commandName, arguments, output, error, background);
 
 		// Opens the redirect file at path, or gives null when path is null. The file is created if missing, then
 		// emptied, or positioned at its end when append is true. Sets failed after printing the reason when the file
@@ -462,7 +522,8 @@ internal static class Program
 		// hangs a pipeline into a builtin, because bash relies on the broken pipe to stop it. With three or more
 		// stages builtins aren't looked up, so echo runs the program on PATH and type isn't found. Handling them
 		// there means running the stages before the last builtin into Stream.Null.
-		static void RunPipeline(Dictionary<string, ICommand> commands, string[][] stages)
+		// The status is the last stage's, as in bash without pipefail.
+		static int RunPipeline(Dictionary<string, ICommand> commands, string[][] stages)
 		{
 			var left = stages[0];
 			var right = stages[^1];
@@ -471,41 +532,42 @@ internal static class Program
 
 			if (leftBuiltin is null && rightBuiltin is null)
 			{
-				ExternalProgram.RunPipeline(stages);
-
-				return;
+				return ExternalProgram.RunPipeline(stages);
 			}
 
 			if (rightBuiltin is not null)
 			{
-				if (leftBuiltin is not null)
-				{
-					RunBuiltin(leftBuiltin, left[1..], Stream.Null, null);
-				}
-				else if (!ExternalProgram.TryRun(left[0], left[1..], Stream.Null))
-				{
-					Console.WriteLine($@"{left[0]}: command not found");
-				}
+				_ = leftBuiltin is not null
+					? RunBuiltin(leftBuiltin, left[1..], Stream.Null, null)
+					: RunProgram(left[0], left[1..], Stream.Null, null, background: false);
 
-				RunBuiltin(rightBuiltin, right[1..], null, null);
-
-				return;
+				return RunBuiltin(rightBuiltin, right[1..], null, null);
 			}
 
 			using var buffer = new MemoryStream();
 
-			RunBuiltin(leftBuiltin!, left[1..], buffer, null);
+			_ = RunBuiltin(leftBuiltin!, left[1..], buffer, null);
 			buffer.Position = 0;
 
-			if (!ExternalProgram.TryRun(right[0], right[1..], input: buffer))
+			return RunProgram(right[0], right[1..], null, null, background: false, buffer);
+		}
+
+		// Runs a program on PATH, or says it isn't there.
+		static int RunProgram(string commandName, string[] arguments, Stream? output, Stream? error, bool background, Stream? input = null)
+		{
+			if (ExternalProgram.Run(commandName, arguments, output, error, background, input) is { } status)
 			{
-				Console.WriteLine($@"{right[0]}: command not found");
+				return status;
 			}
+
+			Console.WriteLine($@"{commandName}: command not found");
+
+			return ExternalProgram.NotFound;
 		}
 
 		// Runs a builtin with Console.Out and Console.Error pointed at output and error when given, then puts the
 		// terminal back.
-		static void RunBuiltin(ICommand command, string[] arguments, Stream? output, Stream? error)
+		static int RunBuiltin(ICommand command, string[] arguments, Stream? output, Stream? error)
 		{
 			var terminalOut = Console.Out;
 			var terminalError = Console.Error;
@@ -518,7 +580,7 @@ internal static class Program
 
 			try
 			{
-				command.Run(arguments);
+				return command.Run(arguments);
 			}
 			finally
 			{

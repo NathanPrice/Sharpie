@@ -14,7 +14,7 @@ internal static partial class ExternalProgram
 	private const int Kill = 9;
 
 	/// <summary>
-	/// Runs the program at <paramref name="fullPath" /> as <see cref="TryRun" /> describes.
+	/// Runs the program at <paramref name="fullPath" /> as <see cref="Run" /> describes.
 	/// </summary>
 	/// <param name="commandName">The program name as the user typed it, passed on as its <c>argv[0]</c>.</param>
 	/// <param name="fullPath">Where <see cref="PathFinder.FindExecutable" /> found the program.</param>
@@ -23,11 +23,14 @@ internal static partial class ExternalProgram
 	/// <param name="error">Where standard error goes, or <see langword="null" /> for the terminal.</param>
 	/// <param name="background"><see langword="true" /> to return without waiting; otherwise, <see langword="false" />.</param>
 	/// <param name="input">What the program reads, or <see langword="null" /> for the terminal.</param>
+	/// <returns>
+	/// The status as <see cref="Run" /> gives it.
+	/// </returns>
 	/// <remarks>
 	/// A file is handed to the program as is. Any other stream goes through a pipe the shell copies, except for a
 	/// background job, whose output then goes to the terminal: nobody would read the pipe once this returns.
 	/// </remarks>
-	private static void RunWithSpawn(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input)
+	private static int RunWithSpawn(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input)
 	{
 		using var plumbing = new Plumbing();
 
@@ -48,7 +51,7 @@ internal static partial class ExternalProgram
 		{
 			Console.WriteLine($@"{commandName}: {exception.Message}");
 
-			return;
+			return CannotRun;
 		}
 
 		plumbing.Started();
@@ -62,7 +65,7 @@ internal static partial class ExternalProgram
 			AddJob(job);
 			Console.WriteLine($@"[{job.Number}] {job.ProcessId}");
 
-			return;
+			return 0;
 		}
 
 		WaitInForeground(job);
@@ -72,6 +75,8 @@ internal static partial class ExternalProgram
 		{
 			plumbing.Finish();
 		}
+
+		return job.ExitCode;
 	}
 
 	/// <summary>
@@ -79,16 +84,20 @@ internal static partial class ExternalProgram
 	/// </summary>
 	/// <param name="stages">Each program's name followed by its arguments, in pipeline order.</param>
 	/// <param name="paths">Where each program was found, in the same order.</param>
+	/// <returns>
+	/// The status as <see cref="RunPipeline" /> gives it.
+	/// </returns>
 	/// <remarks>
 	/// Neighboring programs share a real pipe and the shell copies nothing. With job control they all join the first
 	/// program's process group, so Ctrl+C and Ctrl+Z reach the whole pipeline. When a later program exits early, as
 	/// <c>head</c> does in <c>yes | head -n 3</c>, the earlier one gets SIGPIPE on its next write and ends, as in any
 	/// shell.
 	/// </remarks>
-	private static void RunPipelineWithSpawn(string[][] stages, string[] paths)
+	private static int RunPipelineWithSpawn(string[][] stages, string[] paths)
 	{
 		var pipes = new AnonymousPipeServerStream[stages.Length - 1];
 		Job? job = null;
+		var failed = false;
 
 		try
 		{
@@ -122,6 +131,8 @@ internal static partial class ExternalProgram
 						_ = NativeMethods.Kill(started, Kill);
 					}
 
+					failed = true;
+
 					break;
 				}
 			}
@@ -141,6 +152,9 @@ internal static partial class ExternalProgram
 		{
 			WaitInForeground(job);
 		}
+
+		// The killed programs' statuses would otherwise stand in for the one that never ran.
+		return failed ? CannotRun : job!.ExitCode;
 	}
 
 	/// <summary>
@@ -189,7 +203,7 @@ internal static partial class ExternalProgram
 	}
 
 	/// <summary>
-	/// Turns the streams <see cref="TryRun" /> takes into open files a program can be given, and copies data through a
+	/// Turns the streams <see cref="Run" /> takes into open files a program can be given, and copies data through a
 	/// pipe for streams that aren't files.
 	/// </summary>
 	private sealed class Plumbing : IDisposable

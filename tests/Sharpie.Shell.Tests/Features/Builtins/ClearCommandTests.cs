@@ -23,7 +23,7 @@ public sealed class ClearCommandTests : IDisposable
 		// ShellEnvironment has already redirected Console.Out, which is what made Console.Clear unusable here.
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("\e[H\e[2J\e[3J");

@@ -97,7 +97,7 @@ public sealed class DmanCommandTests : IDisposable
 	public void Run_NoName_PrintsUsage()
 	{
 		// Act
-		new DmanCommand().Run([]);
+		_ = new DmanCommand().Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();

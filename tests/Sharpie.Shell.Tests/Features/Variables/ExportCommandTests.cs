@@ -34,7 +34,7 @@ public sealed class ExportCommandTests : IDisposable
 	public void Run_WithAssignment_SetsEnvironmentAndShellVariable(string value)
 	{
 		// Act
-		this.sut.Run([$"{SampleVariable}={value}"]);
+		_ = this.sut.Run([$"{SampleVariable}={value}"]);
 
 		// Assert
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be(value);
@@ -49,10 +49,10 @@ public sealed class ExportCommandTests : IDisposable
 	public void Run_WithDeclaredName_ExportsIt()
 	{
 		// Arrange
-		this.declare.Run([$"{SampleVariable}=declared"]);
+		_ = this.declare.Run([$"{SampleVariable}=declared"]);
 
 		// Act
-		this.sut.Run([SampleVariable]);
+		_ = this.sut.Run([SampleVariable]);
 
 		// Assert
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("declared");
@@ -65,7 +65,7 @@ public sealed class ExportCommandTests : IDisposable
 	public void Run_WithUnknownName_DoesNothing()
 	{
 		// Act
-		this.sut.Run([SampleVariable]);
+		_ = this.sut.Run([SampleVariable]);
 
 		// Assert
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().BeNull();
@@ -84,7 +84,7 @@ public sealed class ExportCommandTests : IDisposable
 	public void Run_WithInvalidName_ReportsItAndExportsTheRest(string argument)
 	{
 		// Act
-		this.sut.Run([argument, $"{SampleVariable}=kept"]);
+		_ = this.sut.Run([argument, $"{SampleVariable}=kept"]);
 
 		// Assert
 		_ = this.environment.Error.Should().Be($"export: `{argument}': not a valid identifier{Environment.NewLine}");
@@ -104,7 +104,7 @@ public sealed class ExportCommandTests : IDisposable
 		Environment.SetEnvironmentVariable(SampleVariable, "it's");
 
 		// Act
-		this.sut.Run(arguments);
+		_ = this.sut.Run(arguments);
 
 		// Assert
 		_ = this.environment.Output.Should().Contain($"export {SampleVariable}='it'\\''s'{Environment.NewLine}");
@@ -124,7 +124,7 @@ public sealed class ExportCommandTests : IDisposable
 		try
 		{
 			// Act
-			this.sut.Run([]);
+			_ = this.sut.Run([]);
 
 			// Assert
 			_ = this.environment.Output.Should().Contain(

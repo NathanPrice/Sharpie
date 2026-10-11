@@ -18,15 +18,17 @@ internal class BgCommand : ICommand
 	/// Takes <c>%n</c> for job <c>n</c>, or nothing for the newest job, and prints it the way bash does, like
 	/// <c>[1]+ sleep 100 &amp;</c>.
 	/// </remarks>
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		if (JobsCommand.Find(this.Name, args.ArgumentNotNull()) is not { } job)
 		{
-			return;
+			return 1;
 		}
 
 		_ = NativeMethods.Kill(-job.ProcessId, NativeMethods.SignalContinue);
 		job.State = JobState.Running;
 		Console.WriteLine($@"[{job.Number}]+ {job.Command} &");
+
+		return 0;
 	}
 }

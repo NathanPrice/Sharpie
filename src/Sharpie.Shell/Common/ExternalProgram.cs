@@ -12,6 +12,16 @@ namespace Sharpie.Shell.Common;
 /// </remarks>
 internal static partial class ExternalProgram
 {
+	/// <summary>
+	/// The status POSIX gives a command that isn't a builtin or a program on <c>PATH</c>.
+	/// </summary>
+	internal const int NotFound = 127;
+
+	/// <summary>
+	/// The status POSIX gives a program that was found but couldn't be started.
+	/// </summary>
+	internal const int CannotRun = 126;
+
 	// SIGINT is 2 on both Linux and macOS.
 	private const int Interrupt = 2;
 
@@ -49,31 +59,21 @@ internal static partial class ExternalProgram
 	/// read the terminal.
 	/// </param>
 	/// <returns>
-	/// <see langword="true" /> if the program was found, even when it then failed to start (that error is printed
-	/// here); otherwise, <see langword="false" />, and nothing was printed.
+	/// The program's exit status, 128 plus the signal number when a signal ended it, 0 for a background job, or 126
+	/// when it was found but couldn't start (that error is printed here). <see langword="null" /> when the program
+	/// isn't on <c>PATH</c>, and nothing was printed.
 	/// </returns>
-	public static bool TryRun(string commandName, string[] arguments, Stream? output = null, Stream? error = null, bool background = false, Stream? input = null)
+	public static int? Run(string commandName, string[] arguments, Stream? output = null, Stream? error = null, bool background = false, Stream? input = null)
 	{
 		_ = commandName.ArgumentNotNull();
 		_ = arguments.ArgumentNotNull();
 
 		var fullPath = PathFinder.FindExecutable(commandName);
 
-		if (fullPath is null)
-		{
-			return false;
-		}
-
-		if (OperatingSystem.IsWindows())
-		{
-			RunWithProcess(commandName, fullPath, arguments, output, error, background, input);
-		}
-		else
-		{
-			RunWithSpawn(commandName, fullPath, arguments, output, error, background, input);
-		}
-
-		return true;
+		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
+		return fullPath is null ? null
+			: OperatingSystem.IsWindows() ? RunWithProcess(commandName, fullPath, arguments, output, error, background, input)
+			: RunWithSpawn(commandName, fullPath, arguments, output, error, background, input);
 	}
 
 	/// <summary>
@@ -85,7 +85,11 @@ internal static partial class ExternalProgram
 	/// If any program isn't on <c>PATH</c>, its name is reported and none of them run. Bash would still start the
 	/// others.
 	/// </remarks>
-	public static void RunPipeline(string[][] stages)
+	/// <returns>
+	/// The last program's status as <see cref="Run" /> gives it, 127 when a program isn't on <c>PATH</c>, or 126 when
+	/// one couldn't start.
+	/// </returns>
+	public static int RunPipeline(string[][] stages)
 	{
 		_ = stages.ArgumentNotNull();
 
@@ -101,21 +105,15 @@ internal static partial class ExternalProgram
 				}
 			}
 
-			return;
+			return NotFound;
 		}
 
-		if (OperatingSystem.IsWindows())
-		{
-			RunPipelineWithProcesses(stages, paths!);
-		}
-		else
-		{
-			RunPipelineWithSpawn(stages, paths!);
-		}
+		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
+		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!) : RunPipelineWithSpawn(stages, paths!);
 	}
 
 	/// <summary>
-	/// Stops the program <see cref="TryRun" /> is waiting on, the way Ctrl+C does in other shells. Does nothing when
+	/// Stops the program <see cref="Run" /> is waiting on, the way Ctrl+C does in other shells. Does nothing when
 	/// no program is running.
 	/// </summary>
 	/// <remarks>

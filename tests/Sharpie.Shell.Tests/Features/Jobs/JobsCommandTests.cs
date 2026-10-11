@@ -30,7 +30,7 @@ public sealed class JobsCommandTests : IDisposable
 	public void Run_WithNoJobs_PrintsNothing()
 	{
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -46,7 +46,7 @@ public sealed class JobsCommandTests : IDisposable
 		ExternalProgram.Jobs.Add(new Job(1, 123, "sleep 10"));
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("[1]+  Running                 sleep 10 &\n");
@@ -64,7 +64,7 @@ public sealed class JobsCommandTests : IDisposable
 		ExternalProgram.Jobs.Add(new Job(3, 103, "sleep 3"));
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be(
@@ -83,7 +83,7 @@ public sealed class JobsCommandTests : IDisposable
 		ExternalProgram.Jobs.Add(StartExitedJob());
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("[1]+  Done                    true\n");
@@ -101,7 +101,7 @@ public sealed class JobsCommandTests : IDisposable
 		ExternalProgram.Jobs.Add(new Job(1, process.Id, "false", process));
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("[1]+  Exit 1                  false\n");
@@ -115,10 +115,10 @@ public sealed class JobsCommandTests : IDisposable
 	{
 		// Arrange
 		ExternalProgram.Jobs.Add(StartExitedJob());
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("[1]+  Done                    true\n");
@@ -176,7 +176,7 @@ public sealed class JobsCommandTests : IDisposable
 		JobsCommand.Reap(listRunning: false);
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be(
@@ -208,7 +208,7 @@ public sealed class JobsCommandTests : IDisposable
 		ExternalProgram.Jobs.Add(new Job(1, 123, "vim notes") { State = JobState.Stopped });
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("[1]+  Stopped                 vim notes\n");

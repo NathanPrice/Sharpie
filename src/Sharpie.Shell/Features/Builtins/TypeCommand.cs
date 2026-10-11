@@ -26,9 +26,11 @@ internal class TypeCommand(IReadOnlyDictionary<string, ICommand> builtins, IRead
 	/// Aliases are checked first, then builtins, then <c>PATH</c>, because that is the order the shell's main loop
 	/// dispatches in, so the answer matches what would actually run.
 	/// </remarks>
-	public void Run(string[] arguments)
+	public int Run(string[] arguments)
 	{
 		_ = arguments.ArgumentNotNull();
+
+		var status = 0;
 
 		foreach (var commandName in arguments)
 		{
@@ -47,7 +49,10 @@ internal class TypeCommand(IReadOnlyDictionary<string, ICommand> builtins, IRead
 			else
 			{
 				Console.WriteLine($@"{commandName}: not found");
+				status = 1;
 			}
 		}
+
+		return status;
 	}
 }

@@ -23,7 +23,7 @@ public sealed class PwdCommandTests : IDisposable
 		Directory.SetCurrentDirectory(folder);
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be(folder + Environment.NewLine);

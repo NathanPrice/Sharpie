@@ -373,6 +373,8 @@ public sealed class CommandLineTests
 	[InlineData("dman List > out.txt", null)]
 	[InlineData("dman List | less", null)]
 	[InlineData("echo dman", null)]
+	[InlineData("man ls; ls", null)]
+	[InlineData("man ls && ls", null)]
 	public void PagedCommand_Line_ReturnsWordsForReader(string line, string[]? expected)
 	{
 		// Act
@@ -380,5 +382,47 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = result.Should().BeEquivalentTo(expected, options => options.WithStrictOrdering());
+	}
+
+	/// <summary>
+	/// Checks that <c>$?</c> expands to the last status outside single quotes, and stays as typed inside them.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="expected">The words it should give.</param>
+	[Theory]
+	[InlineData("echo $?", new[] { "echo", "3" })]
+	[InlineData("echo \"$?\"", new[] { "echo", "3" })]
+	[InlineData("echo x$?y", new[] { "echo", "x3y" })]
+	[InlineData("echo '$?'", new[] { "echo", "$?" })]
+	[InlineData(@"echo \$?", new[] { "echo", "$?" })]
+	public void Split_WithStatusVariable_ExpandsOutsideSingleQuotes(string line, string[] expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["?"] = "3" };
+
+		// Act
+		var words = CommandLine.Split(line, variables);
+
+		// Assert
+		_ = words.Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.Quote" /> gives one word that <see cref="CommandLine.Split" /> reads back
+	/// unchanged, whatever quotes, spaces or <c>$</c> it holds.
+	/// </summary>
+	/// <param name="text">The text to quote.</param>
+	[Theory]
+	[InlineData("plain")]
+	[InlineData("it's here")]
+	[InlineData("$HOME and \"quotes\" and \\")]
+	[InlineData("")]
+	public void Quote_WithText_SplitsBackToSameWord(string text)
+	{
+		// Act
+		var words = CommandLine.Split(CommandLine.Quote(text), new Dictionary<string, string> { ["HOME"] = "expanded" });
+
+		// Assert
+		_ = words.Should().Equal(text);
 	}
 }

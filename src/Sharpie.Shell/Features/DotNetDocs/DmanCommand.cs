@@ -35,22 +35,24 @@ internal sealed class DmanCommand : ICommand
 	public string Description => "Shows .NET API and C# or VB keyword docs as man pages";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	/// <remarks>
+	/// The status is 2 for a usage mistake, as bash gives its builtins, and 1 when the page or download fails.
+	/// </remarks>
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
 		if (args is ["--download"])
 		{
-			_ = OfflineDocs.Download(DocsSource.Shared, Console.Error);
-
-			return;
+			// Stryker disable once Conditional : the download needs the network, which the unit tests stay off.
+			return OfflineDocs.Download(DocsSource.Shared, Console.Error) ? 0 : 1;
 		}
 
 		if (Parse(args) is null)
 		{
 			Console.Error.WriteLine(Resources.DmanUsage);
 
-			return;
+			return 2;
 		}
 
 		_ = OfflineDocs.RefreshIfDue(DocsSource.Shared, DateTimeOffset.UtcNow);
@@ -62,7 +64,7 @@ internal sealed class DmanCommand : ICommand
 		{
 			Console.Error.WriteLine(string.Format(CultureInfo.CurrentCulture, NotFoundFormat, Parse(args)!.Value.Name));
 
-			return;
+			return 1;
 		}
 
 		if (toTerminal)
@@ -70,13 +72,15 @@ internal sealed class DmanCommand : ICommand
 			using var input = new MemoryStream(Encoding.UTF8.GetBytes(page));
 
 			// -R passes the color codes in examples through; less draws bold and underline overstrike either way.
-			if (ExternalProgram.TryRun("less", ["-R"], input: input))
+			if (ExternalProgram.Run("less", ["-R"], input: input) is { } status)
 			{
-				return;
+				return status;
 			}
 		}
 
 		Console.Write(page);
+
+		return 0;
 	}
 
 	/// <summary>

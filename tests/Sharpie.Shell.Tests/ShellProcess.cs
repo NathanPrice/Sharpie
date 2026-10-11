@@ -32,12 +32,21 @@ internal static class ShellProcess
 	/// </summary>
 	/// <param name="workingDirectory">The folder the shell starts in, or <see langword="null" /> for this process's folder.</param>
 	/// <param name="environment">Variables to set or replace in the shell's environment, or <see langword="null" /> for none.</param>
+	/// <param name="arguments">The shell's arguments, or <see langword="null" /> for none.</param>
+	/// <param name="programName">
+	/// The shell's <c>argv[0]</c>, such as <c>-Sharpie.Shell</c> for a login shell, or <see langword="null" /> for its
+	/// path.
+	/// </param>
 	/// <returns>
 	/// The running shell. The caller disposes it.
 	/// </returns>
-	public static Process Start(string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null)
+	/// <remarks>
+	/// .NET can't set a child's <c>argv[0]</c>, so a <paramref name="programName" /> is set through bash's
+	/// <c>exec -a</c>, the way login and su mark a login shell.
+	/// </remarks>
+	public static Process Start(string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, IReadOnlyList<string>? arguments = null, string? programName = null)
 	{
-		var startInfo = new ProcessStartInfo(ShellPath)
+		var startInfo = new ProcessStartInfo(programName is null ? ShellPath : "/bin/bash")
 		{
 			RedirectStandardInput = true,
 			RedirectStandardOutput = true,
@@ -48,6 +57,19 @@ internal static class ShellProcess
 		// A test run started from a Sharpie window inherits this variable, and the shell would then run fastfetch,
 		// print OSC 7 before each prompt, and save to the user's real history. Tests that want the window set it again.
 		_ = startInfo.Environment.Remove(Program.WindowVariable);
+
+		if (programName is not null)
+		{
+			foreach (var word in (string[])["-c", "exec -a \"$0\" \"$@\"", programName, ShellPath])
+			{
+				startInfo.ArgumentList.Add(word);
+			}
+		}
+
+		foreach (var argument in arguments ?? [])
+		{
+			startInfo.ArgumentList.Add(argument);
+		}
 
 		foreach (var (name, value) in environment ?? new Dictionary<string, string>())
 		{
@@ -64,6 +86,8 @@ internal static class ShellProcess
 	/// <param name="input">The command lines to send. Input without <c>exit</c> ends when standard input closes.</param>
 	/// <param name="workingDirectory">The folder the shell starts in, or <see langword="null" /> for this process's folder.</param>
 	/// <param name="environment">Variables to set or replace in the shell's environment, or <see langword="null" /> for none.</param>
+	/// <param name="arguments">The shell's arguments, or <see langword="null" /> for none.</param>
+	/// <param name="programName">The shell's <c>argv[0]</c>, or <see langword="null" /> for its path.</param>
 	/// <returns>
 	/// What the shell wrote to standard output and standard error, and how it ended.
 	/// </returns>
@@ -71,9 +95,9 @@ internal static class ShellProcess
 	/// Reading the output waits for every writer of the pipe to close, background programs included, so any job the
 	/// input started has finished by the time this returns.
 	/// </remarks>
-	public static async Task<ShellRun> RunAsync(string input, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null)
+	public static async Task<ShellRun> RunAsync(string input, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null, IReadOnlyList<string>? arguments = null, string? programName = null)
 	{
-		using var shell = Start(workingDirectory, environment);
+		using var shell = Start(workingDirectory, environment, arguments, programName);
 
 		await shell.StandardInput.WriteAsync(input).ConfigureAwait(true);
 		shell.StandardInput.Close();

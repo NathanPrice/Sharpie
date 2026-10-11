@@ -33,7 +33,7 @@ public sealed class CdCommandTests : IDisposable
 	public void Run_WithNoArguments_GoesHome()
 	{
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(this.home);
@@ -49,7 +49,7 @@ public sealed class CdCommandTests : IDisposable
 	public void Run_WithHomeShorthand_GoesHome(string argument)
 	{
 		// Act
-		this.sut.Run([argument]);
+		_ = this.sut.Run([argument]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(this.home);
@@ -65,7 +65,7 @@ public sealed class CdCommandTests : IDisposable
 		var target = Directory.CreateDirectory(Path.Combine(this.home, "sub")).FullName;
 
 		// Act
-		this.sut.Run(["~/sub"]);
+		_ = this.sut.Run(["~/sub"]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(target);
@@ -81,7 +81,7 @@ public sealed class CdCommandTests : IDisposable
 		var target = this.environment.CreateFolder();
 
 		// Act
-		this.sut.Run([target]);
+		_ = this.sut.Run([target]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(target);
@@ -98,7 +98,7 @@ public sealed class CdCommandTests : IDisposable
 		var target = Directory.CreateDirectory(Path.Combine(this.start, "child")).FullName;
 
 		// Act
-		this.sut.Run(["child"]);
+		_ = this.sut.Run(["child"]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(target);
@@ -111,7 +111,7 @@ public sealed class CdCommandTests : IDisposable
 	public void Run_WithDotDot_GoesToParentFolder()
 	{
 		// Act
-		this.sut.Run([".."]);
+		_ = this.sut.Run([".."]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(Path.GetDirectoryName(this.start));
@@ -127,7 +127,7 @@ public sealed class CdCommandTests : IDisposable
 		var target = Directory.CreateDirectory(Path.Combine(this.start, "my dir")).FullName;
 
 		// Act
-		this.sut.Run(["my dir"]);
+		_ = this.sut.Run(["my dir"]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(target);
@@ -143,7 +143,7 @@ public sealed class CdCommandTests : IDisposable
 		_ = Directory.CreateDirectory(Path.Combine(this.start, "my dir"));
 
 		// Act
-		this.sut.Run(["my", "dir"]);
+		_ = this.sut.Run(["my", "dir"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be("cd: too many arguments\n");
@@ -160,7 +160,7 @@ public sealed class CdCommandTests : IDisposable
 		var target = Directory.CreateDirectory(Path.Combine(this.start, "a", "b")).FullName;
 
 		// Act
-		this.sut.Run([@"a\b"]);
+		_ = this.sut.Run([@"a\b"]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(target);
@@ -177,7 +177,7 @@ public sealed class CdCommandTests : IDisposable
 		var missing = Path.Combine(this.start, "nosuchfolder");
 
 		// Act
-		this.sut.Run(["nosuchfolder"]);
+		_ = this.sut.Run(["nosuchfolder"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"cd: {missing}: No such file or directory{Environment.NewLine}");
@@ -195,7 +195,7 @@ public sealed class CdCommandTests : IDisposable
 	public void Run_WithWindowsPath_PrintsErrorAndStays(string argument)
 	{
 		// Act
-		this.sut.Run([argument]);
+		_ = this.sut.Run([argument]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"Windows path not valid on this OS: {argument}{Environment.NewLine}");
@@ -212,7 +212,7 @@ public sealed class CdCommandTests : IDisposable
 		var folder = Directory.CreateDirectory(Path.Combine(this.start, "ab")).FullName;
 
 		// Act
-		this.sut.Run(["ab"]);
+		_ = this.sut.Run(["ab"]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(folder);
@@ -231,7 +231,7 @@ public sealed class CdCommandTests : IDisposable
 		try
 		{
 			// Act
-			this.sut.Run([folder]);
+			_ = this.sut.Run([folder]);
 
 			// Assert
 			_ = this.environment.Output.Should().Be($"Access denied: {folder}{Environment.NewLine}");
@@ -252,7 +252,7 @@ public sealed class CdCommandTests : IDisposable
 	public void Run_WithNullCharacter_PrintsInvalidPath()
 	{
 		// Act
-		this.sut.Run(["a\0b"]);
+		_ = this.sut.Run(["a\0b"]);
 
 		// Assert
 		_ = this.environment.Output.Should().StartWith("Invalid path: ");

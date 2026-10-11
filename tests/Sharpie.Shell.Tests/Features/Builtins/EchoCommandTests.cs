@@ -24,7 +24,7 @@ public sealed class EchoCommandTests : IDisposable
 	public void Run_WithArguments_PrintsThemJoinedBySpaces(string[] arguments, string expected)
 	{
 		// Act
-		this.sut.Run(arguments);
+		_ = this.sut.Run(arguments);
 
 		// Assert
 		_ = this.environment.Output.Should().Be(expected + Environment.NewLine);

@@ -22,7 +22,7 @@ internal sealed class ExportCommand(DeclareCommand declare) : ICommand
 	public string Description => "Passes shell variables to the programs the shell starts";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
@@ -33,8 +33,10 @@ internal sealed class ExportCommand(DeclareCommand declare) : ICommand
 				Console.WriteLine($"{this.Name} {entry.Key}='{((string)entry.Value!).Replace("'", @"'\''", StringComparison.Ordinal)}'");
 			}
 
-			return;
+			return 0;
 		}
+
+		var status = 0;
 
 		foreach (var arg in args)
 		{
@@ -43,6 +45,7 @@ internal sealed class ExportCommand(DeclareCommand declare) : ICommand
 			if (!DeclareCommand.IsIdentifier(parts[0]))
 			{
 				Console.Error.WriteLine($"{this.Name}: `{arg}': not a valid identifier");
+				status = 1;
 			}
 			else if (parts.Length == 2)
 			{
@@ -54,5 +57,7 @@ internal sealed class ExportCommand(DeclareCommand declare) : ICommand
 				Environment.SetEnvironmentVariable(arg, value);
 			}
 		}
+
+		return status;
 	}
 }

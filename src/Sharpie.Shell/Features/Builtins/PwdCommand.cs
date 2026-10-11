@@ -13,8 +13,10 @@ internal class PwdCommand : ICommand
 	public string Description => "Prints the current working directory";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		Console.WriteLine(Directory.GetCurrentDirectory());
+
+		return 0;
 	}
 }

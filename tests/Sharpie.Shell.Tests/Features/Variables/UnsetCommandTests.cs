@@ -34,10 +34,10 @@ public sealed class UnsetCommandTests : IDisposable
 	{
 		// Arrange
 		Environment.SetEnvironmentVariable(SampleVariable, "value");
-		this.declare.Run([$"{SampleVariable}=value"]);
+		_ = this.declare.Run([$"{SampleVariable}=value"]);
 
 		// Act
-		this.sut.Run([.. arguments, SampleVariable]);
+		_ = this.sut.Run([.. arguments, SampleVariable]);
 
 		// Assert
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().BeNull();
@@ -52,7 +52,7 @@ public sealed class UnsetCommandTests : IDisposable
 	public void Run_WithUnknownName_PrintsNothing()
 	{
 		// Act
-		this.sut.Run([SampleVariable]);
+		_ = this.sut.Run([SampleVariable]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -69,7 +69,7 @@ public sealed class UnsetCommandTests : IDisposable
 	public void Run_WithInvalidName_ReportsIt(string name)
 	{
 		// Act
-		this.sut.Run([SampleVariable, name]);
+		_ = this.sut.Run([SampleVariable, name]);
 
 		// Assert
 		_ = this.environment.Error.Should().Be($"unset: `{name}': not a valid identifier{Environment.NewLine}");

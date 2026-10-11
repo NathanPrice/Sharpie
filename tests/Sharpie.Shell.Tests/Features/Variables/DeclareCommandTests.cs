@@ -29,10 +29,10 @@ public sealed class DeclareCommandTests : IDisposable
 	public void Run_WithValidName_StoresVariable(string name, string value)
 	{
 		// Arrange
-		this.sut.Run([$"{name}={value}"]);
+		_ = this.sut.Run([$"{name}={value}"]);
 
 		// Act
-		this.sut.Run(["-p", name]);
+		_ = this.sut.Run(["-p", name]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"declare -- {name}=\"{value}\"{Environment.NewLine}");
@@ -51,8 +51,8 @@ public sealed class DeclareCommandTests : IDisposable
 	public void Run_WithInvalidName_PrintsErrorAndStoresNothing(string argument, string name)
 	{
 		// Act
-		this.sut.Run([argument]);
-		this.sut.Run(["-p", name]);
+		_ = this.sut.Run([argument]);
+		_ = this.sut.Run(["-p", name]);
 
 		// Assert
 		_ = this.environment.Error.Should().StartWith($"declare: `{argument}': not a valid identifier{Environment.NewLine}");
@@ -66,8 +66,8 @@ public sealed class DeclareCommandTests : IDisposable
 	public void Run_PrintUnknownName_ReportsNotFoundAndCreatesNothing()
 	{
 		// Act
-		this.sut.Run(["-p", "missing"]);
-		this.sut.Run(["-p", "missing"]);
+		_ = this.sut.Run(["-p", "missing"]);
+		_ = this.sut.Run(["-p", "missing"]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -153,5 +153,59 @@ public sealed class DeclareCommandTests : IDisposable
 	{
 		Environment.SetEnvironmentVariable(SampleVariable, null);
 		this.environment.Dispose();
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.Status" /> starts at 0 and is kept as the variable <c>?</c>.
+	/// </summary>
+	[Fact]
+	public void Status_WhenSet_IsKeptAsQuestionMarkVariable()
+	{
+		// Arrange
+		var before = this.sut.Status;
+
+		// Act
+		this.sut.Status = 42;
+
+		// Assert
+		_ = before.Should().Be(0);
+		_ = this.sut.Status.Should().Be(42);
+		_ = this.sut.Variables.Should().Contain("?", "42");
+	}
+
+	/// <summary>
+	/// Checks that <c>declare -p</c> gives 1 when a name isn't set and 0 when every name is.
+	/// </summary>
+	/// <param name="name">The name to print.</param>
+	/// <param name="expected">The expected status.</param>
+	[Theory]
+	[InlineData("set_one", 0)]
+	[InlineData("missing_one", 1)]
+	public void Run_WithPrintOption_GivesStatus(string name, int expected)
+	{
+		// Arrange
+		_ = this.sut.Run(["set_one=1"]);
+
+		// Act
+		var status = this.sut.Run(["-p", name]);
+
+		// Assert
+		_ = status.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that an assignment gives 0, and a bad name gives 1 while the good names around it are still set.
+	/// </summary>
+	[Fact]
+	public void Run_WithBadName_GivesOneAndSetsTheRest()
+	{
+		// Act
+		var good = this.sut.Run(["a=1"]);
+		var bad = this.sut.Run(["1x=2", "b=3"]);
+
+		// Assert
+		_ = good.Should().Be(0);
+		_ = bad.Should().Be(1);
+		_ = this.sut.Variables.Should().Contain("b", "3");
 	}
 }

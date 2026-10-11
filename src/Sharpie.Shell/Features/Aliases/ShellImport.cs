@@ -39,14 +39,23 @@ internal static class ShellImport
 	private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
 
 	/// <summary>
+	/// The POSIX shell that <see cref="RunProfile" /> loads the profile with.
+	/// </summary>
+	private const string ProfileShell = "/bin/sh";
+
+	/// <summary>
 	/// The variables that describe the asking shell itself rather than the user's setup, so they're never copied.
 	/// </summary>
 	private static readonly HashSet<string> Skipped = new(["PWD", "OLDPWD", "SHLVL", "_"], StringComparer.Ordinal);
 
 	/// <summary>
-	/// Command line syntax this shell doesn't read yet: command lists, <c>&amp;&amp;</c>, <c>||</c> and command
+	/// Syntax an imported alias value can't use here: command lists, <c>&amp;&amp;</c>, <c>||</c> and command
 	/// substitution.
 	/// </summary>
+	/// <remarks>
+	/// An alias is expanded after the line is cut into commands, so a <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> in its
+	/// value would be passed to the program as an argument. Command substitution isn't read at all.
+	/// </remarks>
 	private static readonly string[] UnsupportedSyntax = [";", "&&", "||", "$(", "`"];
 
 	/// <summary>
@@ -86,13 +95,61 @@ internal static class ShellImport
 			return;
 		}
 
+		Import(shell, shellPath, ["-l", "-i"], self, aliases, builtins, timeout);
+	}
+
+	/// <summary>
+	/// Sets the variables that <c>/etc/profile</c> and <c>~/.profile</c> export, for a login shell.
+	/// </summary>
+	/// <param name="self">The full path of this <c>Sharpie.Shell</c> program.</param>
+	/// <param name="aliases">The <c>alias</c> builtin, given any alias the profile defines.</param>
+	/// <param name="builtins">The builtin command names, which an imported alias may start with.</param>
+	/// <param name="timeout">How long to wait for the answer, or <see langword="null" /> for five seconds.</param>
+	/// <remarks>
+	/// <para>
+	/// Those files are POSIX shell scripts, so <c>/bin/sh -l</c> runs them and reports back, the same way
+	/// <see cref="Run" /> asks the user's shell. plasmalogin and SDDM load the profile this way for csh and fish,
+	/// whose own language can't read it either. On macOS <c>/etc/profile</c> runs <c>path_helper</c>, which builds
+	/// <c>PATH</c>.
+	/// </para>
+	/// <para>
+	/// The shell isn't made interactive, as those login managers don't. Arch's <c>/etc/profile</c> then leaves out
+	/// <c>/etc/bash.bashrc</c>, which is meant for an interactive bash. Does nothing on Windows, which has no profile.
+	/// If <c>sh</c> fails, one line says so and the login goes on with the variables it was started with.
+	/// </para>
+	/// </remarks>
+	public static void RunProfile(string self, AliasCommand aliases, IReadOnlyCollection<string> builtins, TimeSpan? timeout = null)
+	{
+		_ = self.ArgumentNotNull();
+		_ = aliases.ArgumentNotNull();
+		_ = builtins.ArgumentNotNull();
+
+		if (!OperatingSystem.IsWindows())
+		{
+			Import(ProfileShell, ProfileShell, ["-l"], self, aliases, builtins, timeout);
+		}
+	}
+
+	/// <summary>
+	/// Runs <paramref name="shellPath" /> with <paramref name="flags" />, then sets every variable it exported and
+	/// defines every alias it has.
+	/// </summary>
+	/// <param name="shell">The shell as the error message names it.</param>
+	/// <param name="shellPath">The shell's full path, or <see langword="null" /> when it isn't on <c>PATH</c>.</param>
+	/// <param name="flags">The options it starts with, before <c>-c</c>.</param>
+	/// <param name="self">The full path of this <c>Sharpie.Shell</c> program.</param>
+	/// <param name="aliases">The <c>alias</c> builtin the aliases are added to.</param>
+	/// <param name="builtins">The builtin command names, which an imported alias may start with.</param>
+	/// <param name="timeout">How long to wait for the answer, or <see langword="null" /> for five seconds.</param>
+	private static void Import(string shell, string? shellPath, string[] flags, string self, AliasCommand aliases, IReadOnlyCollection<string> builtins, TimeSpan? timeout)
+	{
 		var marker = Guid.NewGuid().ToString("N");
-		var script = $"printf %s {marker}; {Quote(self)} {PrintEnvironmentOption}; printf %s {marker}; alias; printf %s {marker}";
+		var script = $"printf %s {marker}; {CommandLine.Quote(self)} {PrintEnvironmentOption}; printf %s {marker}; alias; printf %s {marker}";
 		string? output;
 
 		try
 		{
-			output = shellPath is null ? null : Capture(shellPath, [shellPath, "-l", "-i", "-c", script], marker, timeout ?? DefaultTimeout);
+			output = shellPath is null ? null : Capture(shellPath, [shellPath, .. flags, "-c", script], marker, timeout ?? DefaultTimeout);
 		}
 		catch (Win32Exception)
 		{
@@ -310,13 +367,4 @@ internal static class ShellImport
 
 		return text.ToString();
 	}
-
-	/// <summary>
-	/// Quotes <paramref name="text" /> as one word for a POSIX shell.
-	/// </summary>
-	/// <param name="text">The text, such as a path.</param>
-	/// <returns>
-	/// The text in single quotes, with each <c>'</c> inside written as <c>'\''</c>.
-	/// </returns>
-	private static string Quote(string text) => $"'{text.Replace("'", @"'\''", StringComparison.Ordinal)}'";
 }

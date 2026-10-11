@@ -23,7 +23,7 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Add("history");
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"    1  echo hi{Environment.NewLine}    2  history{Environment.NewLine}");
@@ -36,7 +36,7 @@ public sealed class HistoryCommandTests : IDisposable
 	public void Run_WithNoLines_PrintsNothing()
 	{
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -55,7 +55,7 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Add("history 2");
 
 		// Act
-		this.sut.Run(["2"]);
+		_ = this.sut.Run(["2"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"    3  invalid_command{Environment.NewLine}    4  history 2{Environment.NewLine}");
@@ -72,7 +72,7 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Add("history 10");
 
 		// Act
-		this.sut.Run(["10"]);
+		_ = this.sut.Run(["10"]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"    1  echo hi{Environment.NewLine}    2  history 10{Environment.NewLine}");
@@ -91,7 +91,7 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Add("echo hi");
 
 		// Act
-		this.sut.Run([count]);
+		_ = this.sut.Run([count]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -131,7 +131,7 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Add($"history -r {path}");
 
 		// Act
-		this.sut.Run(["-r", path]);
+		_ = this.sut.Run(["-r", path]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -150,7 +150,7 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Add("echo hi");
 
 		// Act
-		this.sut.Run(["-r", path]);
+		_ = this.sut.Run(["-r", path]);
 
 		// Assert
 		_ = this.sut.Lines.Should().Equal("echo hi");
@@ -187,7 +187,7 @@ public sealed class HistoryCommandTests : IDisposable
 	public void Run_WithReadFlagAndEmptyPath_PrintsError()
 	{
 		// Act
-		this.sut.Run(["-r", string.Empty]);
+		_ = this.sut.Run(["-r", string.Empty]);
 
 		// Assert
 		_ = this.environment.Error.Should().Contain("history: : ");
@@ -204,11 +204,11 @@ public sealed class HistoryCommandTests : IDisposable
 		var path = Path.Combine(this.environment.CreateFolder(), "history");
 		this.sut.Add("one");
 		this.sut.Add("two");
-		this.sut.Run(["-w", path]);
+		_ = this.sut.Run(["-w", path]);
 		this.sut.Add("three");
 
 		// Act
-		this.sut.Run(["-a", path]);
+		_ = this.sut.Run(["-a", path]);
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
@@ -227,7 +227,7 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Add("new");
 
 		// Act
-		this.sut.Run(["-w", path]);
+		_ = this.sut.Run(["-w", path]);
 
 		// Assert
 		_ = File.ReadAllLines(path).Should().Equal("new");
@@ -245,10 +245,10 @@ public sealed class HistoryCommandTests : IDisposable
 		var missing = Path.Combine(folder, "missing", "history");
 		var path = Path.Combine(folder, "history");
 		this.sut.Add("one");
-		this.sut.Run(["-a", missing]);
+		_ = this.sut.Run(["-a", missing]);
 
 		// Act
-		this.sut.Run(["-a", path]);
+		_ = this.sut.Run(["-a", path]);
 
 		// Assert
 		_ = this.environment.Error.Should().Contain($"history: {missing}: No such file or directory{Environment.NewLine}");
@@ -262,7 +262,7 @@ public sealed class HistoryCommandTests : IDisposable
 	public void Run_WithWriteFlagAndEmptyPath_PrintsError()
 	{
 		// Act
-		this.sut.Run(["-w", string.Empty]);
+		_ = this.sut.Run(["-w", string.Empty]);
 
 		// Assert
 		_ = this.environment.Error.Should().Contain("history: : ");
@@ -279,7 +279,7 @@ public sealed class HistoryCommandTests : IDisposable
 		this.sut.Add("new");
 
 		// Act
-		this.sut.Run(["-a", path]);
+		_ = this.sut.Run(["-a", path]);
 
 		// Assert
 		_ = File.ReadAllLines(path).Should().Equal("other", "new");
@@ -294,11 +294,11 @@ public sealed class HistoryCommandTests : IDisposable
 		// Arrange
 		var folder = this.environment.CreateFolder();
 		this.sut.Add("one");
-		this.sut.Run(["-a", Path.Combine(folder, "first")]);
+		_ = this.sut.Run(["-a", Path.Combine(folder, "first")]);
 		this.sut.Add("two");
 
 		// Act
-		this.sut.Run(["-w", Path.Combine(folder, "second")]);
+		_ = this.sut.Run(["-w", Path.Combine(folder, "second")]);
 
 		// Assert
 		_ = File.ReadAllLines(Path.Combine(folder, "second")).Should().Equal("one", "two");

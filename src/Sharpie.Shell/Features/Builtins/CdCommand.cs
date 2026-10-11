@@ -14,7 +14,7 @@ internal class CdCommand : ICommand
 	public string Description => "Changes the directory you're in";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
@@ -22,23 +22,27 @@ internal class CdCommand : ICommand
 
 		if (targetPath is null)
 		{
-			return;
+			return 1;
 		}
 
 		if (!Directory.Exists(targetPath))
 		{
 			Console.WriteLine($@"{this.Name}: {targetPath}: No such file or directory");
 
-			return;
+			return 1;
 		}
 
 		try
 		{
 			Directory.SetCurrentDirectory(targetPath);
+
+			return 0;
 		}
 		catch (UnauthorizedAccessException)
 		{
 			Console.WriteLine($@"Access denied: {targetPath}");
+
+			return 1;
 		}
 	}
 

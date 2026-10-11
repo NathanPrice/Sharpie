@@ -11,7 +11,7 @@ namespace Sharpie.Shell.Common;
 internal static partial class ExternalProgram
 {
 	/// <summary>
-	/// Runs the program at <paramref name="fullPath" /> as <see cref="TryRun" /> describes.
+	/// Runs the program at <paramref name="fullPath" /> as <see cref="Run" /> describes.
 	/// </summary>
 	/// <param name="commandName">The program name as the user typed it.</param>
 	/// <param name="fullPath">Where <see cref="PathFinder.FindExecutable" /> found the program.</param>
@@ -20,13 +20,16 @@ internal static partial class ExternalProgram
 	/// <param name="error">Where standard error goes, or <see langword="null" /> for the terminal.</param>
 	/// <param name="background"><see langword="true" /> to return without waiting; otherwise, <see langword="false" />.</param>
 	/// <param name="input">What the program reads, or <see langword="null" /> for the terminal.</param>
+	/// <returns>
+	/// The status as <see cref="Run" /> gives it.
+	/// </returns>
 	[SupportedOSPlatform("windows")]
-	private static void RunWithProcess(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input)
+	private static int RunWithProcess(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input)
 	{
 		var startInfo = CreateStartInfo(commandName, fullPath, arguments);
 
 		// A background job's output goes to the terminal even when redirected. Nobody would read its pipe once
-		// TryRun returns, so a chatty program would block when the pipe fills, and the caller closes the file
+		// Run returns, so a chatty program would block when the pipe fills, and the caller closes the file
 		// anyway. Redirecting it would need a copy that owns the file and outlives this call.
 		startInfo.RedirectStandardOutput = output is not null && !background;
 		startInfo.RedirectStandardError = error is not null && !background;
@@ -48,7 +51,7 @@ internal static partial class ExternalProgram
 
 				Console.WriteLine($@"[{job.Number}] {job.ProcessId}");
 
-				return;
+				return 0;
 			}
 
 			using (process)
@@ -90,11 +93,15 @@ internal static partial class ExternalProgram
 				errorCopy.Wait();
 				process?.WaitForExit();
 				inputCopy.Wait();
+
+				return process?.ExitCode ?? CannotRun;
 			}
 		}
 		catch (Win32Exception exception)
 		{
 			Console.WriteLine($@"{commandName}: {exception.Message}");
+
+			return CannotRun;
 		}
 		finally
 		{
@@ -107,6 +114,9 @@ internal static partial class ExternalProgram
 	/// </summary>
 	/// <param name="stages">Each program's name followed by its arguments, in pipeline order.</param>
 	/// <param name="paths">Where each program was found, in the same order.</param>
+	/// <returns>
+	/// The status as <see cref="RunPipeline" /> gives it.
+	/// </returns>
 	/// <remarks>
 	/// <para>
 	/// .NET's <see cref="Process" /> can't give a child a pipe it didn't create itself, so neighboring programs can't
@@ -123,7 +133,7 @@ internal static partial class ExternalProgram
 	/// </para>
 	/// </remarks>
 	[SupportedOSPlatform("windows")]
-	private static void RunPipelineWithProcesses(string[][] stages, string[] paths)
+	private static int RunPipelineWithProcesses(string[][] stages, string[] paths)
 	{
 		var processes = new List<Process>();
 
@@ -157,10 +167,14 @@ internal static partial class ExternalProgram
 			}
 
 			Task.WaitAll(relays);
+
+			return processes[^1].ExitCode;
 		}
 		catch (Win32Exception exception)
 		{
 			Console.WriteLine($@"{stages[processes.Count][0]}: {exception.Message}");
+
+			return CannotRun;
 		}
 		finally
 		{
@@ -178,8 +192,6 @@ internal static partial class ExternalProgram
 
 			sRunningId = 0;
 		}
-
-		return;
 
 		// Copies the output of from into the input of to until from is done or to has exited.
 		static void Relay(Process from, Process to)

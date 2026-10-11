@@ -23,10 +23,10 @@ public sealed class AliasCommandTests : IDisposable
 	public void Run_WithDefinition_StoresAlias(string name)
 	{
 		// Arrange
-		this.sut.Run([$"{name}=echo hello"]);
+		_ = this.sut.Run([$"{name}=echo hello"]);
 
 		// Act
-		this.sut.Run([name]);
+		_ = this.sut.Run([name]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"alias {name}='echo hello'{Environment.NewLine}");
@@ -40,11 +40,11 @@ public sealed class AliasCommandTests : IDisposable
 	public void Run_WithNoArguments_ListsAliasesQuoted()
 	{
 		// Arrange
-		this.sut.Run(["zed=echo it's"]);
-		this.sut.Run(["abc=ls"]);
+		_ = this.sut.Run(["zed=echo it's"]);
+		_ = this.sut.Run(["abc=ls"]);
 
 		// Act
-		this.sut.Run([]);
+		_ = this.sut.Run([]);
 
 		// Assert
 		_ = this.environment.Output.Should().Be($"alias abc='ls'{Environment.NewLine}alias zed='echo it'\\''s'{Environment.NewLine}");
@@ -57,7 +57,7 @@ public sealed class AliasCommandTests : IDisposable
 	public void Run_WithUnknownName_PrintsNotFound()
 	{
 		// Act
-		this.sut.Run(["missing"]);
+		_ = this.sut.Run(["missing"]);
 
 		// Assert
 		_ = this.environment.Error.Should().Be($"alias: missing: not found{Environment.NewLine}");
@@ -71,7 +71,7 @@ public sealed class AliasCommandTests : IDisposable
 	public void Run_WithInvalidName_PrintsErrorAndStoresNothing()
 	{
 		// Act
-		this.sut.Run(["a/b=ls"]);
+		_ = this.sut.Run(["a/b=ls"]);
 
 		// Assert
 		_ = this.environment.Error.Should().Be($"alias: `a/b': invalid alias name{Environment.NewLine}");

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
@@ -30,15 +31,29 @@ internal partial class DeclareCommand : ICommand
 	/// </value>
 	public IReadOnlyDictionary<string, string> Variables => this.variables;
 
+	/// <summary>
+	/// Gets or sets the last command's exit status.
+	/// </summary>
+	/// <value>
+	/// The status, kept as the variable <c>?</c> so <c>$?</c> expands to it. 0 before any command has run.
+	/// </value>
+	public int Status
+	{
+		get => int.TryParse(this.variables.GetValueOrDefault("?"), CultureInfo.InvariantCulture, out var status) ? status : 0;
+		set => this.Set("?", value.ToString(CultureInfo.InvariantCulture));
+	}
+
 	/// <inheritdoc />
 	public string Name => "declare";
 	/// <inheritdoc />
 	public string Description => "Creates and inspects shell variables";
 
 	/// <inheritdoc />
-	public void Run(string[] args)
+	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
+
+		var status = 0;
 
 		if (args is ["-p", .. var names])
 		{
@@ -51,10 +66,11 @@ internal partial class DeclareCommand : ICommand
 				else
 				{
 					Console.Error.WriteLine($"{this.Name}: {name}: not found");
+					status = 1;
 				}
 			}
 
-			return;
+			return status;
 		}
 
 		foreach (var arg in args)
@@ -65,6 +81,8 @@ internal partial class DeclareCommand : ICommand
 			if (!IsIdentifier(parts[0]))
 			{
 				Console.Error.WriteLine($"{this.Name}: `{arg}': not a valid identifier");
+				status = 1;
+
 				continue;
 			}
 
@@ -73,6 +91,8 @@ internal partial class DeclareCommand : ICommand
 				this.Set(parts[0], parts[1]);
 			}
 		}
+
+		return status;
 	}
 
 	/// <summary>

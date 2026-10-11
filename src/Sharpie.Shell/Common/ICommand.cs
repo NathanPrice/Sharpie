@@ -25,5 +25,8 @@ internal interface ICommand
 	/// Runs the command.
 	/// </summary>
 	/// <param name="args">The words that followed the command name on the input line.</param>
-	public void Run(string[] args);
+	/// <returns>
+	/// The exit status: 0 for success, anything else for failure, which <c>$?</c>, <c>&amp;&amp;</c> and <c>||</c> read.
+	/// </returns>
+	public int Run(string[] args);
 }
