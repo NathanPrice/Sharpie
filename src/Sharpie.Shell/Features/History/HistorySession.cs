@@ -3,8 +3,8 @@ using DotNetTips.Spargine.Core;
 namespace Sharpie.Shell.Features.History;
 
 /// <summary>
-/// Loads the saved history when the shell starts and saves each new line, to the encrypted file and to
-/// <c>HISTFILE</c>.
+/// Loads the saved history when the shell starts and adds each new line to the encrypted file, and to
+/// <c>HISTFILE</c> on exit.
 /// </summary>
 internal sealed class HistorySession
 {
@@ -32,6 +32,10 @@ internal sealed class HistorySession
 	// in plain text.
 	private readonly List<string> plainLines;
 
+	// Lines not in the encrypted file yet: HISTFILE's imported lines until the first save, then each new line until
+	// it's saved.
+	private readonly List<string> unsaved;
+
 	// The HISTFILE variable, or null when it isn't set.
 	private readonly string? histFile;
 
@@ -51,13 +55,15 @@ internal sealed class HistorySession
 	/// <param name="key">The history file's key, or <see langword="null" /> when nothing should be saved.</param>
 	/// <param name="plainLines">The lines read from <c>HISTFILE</c>, or an empty list.</param>
 	/// <param name="histFile">The <c>HISTFILE</c> variable, or <see langword="null" /> when it isn't set.</param>
-	private HistorySession(HistoryCommand history, string path, byte[]? key, List<string> plainLines, string? histFile)
+	/// <param name="unsaved">The lines imported from <c>HISTFILE</c> that the encrypted file doesn't have yet.</param>
+	private HistorySession(HistoryCommand history, string path, byte[]? key, List<string> plainLines, string? histFile, List<string> unsaved)
 	{
 		this.history = history;
 		this.path = path;
 		this.key = key;
 		this.plainLines = plainLines;
 		this.histFile = histFile;
+		this.unsaved = unsaved;
 		this.encrypted = key is not null;
 	}
 
@@ -77,28 +83,48 @@ internal sealed class HistorySession
 	{
 		_ = history.ArgumentNotNull();
 
-		var path = FilePath;
-		byte[]? key = null;
+		var key = useEncryptedFile && HistoryFile.PrepareFolder(Folder)
+			? HistoryKey.LoadOrCreate(Folder, allowCreate: !File.Exists(FilePath))
+			: null;
 
-		if (useEncryptedFile && HistoryFile.PrepareFolder(Folder))
+		return Start(history, FilePath, key, histFile);
+	}
+
+	/// <summary>
+	/// Loads the encrypted history at <paramref name="path" /> and <c>HISTFILE</c> into <paramref name="history" />.
+	/// </summary>
+	/// <param name="history">The <c>history</c> builtin to fill.</param>
+	/// <param name="path">The encrypted history file.</param>
+	/// <param name="key">
+	/// The file's key, or <see langword="null" /> to leave the encrypted file alone.
+	/// </param>
+	/// <param name="histFile">The <c>HISTFILE</c> variable, or <see langword="null" /> when it isn't set.</param>
+	/// <returns>
+	/// The session that <see cref="Record" /> saves new lines through and <see cref="WriteHistFile" /> writes out. It
+	/// saves nothing when the file can't be read or fails authentication.
+	/// </returns>
+	/// <remarks>
+	/// Kept apart from getting the key, so tests can use a file and key of their own instead of the keyring.
+	/// </remarks>
+	internal static HistorySession Start(HistoryCommand history, string path, byte[]? key, string? histFile)
+	{
+		_ = history.ArgumentNotNull();
+		_ = path.ArgumentNotNullOrEmpty();
+
+		if (key is not null && HistoryFile.Load(path, key) is { } saved)
 		{
-			key = HistoryKey.LoadOrCreate(Folder, allowCreate: !File.Exists(path));
-
-			if (key is not null && HistoryFile.Load(path, key) is { } saved)
-			{
-				history.Lines.AddRange(saved);
-				// Lines from earlier sessions aren't new, so history -a doesn't copy them into a plain-text file.
-				history.AppendedCount = history.Lines.Count;
-			}
-			else
-			{
-				key = null;
-			}
+			history.Lines.AddRange(saved);
+			// Lines from earlier sessions aren't new, so history -a doesn't copy them into a plain-text file.
+			history.AppendedCount = history.Lines.Count;
+		}
+		else
+		{
+			key = null;
 		}
 
-		var fileLines = ImportHistFile(history, histFile, encrypted: key is not null);
+		var (fileLines, imported) = ImportHistFile(history, histFile, encrypted: key is not null);
 
-		return new HistorySession(history, path, key, [.. fileLines ?? []], histFile);
+		return new HistorySession(history, path, key, fileLines, histFile, imported);
 	}
 
 	/// <summary>
@@ -117,7 +143,7 @@ internal sealed class HistorySession
 	}
 
 	/// <summary>
-	/// Adds a line the user entered to the history and saves the encrypted file.
+	/// Adds a line the user entered to the history and to the encrypted file.
 	/// </summary>
 	/// <param name="line">The line as typed. Blank lines are skipped.</param>
 	/// <remarks>
@@ -136,7 +162,18 @@ internal sealed class HistorySession
 
 		HistoryCommand.Trim(this.plainLines);
 
-		if (this.key is not null && !HistoryFile.Save(this.path, this.key, this.history.Lines))
+		if (this.key is null)
+		{
+			return;
+		}
+
+		this.unsaved.Add(line);
+
+		if (HistoryFile.Append(this.path, this.key, this.unsaved))
+		{
+			this.unsaved.Clear();
+		}
+		else
 		{
 			this.key = null;
 		}
@@ -149,18 +186,18 @@ internal sealed class HistorySession
 	/// <param name="histFile">The value of <c>HISTFILE</c>, or <see langword="null" /> when it isn't set.</param>
 	/// <param name="encrypted"><see langword="true" /> when the encrypted history file is in use.</param>
 	/// <returns>
-	/// Every line read from the file, or <see langword="null" /> when it's unset or missing, which is skipped
-	/// quietly, as bash does.
+	/// Every line read from the file, and the ones among them that were new to <paramref name="history" />. Both are
+	/// empty when the file is unset or missing, which is skipped quietly, as bash does.
 	/// </returns>
 	/// <remarks>
 	/// HISTFILE is plain text, as in bash. Its lines go after the encrypted ones, and the next save copies them into
 	/// the encrypted file.
 	/// </remarks>
-	private static List<string>? ImportHistFile(HistoryCommand history, string? histFile, bool encrypted)
+	private static (List<string> FileLines, List<string> Imported) ImportHistFile(HistoryCommand history, string? histFile, bool encrypted)
 	{
 		if (string.IsNullOrEmpty(histFile) || !File.Exists(histFile) || HistoryCommand.ReadFile(histFile) is not { } fileLines)
 		{
-			return null;
+			return ([], []);
 		}
 
 		var imported = fileLines.Skip(HistoryCommand.Overlap(history.Lines, fileLines)).ToList();
@@ -172,7 +209,7 @@ internal sealed class HistorySession
 		// and say it's still readable.
 		if (!encrypted || imported.Count <= 0)
 		{
-			return fileLines;
+			return (fileLines, imported);
 		}
 
 		try
@@ -189,6 +226,6 @@ internal sealed class HistorySession
 
 		Console.Error.WriteLine($"history: imported {imported.Count} lines from {histFile} into encrypted history; {histFile} is still plain text");
 
-		return fileLines;
+		return (fileLines, imported);
 	}
 }

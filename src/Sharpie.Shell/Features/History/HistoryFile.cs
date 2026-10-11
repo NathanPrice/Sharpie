@@ -21,6 +21,20 @@ internal static class HistoryFile
 	private const int TagSize = 16;
 
 	/// <summary>
+	/// How many times <see cref="Append" /> tries for the lock that another tab's shell holds.
+	/// </summary>
+	/// <remarks>
+	/// The lock is held only while the file is read and rewritten. With <see cref="LockWait" /> this gives up after
+	/// about a second, so a stuck holder can't freeze Enter for good.
+	/// </remarks>
+	private const int LockAttempts = 100;
+
+	/// <summary>
+	/// How long <see cref="Append" /> waits between tries for the lock.
+	/// </summary>
+	private static readonly TimeSpan LockWait = TimeSpan.FromMilliseconds(10);
+
+	/// <summary>
 	/// The read and write bits for the owner only, which every file this class writes gets on Unix.
 	/// </summary>
 	internal const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
@@ -119,6 +133,81 @@ internal static class HistoryFile
 			Console.Error.WriteLine($"history: {exception.Message}");
 
 			return null;
+		}
+	}
+
+	/// <summary>
+	/// Adds <paramref name="lines" /> to the end of the history file at <paramref name="path" />, keeping whatever
+	/// other shells saved there.
+	/// </summary>
+	/// <param name="path">The encrypted history file.</param>
+	/// <param name="key">The 32-byte AES key the file is saved with.</param>
+	/// <param name="lines">The new lines, oldest first.</param>
+	/// <returns>
+	/// <see langword="true" /> once the file holds the new lines; otherwise <see langword="false" />, after printing the
+	/// reason, including when the file fails authentication and is left alone.
+	/// </returns>
+	/// <remarks>
+	/// Every tab and window runs its own shell on the same file. Each one used to write its own list over the file, so
+	/// the last shell to save dropped the lines the others had saved since it started. This reads the file again under
+	/// an exclusive lock on a file next to it, then adds the new lines. The lock is <c>flock</c> on Unix and a sharing
+	/// lock on Windows, and the system releases it if the shell dies holding it.
+	/// </remarks>
+	public static bool Append(string path, byte[] key, IReadOnlyCollection<string> lines)
+	{
+		_ = path.ArgumentNotNullOrEmpty();
+		_ = key.ArgumentNotNull();
+		_ = lines.ArgumentNotNull();
+
+		try
+		{
+			using var lockFile = OpenLock($"{path}.lock");
+
+			if (Load(path, key) is not { } saved)
+			{
+				return false;
+			}
+
+			saved.AddRange(lines);
+			HistoryCommand.Trim(saved);
+
+			return Save(path, key, saved);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			Console.Error.WriteLine($"history: {exception.Message}");
+
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// Opens <paramref name="lockPath" /> so no other shell can open it, waiting while another one has it.
+	/// </summary>
+	/// <param name="lockPath">The lock file next to the history file.</param>
+	/// <returns>
+	/// The open lock file. Disposing it releases the lock.
+	/// </returns>
+	/// <exception cref="IOException">Another shell kept the lock through every try.</exception>
+	private static FileStream OpenLock(string lockPath)
+	{
+		var options = new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite, Share = FileShare.None };
+
+		if (!OperatingSystem.IsWindows())
+		{
+			options.UnixCreateMode = OwnerOnly;
+		}
+
+		for (var attempt = 1; ; attempt++)
+		{
+			try
+			{
+				return new FileStream(lockPath, options);
+			}
+			catch (IOException) when (attempt < LockAttempts)
+			{
+				Thread.Sleep(LockWait);
+			}
 		}
 	}
 

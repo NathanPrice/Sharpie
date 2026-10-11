@@ -253,6 +253,136 @@ public sealed class HistoryFileTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that two shells adding to the same file each keep the other's lines, instead of the last one writing
+	/// only its own list.
+	/// </summary>
+	[Fact]
+	public void Append_FromTwoSessions_KeepsBothSessionsLines()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["a"]);
+
+		// Act
+		var first = HistoryFile.Append(this.path, this.key, ["b"]);
+		var second = HistoryFile.Append(this.path, this.key, ["c"]);
+
+		// Assert
+		_ = (first && second).Should().BeTrue();
+		_ = HistoryFile.Load(this.path, this.key).Should().Equal("a", "b", "c");
+	}
+
+	/// <summary>
+	/// Checks that adds running at the same moment wait for each other's lock, so none of their lines is lost.
+	/// </summary>
+	[Fact]
+	public void Append_InParallel_KeepsEveryLine()
+	{
+		// Act
+		var results = Enumerable.Range(0, 20).AsParallel().Select(index => HistoryFile.Append(this.path, this.key, [$"echo {index}"])).ToList();
+
+		// Assert
+		_ = results.Should().AllSatisfy(result => result.Should().BeTrue());
+		_ = HistoryFile.Load(this.path, this.key).Should().BeEquivalentTo(Enumerable.Range(0, 20).Select(index => $"echo {index}"));
+	}
+
+	/// <summary>
+	/// Checks that adding to a file that fails authentication reports it and leaves the file as it was.
+	/// </summary>
+	[Fact]
+	public void Append_WithChangedFile_ReturnsFalseAndLeavesFile()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["echo hi"]);
+		var bytes = File.ReadAllBytes(this.path);
+		bytes[^1] ^= 1;
+		File.WriteAllBytes(this.path, bytes);
+
+		// Act
+		var appended = HistoryFile.Append(this.path, this.key, ["echo new"]);
+
+		// Assert
+		_ = appended.Should().BeFalse();
+		_ = File.ReadAllBytes(this.path).Should().Equal(bytes);
+	}
+
+	/// <summary>
+	/// Checks that adding past <see cref="HistoryCommand.MaxLines" /> drops the oldest lines.
+	/// </summary>
+	[Fact]
+	public void Append_PastMaxLines_DropsOldest()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, Enumerable.Range(0, HistoryCommand.MaxLines).Select(index => $"echo {index}"));
+
+		// Act
+		_ = HistoryFile.Append(this.path, this.key, ["echo new"]);
+
+		// Assert
+		// Read raw, because Load trims on its own and would hide a file that keeps growing.
+		var lines = Encoding.UTF8.GetString(HistoryFile.Decrypt(this.key, File.ReadAllBytes(this.path))).Split('\n');
+		_ = lines.Should().HaveCount(HistoryCommand.MaxLines);
+		_ = lines[0].Should().Be("echo 1");
+		_ = lines[^1].Should().Be("echo new");
+	}
+
+	/// <summary>
+	/// Checks that the lock file is readable and writable by its owner only.
+	/// </summary>
+	[Fact]
+	public void Append_OnUnix_CreatesOwnerOnlyLockFile()
+	{
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		// Act
+		_ = HistoryFile.Append(this.path, this.key, ["echo hi"]);
+
+		// Assert
+		_ = File.GetUnixFileMode($"{this.path}.lock").Should().Be(UnixFileMode.UserRead | UnixFileMode.UserWrite);
+	}
+
+	/// <summary>
+	/// Checks that when another shell keeps the lock, adding waits for it a while, then gives up, reports it, and
+	/// leaves the file alone instead of waiting forever.
+	/// </summary>
+	[Fact]
+	public void Append_WhileAnotherShellHoldsLock_GivesUpAndReports()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["echo hi"]);
+		using var held = new FileStream($"{this.path}.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+		var clock = System.Diagnostics.Stopwatch.StartNew();
+
+		// Act
+		var appended = HistoryFile.Append(this.path, this.key, ["echo new"]);
+
+		// Assert
+		_ = appended.Should().BeFalse();
+		_ = clock.Elapsed.Should().BeGreaterThan(TimeSpan.FromMilliseconds(500));
+		_ = this.environment.Error.Should().Contain("history: ");
+		_ = HistoryFile.Load(this.path, this.key).Should().Equal("echo hi");
+	}
+
+	/// <summary>
+	/// Checks that a lock file that can't be opened at all is reported instead of ending the shell.
+	/// </summary>
+	[Fact]
+	public void Append_WhenLockIsAFolder_ReturnsFalseAndReports()
+	{
+		// Arrange
+		_ = Directory.CreateDirectory($"{this.path}.lock");
+
+		// Act
+		var appended = HistoryFile.Append(this.path, this.key, ["echo hi"]);
+
+		// Assert
+		_ = appended.Should().BeFalse();
+		_ = this.environment.Error.Should().Contain("history: ");
+	}
+
+	/// <summary>
 	/// Checks that saving again replaces the file.
 	/// </summary>
 	[Fact]

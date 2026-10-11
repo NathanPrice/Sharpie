@@ -148,6 +148,10 @@ internal static class Program
 
 		// Runs for both the exit builtin, which calls Environment.Exit, and Main returning when input closes.
 		AppDomain.CurrentDomain.ProcessExit += (_, _) => history.WriteHistFile();
+
+		// Closing the window sends SIGHUP, and the runtime ends the process on it without raising ProcessExit. bash also
+		// saves its history on hangup.
+		using var hangup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, _ => history.WriteHistFile());
 		var editor = interactive ? CreateEditor(commands, aliases, historyCommand) : null;
 
 		if (interactive && OperatingSystem.IsWindows())
