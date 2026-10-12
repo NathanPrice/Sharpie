@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text;
 using Avalonia;
 using Avalonia.Headless;
@@ -23,11 +24,14 @@ public class TerminalViewBenchmarks
 	private TerminalView blank = null!;
 	private TerminalView plain = null!;
 	private TerminalView colored = null!;
+	private TerminalView changing = null!;
+	private string[] redraws = [];
+	private int frame;
 	private RenderTargetBitmap bitmap = null!;
 
 	/// <summary>
-	/// Starts the app on the headless platform and fills three views: one empty, one with plain text, and one with
-	/// colored text.
+	/// Starts the app on the headless platform and fills four views: one empty, one with plain text, one with colored
+	/// text, and one that two whole-screen redraws take turns on.
 	/// </summary>
 	[GlobalSetup]
 	public void Setup()
@@ -42,6 +46,8 @@ public class TerminalViewBenchmarks
 		this.plain = CreateView(Lines(row => $"{row,8} INFO  request handled in 12 ms for /api/items/{row} with status 200 OK and some more text to fill the row up\r\n"));
 		this.colored = CreateView(Lines(row =>
 			$"\e[01;34mfolder{row}\e[0m  \e[01;32mscript.sh\e[0m  readme.md  \e[38;2;{row * 4 % 256};120;200mtruecolor{row}\e[0m  \e[1;31merror\e[0m  \e[4munderlined\e[0m  \e[7minverse\e[0m  \e[42;30m bg \e[0m\r\n"));
+		this.redraws = [Redraw(0), Redraw(1)];
+		this.changing = CreateView(this.redraws[1]);
 	}
 
 	/// <summary>
@@ -69,6 +75,16 @@ public class TerminalViewBenchmarks
 	public void ColoredScreen() => this.bitmap.Render(this.colored);
 
 	/// <summary>
+	/// Redraws every row with new numbers and draws the frame, like htop, so no row's layout can be reused.
+	/// </summary>
+	[Benchmark]
+	public void ChangedScreen()
+	{
+		this.changing.Feed(this.redraws[this.frame++ % 2]);
+		this.bitmap.Render(this.changing);
+	}
+
+	/// <summary>
 	/// Creates a view sized to the window and feeds it <paramref name="output" />.
 	/// </summary>
 	/// <param name="output">The program output to show.</param>
@@ -85,6 +101,27 @@ public class TerminalViewBenchmarks
 		view.Feed(output);
 
 		return view;
+	}
+
+	/// <summary>
+	/// Builds one whole-screen redraw that moves to each row, erases it and writes colored numbers, as htop does.
+	/// </summary>
+	/// <param name="frame">The frame number, which changes every row's numbers.</param>
+	/// <returns>
+	/// The output for the frame.
+	/// </returns>
+	private static string Redraw(int frame)
+	{
+		var text = new StringBuilder("\e[H");
+
+		for (var row = 1; row <= 60; row++)
+		{
+			_ = text.Append(CultureInfo.InvariantCulture, $"\e[{row};1H\e[K\e[32m{frame + row,6}\e[0m \e[1mcpu\e[0m \e[33m{(frame + row) % 100,3}%\e[0m ")
+				.Append('|', row % 60)
+				.Append(CultureInfo.InvariantCulture, $" \e[36m/usr/bin/process-{row + frame}\e[0m");
+		}
+
+		return text.ToString();
 	}
 
 	/// <summary>

@@ -11,7 +11,7 @@ public sealed class RowCacheTests
 {
 	private readonly RowCache cache = new();
 	private readonly TerminalLine line = TerminalLine.Blank(4, 0);
-	private readonly ShapedRun[] runs = [];
+	private readonly List<ShapedRun> runs = [];
 
 	/// <summary>
 	/// Checks that a row drawn last frame and unchanged since gets back the same runs.
@@ -117,5 +117,56 @@ public sealed class RowCacheTests
 
 		// Assert
 		_ = found.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that a row laid out again after it changed is found with its new cells, and missed once it changes
+	/// again, when its copy of the cells is one a dropped row left behind.
+	/// </summary>
+	[Fact]
+	public void Find_AfterChangedRowAddedAgain_ComparesWithNewCells()
+	{
+		// Arrange
+		List<ShapedRun> newRuns = [];
+		this.cache.Add(this.line, this.line.Cells, this.runs);
+		this.cache.NextFrame();
+		this.line.Cells[0] = new Cell('x', '\0', 1, 0);
+		_ = this.cache.Find(this.line, this.line.Cells);
+		this.cache.Add(this.line, this.line.Cells, newRuns);
+		this.cache.NextFrame();
+
+		// Act
+		var unchanged = this.cache.Find(this.line, this.line.Cells);
+		this.cache.NextFrame();
+		this.line.Cells[1] = new Cell('y', '\0', 1, 0);
+		var changed = this.cache.Find(this.line, this.line.Cells);
+
+		// Assert
+		_ = unchanged.Should().BeSameAs(newRuns);
+		_ = changed.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that rows from both the last frame and the current one are laid out again after the cache is cleared, as
+	/// they are when the screen renumbers its styles.
+	/// </summary>
+	[Fact]
+	public void Find_AfterClear_ReturnsNull()
+	{
+		// Arrange
+		var other = TerminalLine.Blank(4, 0);
+		this.cache.Add(this.line, this.line.Cells, this.runs);
+		this.cache.NextFrame();
+		this.cache.Add(other, other.Cells, []);
+		this.cache.Clear();
+
+		// Act
+		var found = this.cache.Find(this.line, this.line.Cells);
+		this.cache.NextFrame();
+		var foundOther = this.cache.Find(other, other.Cells);
+
+		// Assert
+		_ = found.Should().BeNull();
+		_ = foundOther.Should().BeNull();
 	}
 }

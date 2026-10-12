@@ -42,6 +42,31 @@ public sealed class TerminalWindowTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that the tab is named after the folder the shell moves to.
+	/// </summary>
+	[AvaloniaFact]
+	public void Cd_RenamesTabAfterFolder()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("sharpie-title-");
+
+		try
+		{
+			this.ShowAndWaitForPrompt();
+
+			// Act
+			this.Enter($"cd {folder.FullName}");
+
+			// Assert
+			_ = this.window.Tabs[0].Title.Should().Be($"{folder.Name} · Sharpie");
+		}
+		finally
+		{
+			folder.Delete();
+		}
+	}
+
+	/// <summary>
 	/// Checks that quitting a page with the given key leaves the <c>man</c> line followed by exactly one empty prompt.
 	/// </summary>
 	/// <param name="key">The key that quits.</param>

@@ -507,4 +507,197 @@ public sealed class VtScreenTests
 		// Assert
 		_ = this.screen.CursorColumn.Should().Be(9);
 	}
+
+	/// <summary>
+	/// Checks that once the style table passes its limit and is renumbered, every cell on screen and in the scrollback
+	/// keeps its color.
+	/// </summary>
+	[Fact]
+	public void Feed_PastStyleLimit_KeepsEveryCellsColor()
+	{
+		// Arrange
+		var renumbered = 0;
+		this.screen.StylesRenumbered += (_, _) => renumbered++;
+
+		// Act
+		for (var color = 0; color < 5000; color++)
+		{
+			this.screen.Feed(Shade(color));
+		}
+
+		// Assert
+		var colors = Enumerable.Range(0, this.screen.LineCount)
+			.SelectMany(line => this.screen.GetLine(line).Cells)
+			.Where(cell => cell.Character == 'X')
+			.Select(cell => this.screen.GetStyle(cell.Style).Foreground?.Rgb);
+		_ = renumbered.Should().Be(1);
+		_ = colors.Should().Equal(Enumerable.Range(0, 5000).Select(color => (uint?)(color << 8)));
+	}
+
+	/// <summary>
+	/// Checks that styles no cell uses anymore are dropped once the table passes its limit, while the text still
+	/// showing keeps its color and new text gets the style it asked for.
+	/// </summary>
+	[Fact]
+	public void Feed_PastStyleLimit_DropsStylesNoLongerShown()
+	{
+		// Act
+		for (var color = 0; color < 5000; color++)
+		{
+			this.screen.Feed($"\r{Shade(color)}");
+		}
+
+		this.screen.Feed("\e[1mB");
+
+		// Assert
+		var cells = this.screen.GetLine(0).Cells;
+		_ = this.screen.StyleCount.Should().BeLessThan(1000);
+		_ = this.screen.GetStyle(cells[0].Style).Foreground.Should().Be(new AnsiColor(null, 4999u << 8));
+		_ = this.screen.GetStyle(cells[1].Style).Should().Be(new AnsiStyle(new AnsiColor(null, 4999u << 8), null, Bold: true));
+		_ = cells[2].Style.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that the style table is renumbered when a new style arrives with the table at its limit, not one style
+	/// later.
+	/// </summary>
+	[Fact]
+	public void Feed_NewStyleAtStyleLimit_RenumbersFirst()
+	{
+		// Arrange
+		var renumbered = 0;
+		this.screen.StylesRenumbered += (_, _) => renumbered++;
+
+		// The default style plus 4095 shades fill the table to its limit of 4096.
+		for (var color = 0; color < 4095; color++)
+		{
+			this.screen.Feed(Shade(color));
+		}
+
+		var beforeLimit = renumbered;
+
+		// Act
+		this.screen.Feed(Shade(4095));
+
+		// Assert
+		_ = beforeLimit.Should().Be(0);
+		_ = renumbered.Should().Be(1);
+	}
+
+	/// <summary>
+	/// Checks that after renumbering, a style that was dropped and one that was kept both come back as the right
+	/// colors, and asking for a kept style again doesn't add it twice.
+	/// </summary>
+	[Fact]
+	public void Feed_StylesAfterRenumbering_MapToTheirColors()
+	{
+		// Arrange
+		// The renumbering runs when shade 4095 arrives, while shade 4094 is the only one on screen, so 4094 is kept and
+		// shade 0 is dropped.
+		for (var color = 0; color < 4096; color++)
+		{
+			this.screen.Feed($"\r{Shade(color)}");
+		}
+
+		// Act
+		this.screen.Feed($"\r{Shade(4094)}");
+		var countAfterKept = this.screen.StyleCount;
+		this.screen.Feed(Shade(0));
+
+		// Assert
+		var cells = this.screen.GetLine(0).Cells;
+		_ = countAfterKept.Should().Be(3);
+		_ = this.screen.GetStyle(cells[0].Style).Foreground.Should().Be(new AnsiColor(null, 4094u << 8));
+		_ = this.screen.GetStyle(cells[1].Style).Foreground.Should().Be(new AnsiColor(null, 0));
+	}
+
+	/// <summary>
+	/// Checks that renumbering while the alternate screen shows keeps the colors on both screens.
+	/// </summary>
+	[Fact]
+	public void Feed_PastStyleLimitOnAlternateScreen_KeepsBothScreensColors()
+	{
+		// Arrange
+		this.screen.Feed("\e[31mR\e[0m\e[?1049h\e[H");
+
+		// Act
+		// 4100 shades on a 40-cell screen leave shades 4060 to 4099 showing, and the renumbering runs at shade 4095, so
+		// most of them were printed before it.
+		for (var color = 0; color < 4100; color++)
+		{
+			this.screen.Feed(Shade(color));
+		}
+
+		var alternate = Enumerable.Range(0, this.screen.Rows)
+			.SelectMany(row => this.screen.GetLine(row).Cells)
+			.Select(cell => this.screen.GetStyle(cell.Style).Foreground?.Rgb)
+			.ToList();
+		this.screen.Feed("\e[?1049l");
+
+		// Assert
+		_ = alternate.Should().Equal(Enumerable.Range(4060, 40).Select(color => (uint?)(color << 8)));
+		_ = this.screen.GetStyle(this.screen.GetLine(0).Cells[0].Style).Foreground.Should().Be(new AnsiColor(1, 0));
+	}
+
+	/// <summary>
+	/// Checks that overwriting or erasing one half of a wide character blanks its other half too, so no half is left
+	/// on screen without the rest of its character.
+	/// </summary>
+	/// <param name="input">The output that writes a wide character, then overwrites or erases part of it.</param>
+	/// <param name="widths">Each cell's width on the first row, as digits.</param>
+	[Theory]
+	[InlineData("日\e[2Gx", "1111111111")]
+	[InlineData("日\e[1Gx", "1111111111")]
+	[InlineData("日本\e[2G中", "1201111111")]
+	[InlineData("\e[3G日\e[1G\e[3X", "1111111111")]
+	[InlineData("\e[?7l\e[10G日\e[10Gx", "1111111111")]
+	[InlineData("日\e[1G\e[P\e[1Gx", "1111111111")]
+	public void Feed_OverwritingHalfOfWideCharacter_BlanksOtherHalf(string input, string widths)
+	{
+		// Act
+		this.screen.Feed(input);
+
+		// Assert
+		_ = string.Concat(this.screen.GetLine(0).Cells.Select(cell => cell.Width)).Should().Be(widths);
+	}
+
+	/// <summary>
+	/// Checks that the half of a wide character left blank keeps the character's background color, as erased cells do.
+	/// </summary>
+	[Fact]
+	public void Feed_OverwritingSecondHalfOfWideCharacter_KeepsItsBackground()
+	{
+		// Act
+		this.screen.Feed("\e[41m日\e[0m\e[2Gx");
+
+		// Assert
+		_ = this.screen.GetStyle(this.screen.GetLine(0).Cells[0].Style).Background.Should().Be(new AnsiColor(1, 0));
+	}
+
+	/// <summary>
+	/// Checks that after the screen gets wider, rows coming back from a full scrollback to be reused are made the new
+	/// width, so text can be printed across all of it.
+	/// </summary>
+	[Fact]
+	public void Feed_AfterWideningWithFullScrollback_PrintsAcrossNewWidth()
+	{
+		// Arrange
+		this.screen.Feed(string.Concat(Enumerable.Repeat("\r\n", VtScreen.ScrollbackRows + this.screen.Rows)));
+		this.screen.Resize(20, 4);
+
+		// Act
+		this.screen.Feed("\r\n01234567890123456789");
+
+		// Assert
+		_ = this.screen.GetLine(this.screen.LineCount - 1).Text().Should().Be("01234567890123456789");
+	}
+
+	/// <summary>
+	/// Makes the output for one <c>X</c> in its own truecolor shade.
+	/// </summary>
+	/// <param name="color">The shade's number, from 0 to 65535.</param>
+	/// <returns>
+	/// The SGR sequence for the shade, then the <c>X</c>.
+	/// </returns>
+	private static string Shade(int color) => $"\e[38;2;{color >> 8};{color & 255};0mX";
 }

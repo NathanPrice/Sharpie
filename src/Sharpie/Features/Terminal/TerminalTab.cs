@@ -29,6 +29,10 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	private readonly ManPager pager;
 	private readonly ShellConnection shell;
 
+	// The folder the title was last made from, so the title is rebuilt when the folder changes rather than for every
+	// chunk of output.
+	private string? titledDirectory;
+
 	/// <summary>
 	/// Initializes a new instance of the <see cref="TerminalTab" /> class and starts its shell.
 	/// </summary>
@@ -118,8 +122,9 @@ internal sealed partial class TerminalTab : Panel, IDisposable
 	{
 		this.View.Feed(output);
 
-		if (this.View.Screen.WorkingDirectory is { Length: > 0 } directory)
+		if (this.View.Screen.WorkingDirectory is { Length: > 0 } directory && directory != this.titledDirectory)
 		{
+			this.titledDirectory = directory;
 			this.Title = $"{PromptHeader.SplitForDisplay(directory).Name} · Sharpie";
 		}
 	}

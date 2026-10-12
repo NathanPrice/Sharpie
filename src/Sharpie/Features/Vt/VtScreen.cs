@@ -92,6 +92,10 @@ internal sealed partial class VtScreen : IVtHandler
 	/// </summary>
 	public const int ScrollbackRows = 10_000;
 
+	// The style table's first size limit. Every distinct truecolor shade adds a style, so past the limit the table is
+	// cut down to the styles still in use instead of growing as long as the tab is open.
+	private const int InitialStyleLimit = 4096;
+
 	private readonly VtParser parser;
 	private readonly Action<string> reply;
 	private readonly List<AnsiStyle> styles = [default];
@@ -103,6 +107,7 @@ internal sealed partial class VtScreen : IVtHandler
 
 	private AnsiStyle style;
 	private int styleId;
+	private int styleLimit = InitialStyleLimit;
 
 	// Set after a character lands in the last column. The next one wraps first, so a row can be filled exactly.
 	private bool pendingWrap;
@@ -148,6 +153,12 @@ internal sealed partial class VtScreen : IVtHandler
 	/// Occurs when the shell asks the window to show a man page, with the command line in the event's text.
 	/// </summary>
 	public event EventHandler<string>? ManPageRequested;
+
+	/// <summary>
+	/// Occurs when the style table drops unused styles and gives the rest new numbers, so a cell's style number may now
+	/// mean another style than before.
+	/// </summary>
+	public event EventHandler? StylesRenumbered;
 
 	/// <summary>
 	/// Gets the width in columns.
@@ -284,6 +295,14 @@ internal sealed partial class VtScreen : IVtHandler
 	/// 0 while the alternate screen shows.
 	/// </value>
 	public int ScrollbackCount => this.AlternateScreen ? 0 : this.History.Count;
+
+	/// <summary>
+	/// Gets the number of styles in the style table.
+	/// </summary>
+	/// <value>
+	/// At least 1, for the default style.
+	/// </value>
+	public int StyleCount => this.styles.Count;
 
 	/// <summary>
 	/// Gets the rows that scrolled off the top of the main screen.
@@ -737,12 +756,76 @@ internal sealed partial class VtScreen : IVtHandler
 	{
 		if (!this.styleIds.TryGetValue(value, out var id))
 		{
+			if (this.styles.Count >= this.styleLimit)
+			{
+				this.CompactStyles();
+			}
+
 			id = this.styles.Count;
 			this.styles.Add(value);
 			this.styleIds[value] = id;
 		}
 
 		return id;
+	}
+
+	/// <summary>
+	/// Drops the styles no cell uses anymore and numbers the rest from 0 again.
+	/// </summary>
+	/// <remarks>
+	/// The default style keeps number 0, and the style being printed in is kept even when no cell has it yet. The next
+	/// limit is twice the styles kept, so output that keeps every style in use, like a rainbow of truecolor text, makes
+	/// this run less and less often instead of on every new style.
+	/// </remarks>
+	private void CompactStyles()
+	{
+		var renumbered = new int[this.styles.Count];
+		var kept = new List<AnsiStyle>();
+
+		Array.Fill(renumbered, -1);
+		_ = Renumber(0);
+		this.styleId = Renumber(this.styleId);
+
+		foreach (var line in this.main.Concat(this.alternate))
+		{
+			RenumberCells(line.Cells);
+		}
+
+		for (var index = 0; index < this.History.Count; index++)
+		{
+			RenumberCells(this.History[index].Cells);
+		}
+
+		this.styles.Clear();
+		this.styles.AddRange(kept);
+		this.styleIds.Clear();
+
+		for (var id = 0; id < kept.Count; id++)
+		{
+			this.styleIds[kept[id]] = id;
+		}
+
+		this.styleLimit = Math.Max(InitialStyleLimit, kept.Count * 2);
+		this.StylesRenumbered?.Invoke(this, EventArgs.Empty);
+
+		void RenumberCells(Cell[] cells)
+		{
+			for (var column = 0; column < cells.Length; column++)
+			{
+				cells[column] = cells[column] with { Style = Renumber(cells[column].Style) };
+			}
+		}
+
+		int Renumber(int id)
+		{
+			if (renumbered[id] < 0)
+			{
+				renumbered[id] = kept.Count;
+				kept.Add(this.styles[id]);
+			}
+
+			return renumbered[id];
+		}
 	}
 
 	/// <summary>

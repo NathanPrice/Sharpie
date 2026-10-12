@@ -52,6 +52,9 @@ internal sealed partial class TerminalView : Control
 	private readonly double cellHeight;
 	private readonly RowCache rows = new();
 
+	// One builder for every run of every changed row, instead of a new one per row.
+	private readonly StringBuilder runText = new();
+
 	// One pen per text color, which stays small because Palette hands out the same brush for the same color.
 	private readonly Dictionary<IBrush, IPen> underlinePens = [];
 
@@ -81,6 +84,7 @@ internal sealed partial class TerminalView : Control
 		{
 			CellPixels = ((int)Math.Round(this.cellWidth), (int)Math.Round(this.cellHeight)),
 		};
+		this.Screen.StylesRenumbered += (_, _) => this.rows.Clear();
 
 		this.blink = new DispatcherTimer(BlinkInterval, DispatcherPriority.Background, (_, _) =>
 		{
@@ -318,7 +322,6 @@ internal sealed partial class TerminalView : Control
 	private List<ShapedRun> Shape(ReadOnlySpan<Cell> cells)
 	{
 		var runs = new List<ShapedRun>();
-		var run = new StringBuilder();
 
 		for (var column = 0; column < cells.Length;)
 		{
@@ -330,18 +333,18 @@ internal sealed partial class TerminalView : Control
 				var end = column;
 				var blank = true;
 
-				_ = run.Clear();
+				_ = this.runText.Clear();
 
 				while (end < cells.Length && cells[end].Style == cells[column].Style && cells[end].Character is >= ' ' and < '\x7F')
 				{
 					blank &= cells[end].Character == ' ';
-					_ = run.Append(cells[end].Character);
+					_ = this.runText.Append(cells[end].Character);
 					end++;
 				}
 
 				if (!blank || style.Underline)
 				{
-					this.AddRun(runs, run.ToString(), style, column, end - column);
+					this.AddRun(runs, this.runText.ToString(), style, column, end - column);
 				}
 
 				column = end;

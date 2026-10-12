@@ -333,9 +333,11 @@ public sealed class VtSequenceTests
 
 		// Act
 		this.screen.Resize(12, 4);
+		var widths = string.Concat(this.screen.GetLine(0).Cells.Select(cell => cell.Width));
 		this.screen.Feed("\e[12Gz");
 
 		// Assert
+		_ = widths.Should().Be("111111111111");
 		_ = this.screen.GetText().Should().Be("abc        z");
 	}
 
