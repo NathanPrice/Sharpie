@@ -7,23 +7,34 @@ namespace Sharpie.Shell.Tests.Features.LineEditing;
 /// <summary>
 /// Tests for <see cref="LineEditor" />, fed keys the way <see cref="Console.ReadKey(bool)" /> returns them.
 /// </summary>
+[Collection(GlobalState.Name)]
 public sealed class LineEditorTests : IDisposable
 {
 	private const string Prompt = PromptHeader.Symbol;
 
 	private readonly Queue<ConsoleKeyInfo> keys = new();
 	private readonly StringWriter output = new();
+	private readonly ShellEnvironment environment = new();
 	private readonly List<string> history = ["first", "second"];
 	private readonly List<int> reads = [];
 	private readonly LineEditor sut;
 	private int columns = 80;
 
 	/// <summary>
-	/// Initializes a new instance of the <see cref="LineEditorTests" /> class with two history lines and an
-	/// 80-column terminal.
+	/// Initializes a new instance of the <see cref="LineEditorTests" /> class with two history lines, an 80-column
+	/// terminal, and <c>PATH</c> and the working directory pointed at a folder holding only <c>xfile</c>, so the
+	/// programs on this machine can't add a suggestion.
 	/// </summary>
-	public LineEditorTests() =>
+	public LineEditorTests()
+	{
+		var folder = this.environment.CreateFolder();
+
+		// Also the working directory, so the file a test creates there is the only one a later word could match.
+		ShellEnvironment.SetPath(folder);
+		Directory.SetCurrentDirectory(folder);
+		_ = ShellEnvironment.CreateFile(folder, "xfile", executable: false);
 		this.sut = new LineEditor(this.ReadKey, this.output, () => this.columns, new TabCompleter(["echo", "exit"]), this.history, ["echo", "exit"]);
+	}
 
 	/// <summary>
 	/// Checks that typed characters come back as the line when Enter is pressed.
@@ -553,7 +564,10 @@ public sealed class LineEditorTests : IDisposable
 	/// Checks the editing keys at the edges: at the start or end of the line, across runs of spaces, and with no
 	/// suggestion to take.
 	/// </summary>
-	/// <param name="script">The keys, with special keys in braces and Ctrl shown as <c>^</c>, like <c>{^W}</c>.</param>
+	/// <param name="script">
+	/// The keys, with special keys in braces, Ctrl shown as <c>^</c>, like <c>{^W}</c>, and Alt as <c>%</c>, like
+	/// <c>{%B}</c>.
+	/// </param>
 	/// <param name="expected">The line Enter returns.</param>
 	[Theory]
 	[InlineData("fi{LeftArrow}{LeftArrow}{RightArrow}x", "fxi")]
@@ -568,6 +582,14 @@ public sealed class LineEditorTests : IDisposable
 	[InlineData("abc{LeftArrow}{^E}x", "abcx")]
 	[InlineData("abc{LeftArrow}{Delete}", "ab")]
 	[InlineData("zz{RightArrow}", "zz")]
+	[InlineData("echo one two{%B}{%B}x", "echo xone two")]
+	[InlineData("one  two{%B}x", "one  xtwo")]
+	[InlineData("one  two{Home}{%F}x", "onex  two")]
+	[InlineData("one  two{Home}{%F}{%F}x", "one  twox")]
+	[InlineData("ab{%Q}", "ab")]
+	[InlineData("ab{%F}x", "abx")]
+	[InlineData("echo one{Escape}bx", "echo xone")]
+	[InlineData("ab{Escape}{%B}x", "xab")]
 	public void ReadLine_EditingKeyScript_GivesLine(string script, string expected)
 	{
 		// Arrange
@@ -629,6 +651,88 @@ public sealed class LineEditorTests : IDisposable
 		// Assert
 		_ = line.Should().Be("first");
 	}
+
+	/// <summary>
+	/// Checks that typing the start of a command name with no history line to match shows the rest of the name dimmed,
+	/// and Right takes it.
+	/// </summary>
+	[Fact]
+	public void ReadLine_PrefixOfCommandName_ShowsAndAcceptsSuggestion()
+	{
+		// Arrange
+		var sut = this.CommandEditor("zqtopgrade");
+		this.Type("zqtopg");
+		this.Press(ConsoleKey.RightArrow);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.Frame(5).Should().Contain("\e[30mrade\e[0m");
+		_ = line.Should().Be("zqtopgrade");
+	}
+
+	/// <summary>
+	/// Checks that the suggestion keeps up as the name narrows and backs up, and stops once the name is whole, the
+	/// names share nothing more, or a later word is being typed, even one a file name starts with.
+	/// </summary>
+	/// <param name="typed">The text typed.</param>
+	/// <param name="expected">The dimmed text after the last key, or an empty string for none.</param>
+	[Theory]
+	[InlineData("zqtop", "")]
+	[InlineData("zqt", "op")]
+	[InlineData("zqtopm", "em")]
+	[InlineData("zqtopg{Backspace}m", "em")]
+	[InlineData("zqtopmem", "")]
+	[InlineData("zqtopg{Backspace}", "")]
+	[InlineData("zqtopg x", "")]
+	[InlineData(" ", "")]
+	public void ReadLine_TypingCommandName_SuggestsWhatTabWouldAdd(string typed, string expected)
+	{
+		// Arrange
+		var sut = this.CommandEditor("zqtop", "zqtopgrade", "zqtopmem");
+		this.Script(typed);
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = sut.ReadLine(string.Empty);
+
+		// Assert
+		var last = this.Frame(this.reads.Count - 2);
+		_ = expected.Length > 0
+			? last.Should().Contain($"\e[30m{expected}\e[0m")
+			: last.Should().NotContain("\e[30m");
+	}
+
+	/// <summary>
+	/// Checks that a history line beats a command name for the suggestion.
+	/// </summary>
+	[Fact]
+	public void ReadLine_HistoryAndCommandMatch_SuggestsHistory()
+	{
+		// Arrange
+		this.history.Add("zqtopgrade --yes");
+		var sut = this.CommandEditor("zqtopgrade");
+		this.Type("zqtopg");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = this.Frame(5).Should().Contain("\e[30mrade --yes\e[0m");
+	}
+
+	/// <summary>
+	/// Makes an editor on an 80-column terminal whose command names are <paramref name="names" />.
+	/// </summary>
+	/// <param name="names">The command names.</param>
+	/// <returns>
+	/// The editor, reading keys from <see cref="keys" /> and writing to <see cref="output" />.
+	/// </returns>
+	private LineEditor CommandEditor(params string[] names) =>
+		new(this.ReadKey, this.output, () => 80, new TabCompleter(names), this.history, names);
 
 	/// <summary>
 	/// Reads the next queued key, first noting how much output there is, so <see cref="Frame" /> can tell what each key drew.
@@ -725,7 +829,8 @@ public sealed class LineEditorTests : IDisposable
 	}
 
 	/// <summary>
-	/// Queues keys written as text, with special keys in braces like <c>{Home}</c> and Ctrl keys like <c>{^W}</c>.
+	/// Queues keys written as text, with special keys in braces like <c>{Home}</c>, Ctrl keys like <c>{^W}</c> and Alt
+	/// keys like <c>{%B}</c>.
 	/// </summary>
 	/// <param name="script">The keys.</param>
 	private void Script(string script)
@@ -745,6 +850,10 @@ public sealed class LineEditorTests : IDisposable
 			if (name.StartsWith('^'))
 			{
 				this.Press(Enum.Parse<ConsoleKey>(name[1..]), control: true);
+			}
+			else if (name.StartsWith('%'))
+			{
+				this.PressAlt(Enum.Parse<ConsoleKey>(name[1..]));
 			}
 			else
 			{
@@ -772,7 +881,11 @@ public sealed class LineEditorTests : IDisposable
 	}
 
 	/// <inheritdoc />
-	public void Dispose() => this.output.Dispose();
+	public void Dispose()
+	{
+		this.output.Dispose();
+		this.environment.Dispose();
+	}
 
 	private void Type(string text)
 	{
@@ -784,4 +897,11 @@ public sealed class LineEditorTests : IDisposable
 
 	private void Press(ConsoleKey key, bool control = false) =>
 		this.keys.Enqueue(new ConsoleKeyInfo(control ? (char)(key - ConsoleKey.A + 1) : '\0', key, shift: false, alt: false, control));
+
+	/// <summary>
+	/// Queues a letter key with Alt held, as <see cref="Console.ReadKey(bool)" /> returns ESC followed by that letter.
+	/// </summary>
+	/// <param name="key">The letter key.</param>
+	private void PressAlt(ConsoleKey key) =>
+		this.keys.Enqueue(new ConsoleKeyInfo(char.ToLowerInvariant((char)key), key, shift: false, alt: true, control: false));
 }

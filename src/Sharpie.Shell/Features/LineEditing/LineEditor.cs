@@ -9,15 +9,18 @@ namespace Sharpie.Shell.Features.LineEditing;
 
 /// <summary>
 /// Reads one command line from the terminal a key at a time, coloring it as it's typed, with Tab completion,
-/// Up and Down through the history lines that start with what's typed, a dimmed suggestion from history after the
-/// cursor, and the usual editing keys.
+/// Up and Down through the history lines that start with what's typed, a dimmed suggestion after the cursor from
+/// history or from the command names, and the usual editing keys.
 /// </summary>
 /// <param name="readKey">Reads the next key without echoing it, like <see cref="Console.ReadKey(bool)" />.</param>
 /// <param name="output">Where the prompt and the line are drawn.</param>
 /// <param name="columns">Gives the terminal's width in columns, read again on every redraw so a resize is picked up.</param>
 /// <param name="completer">Decides what each Tab press does.</param>
 /// <param name="history">The earlier lines, oldest first, which Up and Down search.</param>
-/// <param name="builtins">The builtin command names, which the coloring counts as commands.</param>
+/// <param name="builtins">
+/// The builtin command names, which the coloring counts as commands and the suggestion offers along with the programs
+/// on <c>PATH</c>.
+/// </param>
 /// <remarks>
 /// The whole input is redrawn after every key. The cursor first goes back up to the prompt's row, everything below
 /// is erased, and the prompt, the colored line and any list of matches are written again. Characters are counted as
@@ -52,6 +55,15 @@ internal sealed class LineEditor(
 	private int? selected;
 	private string suggestion = string.Empty;
 
+	// Set after Escape, so ESC and a letter read as two keys still count as Alt and that letter, as readline reads ESC.
+	// .NET returns them as two keys when more input arrives in the same read.
+	private bool escaped;
+
+	// The command names that start with commandPrefix. Narrowed in memory as the command word grows, so suggesting a
+	// command doesn't search PATH on every key. Cleared for each new line, so a program installed since is found.
+	private List<string>? commandMatches;
+	private string commandPrefix = string.Empty;
+
 	/// <summary>
 	/// Gets a value indicating whether the line still shows a history line that Up or Down put there, unedited.
 	/// </summary>
@@ -77,7 +89,9 @@ internal sealed class LineEditor(
 		this.cursorRow = 0;
 		this.recalled = history.Count;
 		this.listed = null;
+		this.escaped = false;
 		this.knownCommands.Clear();
+		this.commandMatches = null;
 
 		output.Write(header);
 		this.Render();
@@ -120,6 +134,10 @@ internal sealed class LineEditor(
 	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "ConsoleKey has a member for every key on the keyboard. Only the keys the line editor handles need an arm.")]
 	private Outcome Handle(ConsoleKeyInfo key, string header)
 	{
+		var alt = (key.Modifiers & ConsoleModifiers.Alt) != 0 || this.escaped;
+
+		this.escaped = key.Key == ConsoleKey.Escape;
+
 		return (key.Modifiers & ConsoleModifiers.Control) != 0
 			? key.Key switch
 			{
@@ -147,6 +165,11 @@ internal sealed class LineEditor(
 				ConsoleKey.UpArrow => this.Recall(-1),
 				ConsoleKey.DownArrow => this.Recall(1),
 				ConsoleKey.Tab => this.Complete(),
+				ConsoleKey.B when alt => this.MoveTo(this.WordStartBefore(this.cursor)),
+				ConsoleKey.F when alt => this.MoveTo(this.WordEndAfter(this.cursor)),
+
+				// Other Alt keys do nothing. Typing their letter would put a stray character in the line.
+				_ when alt => Outcome.Continue,
 				_ when !char.IsControl(key.KeyChar) => this.Insert(key.KeyChar),
 				_ => Outcome.Continue,
 			};
@@ -185,17 +208,18 @@ internal sealed class LineEditor(
 	}
 
 	/// <summary>
-	/// Finds the rest of the newest history line that starts with the line typed so far, as fish suggests it.
+	/// Finds the rest of the newest history line that starts with the line typed so far, as fish suggests it, or else
+	/// what Tab would add to a command name being typed.
 	/// </summary>
 	/// <returns>
-	/// The part of that history line past the typed text, or an empty string when the line is empty, the cursor isn't
-	/// at its end, a list of matches is showing, Up or Down is stepping through history, or no longer history line starts
-	/// with it.
+	/// The part of that history line past the typed text, or Tab's addition without its trailing space. An empty string
+	/// when the line is empty, the cursor isn't at its end, a list of matches is showing, Up or Down is stepping through
+	/// history, or neither a longer history line nor a command name fits.
 	/// </returns>
 	private string Suggest()
 	{
 		// Hidden while browsing, because the next Up searches by the text typed before the first Up, not by the line
-		// on screen, and the dimmed text must always be what Up gives.
+		// on screen, so a suggestion there would promise a line Up doesn't give.
 		if (this.line.Length == 0 || this.cursor != this.line.Length || this.listed is not null || this.Browsing)
 		{
 			return string.Empty;
@@ -211,7 +235,31 @@ internal sealed class LineEditor(
 			}
 		}
 
-		return string.Empty;
+		return typed.Contains(' ', StringComparison.Ordinal) ? string.Empty : this.SuggestCommand(typed);
+	}
+
+	/// <summary>
+	/// Works out what Tab would add to the command name typed so far, so the dimmed text always matches Tab.
+	/// </summary>
+	/// <param name="typed">The line, which is still the command word.</param>
+	/// <returns>
+	/// The rest of the only matching name, or the part all matching names share, with no trailing space. Empty when
+	/// <paramref name="typed" /> is already a whole name or the names share nothing more.
+	/// </returns>
+	private string SuggestCommand(string typed)
+	{
+		if (this.commandMatches is null || !typed.StartsWith(this.commandPrefix, StringComparison.Ordinal))
+		{
+			this.commandPrefix = typed;
+			this.commandMatches = [.. Completions.FindMatches(typed, builtins)];
+		}
+		else
+		{
+			_ = this.commandMatches.RemoveAll(name => !name.StartsWith(typed, StringComparison.Ordinal));
+			this.commandPrefix = typed;
+		}
+
+		return Completions.Complete(typed, this.commandMatches)?.TrimEnd() ?? string.Empty;
 	}
 
 	/// <summary>
@@ -294,6 +342,29 @@ internal sealed class LineEditor(
 	}
 
 	/// <summary>
+	/// Finds where the word after <paramref name="index" /> ends, skipping spaces first, which is where Alt+F moves to
+	/// in bash.
+	/// </summary>
+	/// <param name="index">The position to look forward from.</param>
+	/// <returns>
+	/// The position just past the word's last character, or the end of the line.
+	/// </returns>
+	private int WordEndAfter(int index)
+	{
+		while (index < this.line.Length && this.line[index] == ' ')
+		{
+			index++;
+		}
+
+		while (index < this.line.Length && this.line[index] != ' ')
+		{
+			index++;
+		}
+
+		return index;
+	}
+
+	/// <summary>
 	/// Shows the next older or newer history line that starts with the text typed or edited before Up, in place of the
 	/// line, or that text again after Down past the newest match. With nothing typed, every history line matches.
 	/// </summary>
@@ -313,7 +384,7 @@ internal sealed class LineEditor(
 
 		var index = this.recalled + step;
 
-		// Same match as the suggestion, so the first Up fills in exactly the dimmed text.
+		// Same match as the history suggestion, so the first Up fills in exactly the dimmed text.
 		while (index >= 0 && index < history.Count && !(history[index].Length > this.draft.Length && history[index].StartsWith(this.draft, StringComparison.Ordinal)))
 		{
 			index += step;
