@@ -5,8 +5,8 @@ using Sharpie.Shell.Features.History;
 namespace Sharpie.Benchmarks.Features.History;
 
 /// <summary>
-/// Measures <see cref="HistoryFile.Save" />, which encrypts and rewrites the whole history after every command, and
-/// <see cref="HistoryFile.Load" />, which runs once at startup.
+/// Measures <see cref="HistoryFile.Save" /> and <see cref="HistoryFile.Load" />. After every command the shell loads
+/// the whole history, adds the new line, then encrypts and rewrites all of it, so both run once per command.
 /// </summary>
 [MemoryDiagnoser]
 public class HistoryFileBenchmarks
@@ -44,7 +44,7 @@ public class HistoryFileBenchmarks
 	public bool Save() => HistoryFile.Save(this.path, this.key, this.lines);
 
 	/// <summary>
-	/// Loads the full history, as the shell does once at startup.
+	/// Loads the full history, as the shell does at startup and after every command.
 	/// </summary>
 	/// <returns>
 	/// The number of lines read.

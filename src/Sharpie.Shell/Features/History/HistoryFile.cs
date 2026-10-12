@@ -111,7 +111,18 @@ internal static class HistoryFile
 
 			try
 			{
-				var lines = Encoding.UTF8.GetString(plaintext).Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
+				var lines = new List<string>();
+
+				// Split as bytes and decoded line by line, because decoding the whole file would make a second plain
+				// copy of the history that ZeroMemory can't wipe, big enough to land on the large object heap. The
+				// byte 0x0A never appears inside a multi-byte UTF-8 character, so every split is a real line break.
+				foreach (var range in plaintext.AsSpan().Split((byte)'\n'))
+				{
+					if (range.Start.Value < range.End.Value)
+					{
+						lines.Add(Encoding.UTF8.GetString(plaintext.AsSpan(range)));
+					}
+				}
 
 				HistoryCommand.Trim(lines);
 
@@ -225,13 +236,27 @@ internal static class HistoryFile
 	/// Writes a new file next to <paramref name="path" /> and moves it over, so a crash mid-write never leaves a
 	/// half-written history. The new file is created exclusively, which fails instead of following a planted link.
 	/// </remarks>
-	public static bool Save(string path, byte[] key, IEnumerable<string> lines)
+	public static bool Save(string path, byte[] key, IReadOnlyList<string> lines)
 	{
 		_ = path.ArgumentNotNullOrEmpty();
 		_ = key.ArgumentNotNull();
 		_ = lines.ArgumentNotNull();
 
-		var plaintext = Encoding.UTF8.GetBytes(string.Join('\n', lines));
+		// Encoded straight into one buffer, because joining the lines into a string first would make a plain copy of
+		// the history that ZeroMemory can't wipe.
+		var plaintext = new byte[lines.Sum(line => Encoding.UTF8.GetByteCount(line)) + Math.Max(0, lines.Count - 1)];
+		var written = 0;
+
+		for (var index = 0; index < lines.Count; index++)
+		{
+			if (index > 0)
+			{
+				plaintext[written++] = (byte)'\n';
+			}
+
+			written += Encoding.UTF8.GetBytes(lines[index], plaintext.AsSpan(written));
+		}
+
 		var temporaryPath = $"{path}.{Path.GetRandomFileName()}";
 
 		try

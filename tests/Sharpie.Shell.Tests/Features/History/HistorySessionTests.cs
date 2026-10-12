@@ -166,6 +166,31 @@ public sealed class HistorySessionTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that with encryption on, the lines kept for <c>HISTFILE</c> stop at <see cref="HistoryCommand.MaxLines" />,
+	/// so a long session doesn't keep every line it ever ran.
+	/// </summary>
+	[Fact]
+	public void Record_PastMaxLinesWithEncryption_WritesNewestToHistFile()
+	{
+		// Arrange
+		var histFile = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "history", executable: false);
+		var sut = HistorySession.Start(this.history, this.path, this.key, histFile);
+
+		// Act
+		for (var index = 0; index <= HistoryCommand.MaxLines; index++)
+		{
+			sut.Record($"echo {index}");
+		}
+
+		sut.WriteHistFile();
+
+		// Assert
+		var lines = File.ReadAllLines(histFile);
+		_ = lines.Should().HaveCount(HistoryCommand.MaxLines);
+		_ = lines[0].Should().Be("echo 1");
+	}
+
+	/// <summary>
 	/// Checks that a file changed since the shell started is left alone, and nothing more is saved that session.
 	/// </summary>
 	[Fact]

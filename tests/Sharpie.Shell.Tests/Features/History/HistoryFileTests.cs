@@ -37,6 +37,68 @@ public sealed class HistoryFileTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that lines with characters of two, three and four UTF-8 bytes load back unchanged.
+	/// </summary>
+	[Fact]
+	public void Load_AfterSaveOfMultiByteText_ReturnsSameLines()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, ["echo héllo", "echo 日本語 🚀", "ls"]);
+
+		// Act
+		var lines = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = lines.Should().Equal("echo héllo", "echo 日本語 🚀", "ls");
+	}
+
+	/// <summary>
+	/// Checks that the file holds the lines joined by single newlines, with none at the end, so files saved before and
+	/// after stay readable by each other.
+	/// </summary>
+	[Fact]
+	public void Save_JoinsLinesWithNewlines()
+	{
+		// Act
+		_ = HistoryFile.Save(this.path, this.key, ["echo one", "", "é"]);
+
+		// Assert
+		_ = Encoding.UTF8.GetString(HistoryFile.Decrypt(this.key, File.ReadAllBytes(this.path))).Should().Be("echo one\n\né");
+	}
+
+	/// <summary>
+	/// Checks that saving no lines leaves a file that loads as an empty history.
+	/// </summary>
+	[Fact]
+	public void Load_AfterSaveOfNoLines_ReturnsEmpty()
+	{
+		// Arrange
+		_ = HistoryFile.Save(this.path, this.key, []);
+
+		// Act
+		var lines = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = lines.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that empty lines anywhere in the file, including at its start and end, are left out.
+	/// </summary>
+	[Fact]
+	public void Load_WithEmptyLines_LeavesThemOut()
+	{
+		// Arrange
+		File.WriteAllBytes(this.path, HistoryFile.Encrypt(this.key, Encoding.UTF8.GetBytes("\na\n\nb\n")));
+
+		// Act
+		var lines = HistoryFile.Load(this.path, this.key);
+
+		// Assert
+		_ = lines.Should().Equal("a", "b");
+	}
+
+	/// <summary>
 	/// Checks that the saved file doesn't contain the command text.
 	/// </summary>
 	[Fact]
@@ -312,7 +374,7 @@ public sealed class HistoryFileTests : IDisposable
 	public void Append_PastMaxLines_DropsOldest()
 	{
 		// Arrange
-		_ = HistoryFile.Save(this.path, this.key, Enumerable.Range(0, HistoryCommand.MaxLines).Select(index => $"echo {index}"));
+		_ = HistoryFile.Save(this.path, this.key, [.. Enumerable.Range(0, HistoryCommand.MaxLines).Select(index => $"echo {index}")]);
 
 		// Act
 		_ = HistoryFile.Append(this.path, this.key, ["echo new"]);
@@ -432,13 +494,21 @@ public sealed class HistoryFileTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that data too short to hold the version, nonce and tag is rejected as not a history file.
+	/// Checks that data too short to hold the version, nonce and tag is rejected as not a history file, up to one byte
+	/// short of the 29 they take.
 	/// </summary>
-	[Fact]
-	public void Decrypt_TooShort_Throws()
+	/// <param name="length">The length of the data, which starts with the right version byte.</param>
+	[Theory]
+	[InlineData(3)]
+	[InlineData(28)]
+	public void Decrypt_TooShort_Throws(int length)
 	{
+		// Arrange
+		var data = new byte[length];
+		data[0] = 1;
+
 		// Act
-		var act = () => HistoryFile.Decrypt(this.key, [1, 0, 0]);
+		var act = () => HistoryFile.Decrypt(this.key, data);
 
 		// Assert
 		_ = act.Should().Throw<CryptographicException>();
