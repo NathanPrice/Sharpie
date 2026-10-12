@@ -44,6 +44,32 @@ public sealed class LineEditorTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a command that only exists once the first line is done, like a new alias, is colored as a command
+	/// on the next line rather than keeping the first line's answer.
+	/// </summary>
+	[Fact]
+	public void ReadLine_CommandAddedBetweenLines_IsColoredOnNextLine()
+	{
+		// Arrange
+		List<string> builtins = ["echo"];
+		var editor = new LineEditor(this.ReadKey, this.output, () => this.columns, new TabCompleter(builtins), this.history, builtins);
+		this.Type("sampletool");
+		this.Press(ConsoleKey.Enter);
+		_ = editor.ReadLine(string.Empty);
+		var firstLine = this.output.ToString();
+		builtins.Add("sampletool");
+		this.Type("sampletool");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = editor.ReadLine(string.Empty);
+
+		// Assert
+		_ = firstLine.Should().EndWith("\e[31msampletool\e[0m\r\e[12C\r\n");
+		_ = this.output.ToString()[firstLine.Length..].Should().EndWith("\e[32msampletool\e[0m\r\e[12C\r\n");
+	}
+
+	/// <summary>
 	/// Checks the editing keys: moving with the arrows, deleting with Backspace and Delete, and inserting mid-line.
 	/// </summary>
 	[Fact]

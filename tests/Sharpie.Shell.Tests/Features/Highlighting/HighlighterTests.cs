@@ -13,6 +13,7 @@ public sealed class HighlighterTests : IDisposable
 	private static readonly string[] Builtins = ["echo", "cd", "type"];
 
 	private readonly ShellEnvironment environment = new();
+	private readonly string program;
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="HighlighterTests" /> class with <c>PATH</c> and the working
@@ -21,7 +22,7 @@ public sealed class HighlighterTests : IDisposable
 	public HighlighterTests()
 	{
 		var folder = this.environment.CreateFolder();
-		_ = ShellEnvironment.CreateFile(folder, "prog", executable: true);
+		this.program = ShellEnvironment.CreateFile(folder, "prog", executable: true);
 		_ = ShellEnvironment.CreateFile(folder, "notes.txt", executable: false);
 		ShellEnvironment.SetPath(folder);
 		Directory.SetCurrentDirectory(folder);
@@ -36,6 +37,10 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("echo hi", TokenKind.Command)]
 	[InlineData("prog", TokenKind.Command)]
 	[InlineData("ehco hi", TokenKind.UnknownCommand)]
+	[InlineData("'pr'og", TokenKind.Command)]
+	[InlineData("\"prog\" hi", TokenKind.Command)]
+	[InlineData("p\\rog", TokenKind.Command)]
+	[InlineData("pr#og", TokenKind.UnknownCommand)]
 	public void Highlight_CommandWord_MarksWhetherItExists(string line, TokenKind expected)
 	{
 		// Act
@@ -43,6 +48,28 @@ public sealed class HighlighterTests : IDisposable
 
 		// Assert
 		_ = tokens.Should().ContainSingle().Which.Should().Be(new Token(0, line.Split(' ')[0].Length, expected));
+	}
+
+	/// <summary>
+	/// Checks that a command name already looked up for this line isn't looked up again, so a program removed since
+	/// keeps its color until the next line, while a fresh lookup sees it's gone.
+	/// </summary>
+	[Fact]
+	public void Highlight_WithKnownCommands_ReusesEarlierAnswer()
+	{
+		// Arrange
+		var knownCommands = new Dictionary<string, bool>();
+		_ = Highlighter.Highlight("prog", Builtins, knownCommands);
+		File.Delete(this.program);
+
+		// Act
+		var remembered = Highlighter.Highlight("prog", Builtins, knownCommands);
+		var fresh = Highlighter.Highlight("prog", Builtins);
+
+		// Assert
+		_ = knownCommands.Should().Equal(new Dictionary<string, bool> { ["prog"] = true });
+		_ = remembered.Should().Equal(new Token(0, 4, TokenKind.Command));
+		_ = fresh.Should().Equal(new Token(0, 4, TokenKind.UnknownCommand));
 	}
 
 	/// <summary>
@@ -138,6 +165,10 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("echo a\\ ~x", "0,4,Command")]
 	[InlineData("echo a\\b \"q\"", "0,4,Command;9,3,Quoted")]
 	[InlineData("echo > a\0b", "0,4,Command;5,1,Redirect;7,3,MissingPath")]
+	[InlineData("echo 'a'\"b\"", "0,4,Command;5,3,Quoted;8,3,Quoted")]
+	[InlineData("echo 'a'\"b", "0,4,Command;5,3,Quoted;8,2,Quoted")]
+	[InlineData("echo #note", "0,4,Command")]
+	[InlineData("echo > #x", "0,4,Command;5,1,Redirect;7,2,MissingPath")]
 	public void Highlight_EdgeCaseLine_GivesExactTokens(string line, string expected)
 	{
 		// Arrange

@@ -37,6 +37,13 @@ internal sealed class LineEditor(
 
 	private readonly StringBuilder line = new();
 
+	// Kept across redraws, so a redraw doesn't grow a new builder from scratch on every key.
+	private readonly StringBuilder screen = new();
+
+	// Whether each command name typed on this line is a command. The highlighter would otherwise search PATH for it on
+	// every key. Cleared for each new line, so a program installed since the last prompt is found.
+	private readonly Dictionary<string, bool> knownCommands = new(StringComparer.Ordinal);
+
 	private int cursor;
 	private int cursorRow;
 	private int recalled;
@@ -51,7 +58,7 @@ internal sealed class LineEditor(
 	/// <value>
 	/// <see langword="false" /> once any key changes the line, which makes the next Up search again from the changed text.
 	/// </value>
-	private bool Browsing => this.recalled < history.Count && this.line.ToString() == history[this.recalled];
+	private bool Browsing => this.recalled < history.Count && this.line.Equals(history[this.recalled].AsSpan());
 
 	/// <summary>
 	/// Draws <paramref name="header" /> and the prompt, then reads keys until Enter.
@@ -70,6 +77,7 @@ internal sealed class LineEditor(
 		this.cursorRow = 0;
 		this.recalled = history.Count;
 		this.listed = null;
+		this.knownCommands.Clear();
 
 		output.Write(header);
 		this.Render();
@@ -378,7 +386,7 @@ internal sealed class LineEditor(
 		// A terminal that reports no size gets the usual default.
 		width = width > 0 ? width : 80;
 
-		var screen = new StringBuilder();
+		var screen = this.screen.Clear();
 
 		if (this.cursorRow > 0)
 		{
@@ -456,7 +464,7 @@ internal sealed class LineEditor(
 		var text = this.line.ToString();
 		var copied = 0;
 
-		foreach (var token in Highlighter.Highlight(text, builtins))
+		foreach (var token in Highlighter.Highlight(text, builtins, this.knownCommands))
 		{
 			var color = token.Kind switch
 			{
