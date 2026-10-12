@@ -50,15 +50,15 @@ public sealed class SourceProcessTests
 		// Arrange
 		var home = Directory.CreateTempSubdirectory("shell-home-").FullName;
 
-		await File.WriteAllTextAsync(Path.Combine(home, Program.RcFileName), "alias greet='echo hello'\n").ConfigureAwait(true);
+		await File.WriteAllTextAsync(Path.Combine(home, Program.RcFileName), "alias samplegreet='echo hello'\n").ConfigureAwait(true);
 
 		try
 		{
 			// Act
-			var run = await ShellProcess.RunAsync("greet\nexit\n", environment: new Dictionary<string, string> { ["HOME"] = home }).ConfigureAwait(true);
+			var run = await ShellProcess.RunAsync("samplegreet\nexit\n", environment: new Dictionary<string, string> { ["HOME"] = home }).ConfigureAwait(true);
 
 			// Assert
-			_ = run.Output.Should().Be("$ greet: command not found\n$ ");
+			_ = run.Output.Should().Be("$ samplegreet: command not found\n$ ");
 		}
 		finally
 		{

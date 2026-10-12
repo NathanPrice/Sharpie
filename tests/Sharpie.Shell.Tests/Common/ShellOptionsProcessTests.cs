@@ -92,12 +92,12 @@ public sealed class ShellOptionsProcessTests : IDisposable
 	/// <param name="expectedOutput">What the shell should print.</param>
 	/// <param name="expectedCode">The expected exit code.</param>
 	[Theory]
-	[InlineData(new[] { "-i", "-c", "greet" }, "hello\n", 0)]
-	[InlineData(new[] { "-c", "greet" }, "greet: command not found\n", 127)]
+	[InlineData(new[] { "-i", "-c", "samplegreet" }, "hello\n", 0)]
+	[InlineData(new[] { "-c", "samplegreet" }, "samplegreet: command not found\n", 127)]
 	public async Task Shell_WithCommandOption_RunsStartupFileOnlyWhenInteractive(string[] args, string expectedOutput, int expectedCode)
 	{
 		// Arrange
-		_ = ShellEnvironment.CreateFile(this.home, ".sharpierc", executable: false, "alias greet='echo hello'\n");
+		_ = ShellEnvironment.CreateFile(this.home, ".sharpierc", executable: false, "alias samplegreet='echo hello'\n");
 
 		// Act
 		var run = await ShellProcess.RunAsync(string.Empty, environment: this.HomeEnvironment(), arguments: args).ConfigureAwait(true);
