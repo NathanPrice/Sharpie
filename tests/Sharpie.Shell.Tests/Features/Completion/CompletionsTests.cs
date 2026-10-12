@@ -36,7 +36,7 @@ public sealed class CompletionsTests : IDisposable
 	public void Complete_WithUniqueMatch_ReturnsRestAndSpace(string partial, string expected)
 	{
 		// Act
-		var result = Completions.Complete(partial, Names);
+		var result = Complete(partial);
 
 		// Assert
 		_ = result.Should().Be(expected);
@@ -52,7 +52,7 @@ public sealed class CompletionsTests : IDisposable
 	public void Complete_WithoutUniqueMatch_ReturnsNull(string partial)
 	{
 		// Act
-		var result = Completions.Complete(partial, Names);
+		var result = Complete(partial);
 
 		// Assert
 		_ = result.Should().BeNull();
@@ -68,7 +68,7 @@ public sealed class CompletionsTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.pathFolder, "mytool", executable: true);
 
 		// Act
-		var result = Completions.Complete("myt", Names);
+		var result = Complete("myt");
 
 		// Assert
 		_ = result.Should().Be("ool ");
@@ -84,7 +84,7 @@ public sealed class CompletionsTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.pathFolder, "mytool", executable: false);
 
 		// Act
-		var result = Completions.Complete("myt", Names);
+		var result = Complete("myt");
 
 		// Assert
 		_ = result.Should().BeNull();
@@ -100,7 +100,7 @@ public sealed class CompletionsTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.pathFolder, "echo", executable: true);
 
 		// Act
-		var result = Completions.Complete("ech", Names);
+		var result = Complete("ech");
 
 		// Assert
 		_ = result.Should().Be("o ");
@@ -122,7 +122,7 @@ public sealed class CompletionsTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.pathFolder, "mytool2", executable: true);
 
 		// Act
-		var result = Completions.Complete(partial, Names);
+		var result = Complete(partial);
 
 		// Assert
 		_ = result.Should().Be(expected);
@@ -146,7 +146,7 @@ public sealed class CompletionsTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.pathFolder, "sampletool.bak-2", executable: true);
 
 		// Act
-		var result = Completions.Complete(partial, Names);
+		var result = Complete(partial);
 
 		// Assert
 		_ = result.Should().Be(expected);
@@ -163,7 +163,7 @@ public sealed class CompletionsTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.pathFolder, "exiv2", executable: true);
 
 		// Act
-		var result = Completions.Complete("exi", Names);
+		var result = Complete("exi");
 
 		// Assert
 		_ = result.Should().BeNull();
@@ -215,7 +215,7 @@ public sealed class CompletionsTests : IDisposable
 		Directory.SetCurrentDirectory(folder);
 
 		// Act
-		var result = Completions.Complete(partial, Names);
+		var result = Complete(partial);
 
 		// Assert
 		_ = result.Should().Be(expected);
@@ -241,7 +241,7 @@ public sealed class CompletionsTests : IDisposable
 		Directory.SetCurrentDirectory(folder);
 
 		// Act
-		var result = Completions.Complete(partial, Names);
+		var result = Complete(partial);
 
 		// Assert
 		_ = result.Should().Be(expected);
@@ -265,7 +265,7 @@ public sealed class CompletionsTests : IDisposable
 		Directory.SetCurrentDirectory(folder);
 
 		// Act
-		var result = Completions.Complete(partial, Names);
+		var result = Complete(partial);
 
 		// Assert
 		_ = result.Should().Be(expected);
@@ -295,4 +295,14 @@ public sealed class CompletionsTests : IDisposable
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();
+
+	/// <summary>
+	/// Finds the matches for <paramref name="partial" /> among <see cref="Names" /> and <c>PATH</c>, then works out
+	/// what Tab adds, as the shell does.
+	/// </summary>
+	/// <param name="partial">The text typed before Tab.</param>
+	/// <returns>
+	/// The text Tab adds, or <see langword="null" /> when it adds none.
+	/// </returns>
+	private static string? Complete(string partial) => Completions.Complete(partial, Completions.FindMatches(partial, Names));
 }

@@ -41,7 +41,7 @@ internal static class Completions
 			// Filtered here instead of passing a search pattern, because the pattern would treat * and ? in the typed
 			// word as wildcards.
 			return Directory.EnumerateFileSystemEntries(folder.Length > 0 ? folder : ".")
-				.Where(entry => Path.GetFileName(entry).StartsWith(prefix, StringComparison.Ordinal))
+				.Where(entry => Path.GetFileName(entry.AsSpan()).StartsWith(prefix, StringComparison.Ordinal))
 				.Select(entry => folder + Path.GetFileName(entry) + (Directory.Exists(entry) ? "/" : ""))
 				.Order(StringComparer.Ordinal)
 				.ToList();
@@ -58,23 +58,25 @@ internal static class Completions
 	}
 
 	/// <summary>
-	/// Works out what Tab should add to <paramref name="partial" />.
+	/// Works out what Tab should add to <paramref name="partial" />, from its matches.
 	/// </summary>
 	/// <param name="partial">The text typed so far.</param>
-	/// <param name="names">The builtin command names. Executables on <c>PATH</c> are added to these.</param>
+	/// <param name="matches">The names <see cref="FindMatches" /> found for <paramref name="partial" />.</param>
 	/// <returns>
 	/// The rest of the only matching name followed by a space, or with no space when it's a directory, so the next Tab
-	/// can go on into it. When several names match, the part they all share
-	/// past the last word of <paramref name="partial" />, with no space because the name isn't finished. When they share
-	/// nothing more but the last word is itself one of them, just a space. <see langword="null" /> when nothing matches
-	/// or the matches share nothing more.
+	/// can go on into it. When several names match, the part they all share past the last word of
+	/// <paramref name="partial" />, with no space because the name isn't finished. When they share nothing more but the
+	/// last word is itself one of them, just a space. <see langword="null" /> when nothing matches or the matches share
+	/// nothing more.
 	/// </returns>
-	public static string? Complete(string partial, IEnumerable<string> names)
+	/// <remarks>
+	/// Takes the matches rather than finding them, so Tab, which also lists them, searches <c>PATH</c> only once.
+	/// </remarks>
+	public static string? Complete(string partial, IReadOnlyList<string> matches)
 	{
 		_ = partial.ArgumentNotNull();
-		_ = names.ArgumentNotNull();
+		_ = matches.ArgumentNotNull();
 
-		var matches = FindMatches(partial, names);
 		var typed = partial.Length - (partial.LastIndexOf(' ') + 1);
 
 		switch (matches.Count)

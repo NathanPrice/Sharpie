@@ -73,14 +73,16 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 			return new TabResult(line[..(space + 1)] + shared, null, Bell: false);
 		}
 
-		if (candidates is null && Completions.Complete(line, this.names) is { } rest)
+		var matches = candidates ?? Completions.FindMatches(line, this.names);
+
+		if (candidates is null && Completions.Complete(line, matches) is { } rest)
 		{
 			this.Reset();
 
 			return new TabResult(line + rest, null, Bell: false);
 		}
 
-		if (this.tabbedOnce && (candidates ?? Completions.FindMatches(line, this.names)) is { Count: > 1 } matches)
+		if (this.tabbedOnce && matches.Count > 1)
 		{
 			this.cycle = matches;
 
