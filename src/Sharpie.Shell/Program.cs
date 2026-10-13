@@ -125,6 +125,10 @@ internal static class Program
 	/// </returns>
 	private static int Main(string[] args)
 	{
+		// Windows consoles default to a code page without ❯ and most other non-ASCII characters, and a non-UTF-8 locale
+		// does the same on Unix. Sharpie's window decodes the shell's output as UTF-8.
+		Console.OutputEncoding = Encoding.UTF8;
+
 		if (args is [ShellImport.PrintEnvironmentOption])
 		{
 			ShellImport.PrintEnvironment();

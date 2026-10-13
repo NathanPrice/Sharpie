@@ -51,6 +51,26 @@ public sealed class ShellOptionsProcessTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that the shell writes UTF-8 when the locale names another charset, so the prompt's <c>❯</c> doesn't
+	/// turn into <c>?</c>.
+	/// </summary>
+	/// <remarks>
+	/// A Latin-1 locale fails the same way a Windows console code page does, so the test can run on Linux.
+	/// </remarks>
+	[Fact]
+	public async Task Shell_WithNonUtf8Locale_WritesUtf8()
+	{
+		// Arrange
+		var environment = new Dictionary<string, string> { ["LANG"] = "en_US.ISO-8859-1", ["LC_ALL"] = "en_US.ISO-8859-1" };
+
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, environment: environment, arguments: ["-c", "echo ❯"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("❯\n");
+	}
+
+	/// <summary>
 	/// Checks that command substitution in <c>-c</c> runs nothing, says why, and exits with 2.
 	/// </summary>
 	[Fact]
