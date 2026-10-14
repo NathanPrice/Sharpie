@@ -442,15 +442,15 @@ internal static class Program
 	/// <param name="variables">The shell variables that <c>$NAME</c> expands to.</param>
 	/// <param name="line">The command, with no <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> left in it.</param>
 	/// <returns>
-	/// The command's status: <see cref="ExternalProgram.NotFound" /> when it isn't found, and 1 when a redirect file
-	/// can't be opened.
+	/// The command's status: <see cref="ExternalProgram.NotFound" /> when it isn't found, 1 when a redirect file
+	/// can't be opened, and <see cref="CommandList.UnsupportedStatus" /> when it holds an operator the shell can't run.
 	/// </returns>
 	private static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, IReadOnlyDictionary<string, string> variables, string line)
 	{
 		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(aliases.Expand(CommandLine.Split(line, variables), variables));
 
 		// A trailing & runs an external program in the background. Builtins still run in the foreground.
-		var background = words is [.., "&"];
+		var background = words is [.., { IsOperator: true, Text: "&" }];
 
 		if (background)
 		{
@@ -462,14 +462,27 @@ internal static class Program
 			return 0;
 		}
 
-		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
-		if (Array.TrueForAll(words, DeclareCommand.IsAssignment))
+		// Redirects and & aren't applied to a pipeline.
+		var stages = CommandLine.SplitPipeline(words);
+
+		// Operators the shell can't run yet, like < or 2>&1, are refused rather than passed on as arguments.
+		if (stages is [])
 		{
-			return commands["declare"].Run(words);
+			var unusable = Array.Find(words, word => word is { IsOperator: true, Text: not "|" }).Text ?? "|";
+
+			Console.Error.WriteLine($"sharpie: can't use '{unusable}' here");
+
+			return CommandList.UnsupportedStatus;
 		}
 
-		var commandName = words[0];
-		var arguments = words[1..];
+		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
+		if (stages is [var only] && Array.TrueForAll(only, DeclareCommand.IsAssignment))
+		{
+			return commands["declare"].Run(only);
+		}
+
+		var commandName = stages[0][0];
+		var arguments = stages[0][1..];
 
 		using var output = OpenRedirect(outputPath, appendOutput, out var outputFailed);
 
@@ -480,15 +493,8 @@ internal static class Program
 
 		using var error = OpenRedirect(errorPath, appendError, out var errorFailed);
 
-		if (errorFailed)
-		{
-			return 1;
-		}
-
-		// Redirects and & aren't applied to a pipeline.
-		var stages = CommandLine.SplitPipeline(words);
-
-		return stages.Length > 1 ? RunPipeline(commands, stages)
+		return errorFailed ? 1
+			: stages.Length > 1 ? RunPipeline(commands, stages)
 			: commands.TryGetValue(commandName, out var command) ? RunBuiltin(command, arguments, output, error)
 			: RunProgram(commandName, arguments, output, error, background);
 

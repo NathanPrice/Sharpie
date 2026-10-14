@@ -50,9 +50,9 @@ internal readonly record struct Token(int Start, int Length, TokenKind Kind);
 /// </summary>
 internal static class Highlighter
 {
-	// The characters CommandLine.Split treats specially in a word with no spaces. A word without any of them is
-	// already what Split would give back.
-	private static readonly SearchValues<char> ParserCharacters = SearchValues.Create("\\'\"#");
+	// The characters CommandLine.Split treats specially in a word with no spaces, operators included. A word without
+	// any of them is already what Split would give back.
+	private static readonly SearchValues<char> ParserCharacters = SearchValues.Create("\\'\"#|&;<>()");
 
 	/// <summary>
 	/// Finds the parts of <paramref name="line" /> to color.
@@ -85,9 +85,10 @@ internal static class Highlighter
 		foreach (var (start, end, strings) in SplitRaw(line))
 		{
 			// Unquoted by the parser itself, so a quoted word is judged by what the shell will actually run.
-			var value = line.AsSpan(start, end - start).ContainsAny(ParserCharacters)
-				? CommandLine.Split(line[start..end]).FirstOrDefault() ?? string.Empty
-				: line[start..end];
+			var word = !line.AsSpan(start, end - start).ContainsAny(ParserCharacters) ? new Word(line[start..end], IsOperator: false)
+				: CommandLine.Split(line[start..end]) is [var first] ? first
+				: new Word(string.Empty, IsOperator: false);
+			var value = word.Text;
 			TokenKind? kind;
 
 			if (afterRedirect)
@@ -96,7 +97,7 @@ internal static class Highlighter
 				afterRedirect = false;
 			}
 			// The same operators CommandLine.SplitRedirect takes out.
-			else if (value is ">" or "1>" or ">>" or "1>>" or "2>" or "2>>")
+			else if (word is { IsOperator: true, Text: ">" or "1>" or ">>" or "1>>" or "2>" or "2>>" })
 			{
 				kind = TokenKind.Redirect;
 				afterRedirect = true;
@@ -141,12 +142,12 @@ internal static class Highlighter
 	/// </summary>
 	/// <param name="line">The command line typed so far.</param>
 	/// <returns>
-	/// One entry per word, with its quoted parts as <see cref="TokenKind.Quoted" /> tokens, or <see langword="null" />
-	/// for a word with none. A quote that is never closed runs to the end of the line.
+	/// One entry per word and per operator, with its quoted parts as <see cref="TokenKind.Quoted" /> tokens, or
+	/// <see langword="null" /> for a word with none. A quote that is never closed runs to the end of the line.
 	/// </returns>
 	/// <remarks>
-	/// <see cref="CommandLine.Split" /> drops positions, which coloring needs, so this walks the same quote and
-	/// backslash rules only to find the boundaries.
+	/// <see cref="CommandLine.Split" /> drops positions, which coloring needs, so this walks the same quote,
+	/// backslash and operator rules only to find the boundaries.
 	/// </remarks>
 	private static List<(int Start, int End, List<Token>? Strings)> SplitRaw(string line)
 	{
@@ -178,6 +179,23 @@ internal static class Highlighter
 					strings = null;
 					start = -1;
 				}
+
+				continue;
+			}
+
+			if (quote is null && CommandLine.OperatorAt(line, index) is { } typed)
+			{
+				var number = start >= 0 && CommandLine.IsStreamNumber(line.AsSpan(start, index - start), typed);
+
+				if (start >= 0 && !number)
+				{
+					words.Add((start, index, strings));
+				}
+
+				words.Add((number ? start : index, index + typed.Length, null));
+				strings = null;
+				start = -1;
+				index += typed.Length - 1;
 
 				continue;
 			}

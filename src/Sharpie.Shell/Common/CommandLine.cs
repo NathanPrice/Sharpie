@@ -1,7 +1,17 @@
+using System.Buffers;
 using System.Text;
 using DotNetTips.Spargine.Core;
 
 namespace Sharpie.Shell.Common;
+
+/// <summary>
+/// A word of a command line, or an operator such as <c>|</c> or <c>&gt;</c>.
+/// </summary>
+/// <param name="Text">The word with its quotes removed, or the operator as typed.</param>
+/// <param name="IsOperator">
+/// <see langword="true" /> for an operator. A quoted or escaped one, like <c>'|'</c>, is a plain word.
+/// </param>
+internal readonly record struct Word(string Text, bool IsOperator);
 
 /// <summary>
 /// Breaks a typed command line into words the way a POSIX shell does.
@@ -9,18 +19,35 @@ namespace Sharpie.Shell.Common;
 internal static class CommandLine
 {
 	/// <summary>
-	/// Splits <paramref name="line" /> into words on spaces and tabs, keeping everything inside single or double
-	/// quotes literally.
+	/// The operators bash's parser reads, longest first so that <c>&gt;&gt;</c> isn't read as two <c>&gt;</c>.
+	/// </summary>
+	private static readonly string[] Operators =
+		["<<<", "<<-", "&>>", ";;&", "&&", "||", ";;", ";&", "|&", "<<", ">>", "<&", ">&", "<>", ">|", "&>", "|", "&", ";", "<", ">", "(", ")"];
+
+	/// <summary>
+	/// The first characters of <see cref="Operators" />.
+	/// </summary>
+	private static readonly SearchValues<char> OperatorStarts = SearchValues.Create("|&;<>()");
+
+	/// <summary>
+	/// Splits <paramref name="line" /> into words on spaces and tabs and around operators, keeping everything inside
+	/// single or double quotes literally.
 	/// </summary>
 	/// <param name="line">The command line as the user typed it.</param>
 	/// <param name="variables">
 	/// The shell variables that <c>$NAME</c> expands from, or <see langword="null" /> to leave every <c>$</c> as typed.
 	/// </param>
 	/// <returns>
-	/// The command name followed by its arguments, with the quote characters removed. Quoted and unquoted text that
-	/// touch with no space between join into one word. An empty array means the line was blank.
+	/// The command name followed by its arguments, with the quote characters removed, and each operator as its own
+	/// <see cref="Word" />. Quoted and unquoted text that touch with no space between join into one word. An empty
+	/// array means the line was blank.
 	/// </returns>
 	/// <remarks>
+	/// An unquoted operator from <see cref="Operators" /> ends the word before it even with no space, so
+	/// <c>ls|wc</c> gives <c>ls</c>, <c>|</c> and <c>wc</c>. Quoting or a backslash turns an operator into plain text,
+	/// so <c>'|'</c> and <c>\&gt;</c> are ordinary words. Digits that make up the whole word right before a redirect
+	/// join it, as in <c>2&gt;</c>, and <c>2&gt;&amp;1</c> gives <c>2&gt;&amp;</c> and the word <c>1</c>, as in bash.
+	/// <para>
 	/// Inside one kind of quote the other kind is an ordinary character, so <c>"it's"</c> gives <c>it's</c>.
 	/// Outside quotes a backslash makes the next character literal and is itself dropped, so <c>a\ b</c> gives
 	/// <c>a b</c>. Inside double quotes a backslash only escapes <c>"</c>, <c>\</c>, <c>$</c>, <c>`</c> and a
@@ -28,6 +55,7 @@ internal static class CommandLine
 	/// backslashes are always kept as typed. A quote that is never
 	/// closed takes the rest of the line literally, and a backslash at the very end is kept as is. A real shell
 	/// would ask for another line in both cases.
+	/// </para>
 	/// <para>
 	/// An unquoted <c>#</c> at the start of a word begins a comment, which runs to the end of the line.
 	/// </para>
@@ -40,11 +68,11 @@ internal static class CommandLine
 	/// aren't split on spaces.
 	/// </para>
 	/// </remarks>
-	public static string[] Split(string line, IReadOnlyDictionary<string, string>? variables = null)
+	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null)
 	{
 		_ = line.ArgumentNotNull();
 
-		var words = new List<string>();
+		var words = new List<Word>();
 		var word = new StringBuilder();
 
 		// The quote character that's currently open, or null outside quotes.
@@ -56,9 +84,17 @@ internal static class CommandLine
 		// Tracked apart from word.Length because '' on its own is still an argument, just an empty one.
 		var hasWord = false;
 
+		// Where the current word starts in the line, so digits typed right before a redirect can be told apart.
+		var wordStart = 0;
+
 		for (var index = 0; index < line.Length; index++)
 		{
 			var character = line[index];
+
+			if (!hasWord)
+			{
+				wordStart = index;
+			}
 
 			if (escaped)
 			{
@@ -102,15 +138,17 @@ internal static class CommandLine
 							{
 								quote = null;
 							}
+							else if (quote is null && OperatorAt(line, index) is { } typed)
+							{
+								var stream = hasWord && IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
+
+								EndWord();
+								words.Add(new Word(stream + typed, IsOperator: true));
+								index += typed.Length - 1;
+							}
 							else if (quote is null && character is ' ' or '\t')
 							{
-								if (hasWord)
-								{
-									words.Add(word.ToString());
-									_ = word.Clear();
-
-									hasWord = false;
-								}
+								EndWord();
 							}
 							else
 							{
@@ -130,13 +168,75 @@ internal static class CommandLine
 			_ = word.Append('\\');
 		}
 
-		if (hasWord)
-		{
-			words.Add(word.ToString());
-		}
+		EndWord();
 
 		return [.. words];
+
+		// Gives the word read so far and starts a new one.
+		string TakeWord()
+		{
+			var text = word.ToString();
+
+			_ = word.Clear();
+			hasWord = false;
+
+			return text;
+		}
+
+		// Adds the word read so far, if there is one.
+		void EndWord()
+		{
+			if (hasWord)
+			{
+				words.Add(new Word(TakeWord(), IsOperator: false));
+			}
+		}
 	}
+
+	/// <summary>
+	/// Reads the operator that starts at <paramref name="index" />, which the caller has checked is outside quotes and
+	/// not escaped.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="index">The position to look at.</param>
+	/// <returns>
+	/// The longest operator in <see cref="Operators" /> that starts there, or <see langword="null" /> when none does.
+	/// </returns>
+	internal static string? OperatorAt(string line, int index)
+	{
+		if (!OperatorStarts.Contains(line.ArgumentNotNull()[index]))
+		{
+			return null;
+		}
+
+		foreach (var candidate in Operators)
+		{
+			if (line.AsSpan(index).StartsWith(candidate, StringComparison.Ordinal))
+			{
+				return candidate;
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Checks whether <paramref name="typed" />, the raw text of the word just before <paramref name="typedOperator" />,
+	/// names the stream that the redirect works on, as the <c>2</c> in <c>2&gt;</c> does.
+	/// </summary>
+	/// <param name="typed">The word's characters as typed, quotes and backslashes included.</param>
+	/// <param name="typedOperator">The operator right after the word.</param>
+	/// <returns>
+	/// <see langword="true" /> when <paramref name="typedOperator" /> starts with <c>&lt;</c> or <c>&gt;</c> and
+	/// <paramref name="typed" /> is only digits, so the digits belong to the operator.
+	/// </returns>
+	/// <remarks>
+	/// Bash reads such digits as an IO_NUMBER only when they are the whole word and unquoted, so <c>a2&gt;f</c>,
+	/// <c>'2'&gt;f</c> and <c>\2&gt;f</c> keep <c>2</c> as part of an argument. Checking the raw text covers the
+	/// quoted and escaped cases.
+	/// </remarks>
+	internal static bool IsStreamNumber(ReadOnlySpan<char> typed, string typedOperator) =>
+		typed.Length > 0 && typedOperator.ArgumentNotNull()[0] is '<' or '>' && !typed.ContainsAnyExceptInRange('0', '9');
 
 	/// <summary>
 	/// Reads the <c>$NAME</c>, <c>${NAME}</c> or <c>$?</c> that starts at the <c>$</c> at <paramref name="index" />.
@@ -223,20 +323,16 @@ internal static class CommandLine
 	/// <returns>
 	/// The words left for the command, plus the file name for each stream. A path is <see langword="null" /> when
 	/// that stream isn't redirected. <c>AppendOutput</c> and <c>AppendError</c> are <see langword="true" /> when that
-	/// stream should go on the end of its file instead of replacing it. An operator with no file name after it stays in the words as
-	/// plain text. If the same stream is redirected twice, the last operator and file name win.
+	/// stream should go on the end of its file instead of replacing it. An operator with no file name after it, or
+	/// another operator in its place, stays in the words. If the same stream is redirected twice, the last operator
+	/// and file name win.
 	/// </returns>
-	/// <remarks>
-	/// This works on words that are already split, so a quoted <c>'&gt;'</c> also counts as a redirect, and
-	/// <c>echo hi&gt;file</c> with no spaces isn't seen. Fixing both means having <see cref="Split" /> return
-	/// operators as their own tokens. The test inputs always put spaces around the operator.
-	/// </remarks>
-	public static (string[] Words, string? OutputPath, bool AppendOutput, string? ErrorPath, bool AppendError)
-		SplitRedirect(string[] words)
+	public static (Word[] Words, string? OutputPath, bool AppendOutput, string? ErrorPath, bool AppendError)
+		SplitRedirect(Word[] words)
 	{
 		_ = words.ArgumentNotNull();
 
-		var remaining = new List<string>();
+		var remaining = new List<Word>();
 		string? outputPath = null;
 		var appendOutput = false;
 		string? errorPath = null;
@@ -244,27 +340,27 @@ internal static class CommandLine
 
 		for (var index = 0; index < words.Length; index++)
 		{
-			var hasPath = index + 1 < words.Length;
+			var hasPath = index + 1 < words.Length && !words[index + 1].IsOperator;
 
 			switch (hasPath)
 			{
-				case true when words[index] is ">" or "1>":
-					outputPath = words[++index];
+				case true when words[index] is { IsOperator: true, Text: ">" or "1>" }:
+					outputPath = words[++index].Text;
 					appendOutput = false;
 
 					break;
-				case true when words[index] is ">>" or "1>>":
-					outputPath = words[++index];
+				case true when words[index] is { IsOperator: true, Text: ">>" or "1>>" }:
+					outputPath = words[++index].Text;
 					appendOutput = true;
 
 					break;
-				case true when words[index] == "2>":
-					errorPath = words[++index];
+				case true when words[index] is { IsOperator: true, Text: "2>" }:
+					errorPath = words[++index].Text;
 					appendError = false;
 
 					break;
-				case true when words[index] == "2>>":
-					errorPath = words[++index];
+				case true when words[index] is { IsOperator: true, Text: "2>>" }:
+					errorPath = words[++index].Text;
 					appendError = true;
 
 					break;
@@ -279,18 +375,15 @@ internal static class CommandLine
 	}
 
 	/// <summary>
-	/// Splits <paramref name="words" /> at every <c>|</c> into the commands of a pipeline.
+	/// Splits <paramref name="words" /> at every <c>|</c> operator into the commands of a pipeline.
 	/// </summary>
-	/// <param name="words">The words from <see cref="Split" />.</param>
+	/// <param name="words">The words from <see cref="Split" />, with redirects already taken out.</param>
 	/// <returns>
 	/// Each command's name followed by its arguments, in order. With no <c>|</c> this is one command. An empty array
-	/// means some command was empty, as in <c>a |</c> or <c>a | | b</c>, and the line isn't a pipeline.
+	/// means the words can't run: some command was empty, as in <c>a |</c> or <c>a | | b</c>, or another operator was
+	/// left over, such as <c>&lt;</c> or a <c>&gt;</c> with no file name.
 	/// </returns>
-	/// <remarks>
-	/// Like <see cref="SplitRedirect" />, this works on words that are already split, so a quoted <c>'|'</c> also
-	/// counts as a bar.
-	/// </remarks>
-	public static string[][] SplitPipeline(string[] words)
+	public static string[][] SplitPipeline(Word[] words)
 	{
 		_ = words.ArgumentNotNull();
 
@@ -299,8 +392,13 @@ internal static class CommandLine
 
 		for (var index = 0; index <= words.Length; index++)
 		{
-			if (index != words.Length && words[index] != "|")
+			if (index != words.Length && words[index] is not { IsOperator: true, Text: "|" })
 			{
+				if (words[index].IsOperator)
+				{
+					return [];
+				}
+
 				continue;
 			}
 
@@ -309,7 +407,7 @@ internal static class CommandLine
 				return [];
 			}
 
-			stages.Add(words[start..index]);
+			stages.Add([.. words[start..index].Select(word => word.Text)]);
 			start = index + 1;
 		}
 
@@ -323,8 +421,8 @@ internal static class CommandLine
 	/// <param name="line">The line the user entered.</param>
 	/// <returns>
 	/// The words, starting with <c>man</c> or <c>dman</c>, or <see langword="null" /> when the line is anything else,
-	/// including either command with no page, with a redirect or pipe, or with other commands after <c>;</c>,
-	/// <c>&amp;&amp;</c> or <c>||</c>. The shell runs those itself, and the page prints as text.
+	/// including either command with no page, with a redirect, pipe or other operator, or with other commands after
+	/// <c>;</c>, <c>&amp;&amp;</c> or <c>||</c>. The shell runs those itself, and the page prints as text.
 	/// </returns>
 	public static string[]? PagedCommand(string line)
 	{
@@ -335,8 +433,9 @@ internal static class CommandLine
 
 		var (words, outputPath, _, errorPath, _) = SplitRedirect(Split(line));
 
-		return words is ["man" or "dman", _, ..] && outputPath is null && errorPath is null && !words.Contains("|")
-			? words
+		return words is [{ IsOperator: false, Text: "man" or "dman" }, _, ..] && outputPath is null && errorPath is null
+			&& !Array.Exists(words, word => word.IsOperator)
+			? [.. words.Select(word => word.Text)]
 			: null;
 	}
 }

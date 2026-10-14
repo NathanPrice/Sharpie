@@ -209,7 +209,7 @@ internal static class ShellImport
 
 		var used = new HashSet<string>(StringComparer.Ordinal);
 
-		while (CommandLine.Split(value) is [var command, ..])
+		while (CommandLine.Split(value) is [{ Text: var command }, ..])
 		{
 			if (builtins.Contains(command))
 			{
@@ -291,7 +291,7 @@ internal static class ShellImport
 				definition = definition["alias ".Length..];
 			}
 
-			if (definition.Split('=', 2) is [{ Length: > 0 } name, var quoted] && CommandLine.Split(quoted) is [var value])
+			if (definition.Split('=', 2) is [{ Length: > 0 } name, var quoted] && CommandLine.Split(quoted) is [{ IsOperator: false, Text: var value }])
 			{
 				aliases.Add((name, value));
 			}

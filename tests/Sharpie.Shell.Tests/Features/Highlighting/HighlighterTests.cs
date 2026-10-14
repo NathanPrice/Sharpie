@@ -146,7 +146,8 @@ public sealed class HighlighterTests : IDisposable
 	/// <summary>
 	/// Checks every token of lines that test the edges: a redirect target that is a new file, the word after a redirect
 	/// target, paths starting with <c>.</c> or <c>~</c>, <c>~</c> as home, escapes inside and outside quotes, quotes that
-	/// are never closed or hold nothing, and a target no file system allows.
+	/// are never closed or hold nothing, a target no file system allows, operators typed with no spaces around them, and
+	/// a quoted <c>&gt;</c>, which isn't a redirect.
 	/// </summary>
 	/// <param name="line">The typed line.</param>
 	/// <param name="expected">The tokens as <c>start,length,kind</c>, separated by <c>;</c>.</param>
@@ -169,6 +170,13 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("echo 'a'\"b", "0,4,Command;5,3,Quoted;8,2,Quoted")]
 	[InlineData("echo #note", "0,4,Command")]
 	[InlineData("echo > #x", "0,4,Command;5,1,Redirect;7,2,MissingPath")]
+	[InlineData("echo hi>out.txt", "0,4,Command;7,1,Redirect")]
+	[InlineData("echo hi 2>out.txt", "0,4,Command;8,2,Redirect")]
+	[InlineData("echo a2>out.txt", "0,4,Command;7,1,Redirect")]
+	[InlineData("echo hi>nope/x", "0,4,Command;7,1,Redirect;8,6,MissingPath")]
+	[InlineData("echo '>' x", "0,4,Command;5,3,Quoted")]
+	[InlineData("prog|prog", "0,4,Command")]
+	[InlineData("2>out.txt", "0,2,Redirect")]
 	public void Highlight_EdgeCaseLine_GivesExactTokens(string line, string expected)
 	{
 		// Arrange

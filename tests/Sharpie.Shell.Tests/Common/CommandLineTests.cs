@@ -59,7 +59,7 @@ public sealed class CommandLineTests
 		var words = CommandLine.Split(line);
 
 		// Assert
-		_ = words.Should().Equal(expected);
+		_ = words.Select(word => word.Text).Should().Equal(expected);
 	}
 
 	/// <summary>
@@ -99,7 +99,7 @@ public sealed class CommandLineTests
 		var words = CommandLine.Split(line, variables);
 
 		// Assert
-		_ = words.Should().Equal(expected);
+		_ = words.Select(word => word.Text).Should().Equal(expected);
 	}
 
 	/// <summary>
@@ -123,7 +123,7 @@ public sealed class CommandLineTests
 		var words = CommandLine.Split(line);
 
 		// Assert
-		_ = words.Should().Equal(expected);
+		_ = words.Select(word => word.Text).Should().Equal(expected);
 	}
 
 	/// <summary>
@@ -144,7 +144,7 @@ public sealed class CommandLineTests
 			var words = CommandLine.Split(line, new Dictionary<string, string>());
 
 			// Assert
-			_ = words.Should().Equal("echo", "from-env");
+			_ = words.Select(word => word.Text).Should().Equal("echo", "from-env");
 		}
 		finally
 		{
@@ -167,7 +167,7 @@ public sealed class CommandLineTests
 			var words = CommandLine.Split("echo $SHARPIE_SAMPLE_SHADOWED", new Dictionary<string, string> { ["SHARPIE_SAMPLE_SHADOWED"] = "from-shell" });
 
 			// Assert
-			_ = words.Should().Equal("echo", "from-shell");
+			_ = words.Select(word => word.Text).Should().Equal("echo", "from-shell");
 		}
 		finally
 		{
@@ -193,23 +193,98 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
-	/// Checks that <see cref="CommandLine.SplitRedirect" /> takes <c>&gt;</c> or <c>1&gt;</c> and the file name after
-	/// it out of the words.
+	/// Checks that <see cref="CommandLine.Split" /> gives each unquoted operator as its own token, even with no space
+	/// around it, and that digits make up a redirect's stream number only when they are the whole word.
 	/// </summary>
-	/// <param name="words">The split command line.</param>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="expected">The words it should give, with each operator written as <c>[op]</c>.</param>
+	[Theory]
+	[InlineData("ls|wc -l", new[] { "ls", "[|]", "wc", "-l" })]
+	[InlineData("echo hi>out", new[] { "echo", "hi", "[>]", "out" })]
+	[InlineData("sleep 5&", new[] { "sleep", "5", "[&]" })]
+	[InlineData("a&&b||c;d", new[] { "a", "[&&]", "b", "[||]", "c", "[;]", "d" })]
+	[InlineData("cat<in>>out", new[] { "cat", "[<]", "in", "[>>]", "out" })]
+	[InlineData("cmd 2>err", new[] { "cmd", "[2>]", "err" })]
+	[InlineData("cmd 1>>log", new[] { "cmd", "[1>>]", "log" })]
+	[InlineData("cmd 2>&1", new[] { "cmd", "[2>&]", "1" })]
+	[InlineData("echo a2>f", new[] { "echo", "a2", "[>]", "f" })]
+	[InlineData(@"echo \2>f", new[] { "echo", "2", "[>]", "f" })]
+	[InlineData("echo '2'>f", new[] { "echo", "2", "[>]", "f" })]
+	[InlineData("echo 2 >f", new[] { "echo", "2", "[>]", "f" })]
+	[InlineData("a|&b", new[] { "a", "[|&]", "b" })]
+	[InlineData("cmd &>all", new[] { "cmd", "[&>]", "all" })]
+	[InlineData("echo a;#c", new[] { "echo", "a", "[;]" })]
+	[InlineData("(echo)", new[] { "[(]", "echo", "[)]" })]
+	public void Split_WithOperators_ReturnsOperatorTokens(string line, string[] expected)
+	{
+		// Act
+		var words = CommandLine.Split(line);
+
+		// Assert
+		_ = words.Select(word => word.IsOperator ? $"[{word.Text}]" : word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that only a word of digits before a redirect is its stream number, and that no text at all isn't one.
+	/// </summary>
+	/// <param name="typed">The word's raw text.</param>
+	/// <param name="typedOperator">The operator after it.</param>
+	/// <param name="expected">Whether the digits belong to the operator.</param>
+	[Theory]
+	[InlineData("2", ">", true)]
+	[InlineData("12", "<", true)]
+	[InlineData("", ">", false)]
+	[InlineData("2", "|", false)]
+	[InlineData("2a", ">", false)]
+	public void IsStreamNumber_WithWord_ReturnsWhetherDigitsJoinOperator(string typed, string typedOperator, bool expected)
+	{
+		// Act
+		var result = CommandLine.IsStreamNumber(typed, typedOperator);
+
+		// Assert
+		_ = result.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that a quoted or escaped operator is a plain word, not an operator.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="expected">The words it should give, all plain.</param>
+	[Theory]
+	[InlineData("echo '|'", new[] { "echo", "|" })]
+	[InlineData("echo \"&&\"", new[] { "echo", "&&" })]
+	[InlineData(@"echo \>", new[] { "echo", ">" })]
+	[InlineData("echo 'a|b'", new[] { "echo", "a|b" })]
+	[InlineData("echo a'>'b", new[] { "echo", "a>b" })]
+	public void Split_WithQuotedOperators_ReturnsPlainWords(string line, string[] expected)
+	{
+		// Act
+		var words = CommandLine.Split(line);
+
+		// Assert
+		_ = words.Should().OnlyContain(word => !word.IsOperator);
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.SplitRedirect" /> takes <c>&gt;</c> or <c>1&gt;</c> and the file name after
+	/// it out of the words, with or without spaces around the operator.
+	/// </summary>
+	/// <param name="line">The command line.</param>
 	/// <param name="expectedWords">The words that should be left for the command.</param>
 	/// <param name="expectedPath">The file name that should be returned.</param>
 	[Theory]
-	[InlineData(new[] { "echo", "hi", ">", "out.txt" }, new[] { "echo", "hi" }, "out.txt")]
-	[InlineData(new[] { "echo", "hi", "1>", "out.txt" }, new[] { "echo", "hi" }, "out.txt")]
-	[InlineData(new[] { "ls", "/tmp", ">", "/tmp/foo/baz.md" }, new[] { "ls", "/tmp" }, "/tmp/foo/baz.md")]
-	public void SplitRedirect_WithOperator_ReturnsWordsAndPath(string[] words, string[] expectedWords, string expectedPath)
+	[InlineData("echo hi > out.txt", new[] { "echo", "hi" }, "out.txt")]
+	[InlineData("echo hi 1> out.txt", new[] { "echo", "hi" }, "out.txt")]
+	[InlineData("echo hi>out.txt", new[] { "echo", "hi" }, "out.txt")]
+	[InlineData("ls /tmp > /tmp/foo/baz.md", new[] { "ls", "/tmp" }, "/tmp/foo/baz.md")]
+	public void SplitRedirect_WithOperator_ReturnsWordsAndPath(string line, string[] expectedWords, string expectedPath)
 	{
 		// Act
-		var (result, path, append, errorPath, _) = CommandLine.SplitRedirect(words);
+		var (result, path, append, errorPath, _) = CommandLine.SplitRedirect(CommandLine.Split(line));
 
 		// Assert
-		_ = result.Should().Equal(expectedWords);
+		_ = result.Select(word => word.Text).Should().Equal(expectedWords);
 		_ = path.Should().Be(expectedPath);
 		_ = append.Should().BeFalse();
 		_ = errorPath.Should().BeNull();
@@ -219,17 +294,18 @@ public sealed class CommandLineTests
 	/// Checks that <c>&gt;&gt;</c> and <c>1&gt;&gt;</c> are taken out of the words with their file name and ask for
 	/// standard output to be appended.
 	/// </summary>
-	/// <param name="operatorText">The append operator to use.</param>
+	/// <param name="line">The command line.</param>
 	[Theory]
-	[InlineData(">>")]
-	[InlineData("1>>")]
-	public void SplitRedirect_WithAppendOperator_ReturnsPathAndAppend(string operatorText)
+	[InlineData("echo hi >> out.md")]
+	[InlineData("echo hi 1>> out.md")]
+	[InlineData("echo hi 1>>out.md")]
+	public void SplitRedirect_WithAppendOperator_ReturnsPathAndAppend(string line)
 	{
 		// Act
-		var (result, path, append, errorPath, _) = CommandLine.SplitRedirect(["echo", "hi", operatorText, "out.md"]);
+		var (result, path, append, errorPath, _) = CommandLine.SplitRedirect(CommandLine.Split(line));
 
 		// Assert
-		_ = result.Should().Equal("echo", "hi");
+		_ = result.Select(word => word.Text).Should().Equal("echo", "hi");
 		_ = path.Should().Be("out.md");
 		_ = append.Should().BeTrue();
 		_ = errorPath.Should().BeNull();
@@ -243,7 +319,7 @@ public sealed class CommandLineTests
 	public void SplitRedirect_WithAppendThenWrite_LastOperatorWins()
 	{
 		// Act
-		var (_, path, append, _, _) = CommandLine.SplitRedirect(["echo", "hi", ">>", "a.md", ">", "b.md"]);
+		var (_, path, append, _, _) = CommandLine.SplitRedirect(CommandLine.Split("echo hi >> a.md > b.md"));
 
 		// Assert
 		_ = path.Should().Be("b.md");
@@ -254,14 +330,17 @@ public sealed class CommandLineTests
 	/// Checks that <see cref="CommandLine.SplitRedirect" /> takes <c>2&gt;</c> and its file name out of the words
 	/// and leaves standard output alone.
 	/// </summary>
-	[Fact]
-	public void SplitRedirect_WithErrorOperator_ReturnsErrorPath()
+	/// <param name="line">The command line.</param>
+	[Theory]
+	[InlineData("cat a nonexistent 2> err.md")]
+	[InlineData("cat a nonexistent 2>err.md")]
+	public void SplitRedirect_WithErrorOperator_ReturnsErrorPath(string line)
 	{
 		// Act
-		var (result, path, _, errorPath, errorAppend) = CommandLine.SplitRedirect(["cat", "a", "nonexistent", "2>", "err.md"]);
+		var (result, path, _, errorPath, errorAppend) = CommandLine.SplitRedirect(CommandLine.Split(line));
 
 		// Assert
-		_ = result.Should().Equal("cat", "a", "nonexistent");
+		_ = result.Select(word => word.Text).Should().Equal("cat", "a", "nonexistent");
 		_ = path.Should().BeNull();
 		_ = errorPath.Should().Be("err.md");
 		_ = errorAppend.Should().BeFalse();
@@ -271,15 +350,17 @@ public sealed class CommandLineTests
 	/// Checks that <c>2&gt;&gt;</c> is taken out of the words with its file name and asks for standard error to be
 	/// appended, leaving standard output alone.
 	/// </summary>
-	[Fact]
-	public void SplitRedirect_WithErrorAppendOperator_ReturnsErrorPathAndAppend()
+	/// <param name="line">The command line.</param>
+	[Theory]
+	[InlineData("cat nonexistent 2>> err.md")]
+	[InlineData("cat nonexistent 2>>err.md")]
+	public void SplitRedirect_WithErrorAppendOperator_ReturnsErrorPathAndAppend(string line)
 	{
 		// Act
-		var (result, path, append, errorPath, errorAppend) =
-			CommandLine.SplitRedirect(["cat", "nonexistent", "2>>", "err.md"]);
+		var (result, path, append, errorPath, errorAppend) = CommandLine.SplitRedirect(CommandLine.Split(line));
 
 		// Assert
-		_ = result.Should().Equal("cat", "nonexistent");
+		_ = result.Select(word => word.Text).Should().Equal("cat", "nonexistent");
 		_ = path.Should().BeNull();
 		_ = append.Should().BeFalse();
 		_ = errorPath.Should().Be("err.md");
@@ -293,26 +374,33 @@ public sealed class CommandLineTests
 	public void SplitRedirect_WithBothOperators_ReturnsBothPaths()
 	{
 		// Act
-		var (result, path, _, errorPath, _) = CommandLine.SplitRedirect(["ls", ">", "out.md", "2>", "err.md"]);
+		var (result, path, _, errorPath, _) = CommandLine.SplitRedirect(CommandLine.Split("ls > out.md 2> err.md"));
 
 		// Assert
-		_ = result.Should().Equal("ls");
+		_ = result.Select(word => word.Text).Should().Equal("ls");
 		_ = path.Should().Be("out.md");
 		_ = errorPath.Should().Be("err.md");
 	}
 
 	/// <summary>
-	/// Checks that words with no operator, or an operator with no file name after it, come back unchanged.
+	/// Checks that words with no redirect come back unchanged: no operator, a quoted one, an operator with no file
+	/// name after it, or one followed by another operator instead of a file name.
 	/// </summary>
-	/// <param name="words">The split command line.</param>
+	/// <param name="line">The command line.</param>
 	[Theory]
-	[InlineData([new[] { "echo", "hi" }])]
-	[InlineData([new[] { "echo", "hi", ">" }])]
-	[InlineData([new[] { "echo", "hi", "2>" }])]
-	[InlineData([new[] { "echo", "hi", ">>" }])]
-	[InlineData([new[] { "echo", "hi", "2>>" }])]
-	public void SplitRedirect_WithoutRedirect_ReturnsWordsUnchanged(string[] words)
+	[InlineData("echo hi")]
+	[InlineData("echo hi >")]
+	[InlineData("echo hi 2>")]
+	[InlineData("echo hi >>")]
+	[InlineData("echo hi 2>>")]
+	[InlineData("echo hi '>' out.md")]
+	[InlineData(@"echo hi \> out.md")]
+	[InlineData("echo hi > | wc")]
+	public void SplitRedirect_WithoutRedirect_ReturnsWordsUnchanged(string line)
 	{
+		// Arrange
+		var words = CommandLine.Split(line);
+
 		// Act
 		var (result, path, append, errorPath, errorAppend) = CommandLine.SplitRedirect(words);
 
@@ -325,22 +413,26 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
-	/// Checks that <see cref="CommandLine.SplitPipeline" /> splits at every <c>|</c>, and gives an empty array when a
-	/// command between bars is missing.
+	/// Checks that <see cref="CommandLine.SplitPipeline" /> splits at every <c>|</c> operator, and gives an empty
+	/// array when a command between bars is missing or another operator is left over.
 	/// </summary>
-	/// <param name="line">The words joined by spaces.</param>
+	/// <param name="line">The command line.</param>
 	/// <param name="expected">The stages, each one's words joined by spaces.</param>
 	[Theory]
 	[InlineData("ls -la", new[] { "ls -la" })]
 	[InlineData("cat f | wc", new[] { "cat f", "wc" })]
+	[InlineData("cat f|wc", new[] { "cat f", "wc" })]
 	[InlineData("cat f | head -n 3 | wc", new[] { "cat f", "head -n 3", "wc" })]
+	[InlineData("echo '|' x", new[] { "echo | x" })]
 	[InlineData("cat f |", new string[0])]
 	[InlineData("| wc", new string[0])]
 	[InlineData("cat f | | wc", new string[0])]
+	[InlineData("cat f < x", new string[0])]
+	[InlineData("cat f | wc >", new string[0])]
 	public void SplitPipeline_WithBars_ReturnsStages(string line, string[] expected)
 	{
 		// Act
-		var result = CommandLine.SplitPipeline(line.Split(' '));
+		var result = CommandLine.SplitPipeline(CommandLine.Split(line));
 
 		// Assert
 		_ = result.Select(stage => string.Join(' ', stage)).Should().Equal(expected);
@@ -375,6 +467,13 @@ public sealed class CommandLineTests
 	[InlineData("echo dman", null)]
 	[InlineData("man ls; ls", null)]
 	[InlineData("man ls && ls", null)]
+	[InlineData("dman List>out.txt", null)]
+	[InlineData("dman List|less", null)]
+	[InlineData("man ls&", null)]
+	[InlineData("man ls < x", null)]
+	[InlineData("man '|'", new[] { "man", "|" })]
+	[InlineData("man `ls`", null)]
+	[InlineData("man ls\nls", null)]
 	public void PagedCommand_Line_ReturnsWordsForReader(string line, string[]? expected)
 	{
 		// Act
@@ -404,7 +503,7 @@ public sealed class CommandLineTests
 		var words = CommandLine.Split(line, variables);
 
 		// Assert
-		_ = words.Should().Equal(expected);
+		_ = words.Select(word => word.Text).Should().Equal(expected);
 	}
 
 	/// <summary>
@@ -423,6 +522,6 @@ public sealed class CommandLineTests
 		var words = CommandLine.Split(CommandLine.Quote(text), new Dictionary<string, string> { ["HOME"] = "expanded" });
 
 		// Assert
-		_ = words.Should().Equal(text);
+		_ = words.Select(word => word.Text).Should().Equal(text);
 	}
 }

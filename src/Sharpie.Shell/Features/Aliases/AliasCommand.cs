@@ -104,28 +104,28 @@ internal sealed partial class AliasCommand : ICommand
 	/// The words with every alias replaced, or the same words when none is used.
 	/// </returns>
 	/// <remarks>
-	/// A command name is the first word and the word after each <c>|</c>, including a <c>|</c> that came from an
+	/// A command name is the first word and the word after each <c>|</c> operator, including one that came from an
 	/// alias value. A value can start with another alias, which is expanded too, but an alias is never expanded
-	/// again inside its own expansion, so <c>alias grep='grep -n'</c> doesn't loop. Like
-	/// <see cref="CommandLine.SplitPipeline" />, this works on words that are already split, so a quoted or
-	/// backslashed name such as <c>\grep</c> is still expanded, where POSIX would run the program itself.
+	/// again inside its own expansion, so <c>alias grep='grep -n'</c> doesn't loop. This works on words that are
+	/// already split, so a quoted or backslashed name such as <c>\grep</c> is still expanded, where POSIX would run
+	/// the program itself.
 	/// </remarks>
-	public string[] Expand(string[] words, IReadOnlyDictionary<string, string>? variables)
+	public Word[] Expand(Word[] words, IReadOnlyDictionary<string, string>? variables)
 	{
 		_ = words.ArgumentNotNull();
 
-		var result = new List<string>(words);
+		var result = new List<Word>(words);
 
 		for (var index = 0; index < result.Count; index++)
 		{
-			if (index > 0 && result[index - 1] != "|")
+			if (index > 0 && result[index - 1] is not { IsOperator: true, Text: "|" })
 			{
 				continue;
 			}
 
 			var used = new HashSet<string>(StringComparer.Ordinal);
 
-			while (index < result.Count && this.aliases.TryGetValue(result[index], out var value) && used.Add(result[index]))
+			while (index < result.Count && result[index] is { IsOperator: false, Text: var name } && this.aliases.TryGetValue(name, out var value) && used.Add(name))
 			{
 				result.RemoveAt(index);
 				result.InsertRange(index, CommandLine.Split(value, variables));

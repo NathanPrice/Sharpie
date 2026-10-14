@@ -262,6 +262,7 @@ public sealed class CommandLineProcessTests
 	[InlineData("echo apple-orange | wc", "      1       1      13\n")]
 	[InlineData("ls | type exit", "exit is a shell builtin\n")]
 	[InlineData("echo hi | type echo", "echo is a shell builtin\n")]
+	[InlineData("echo hi|type echo", "echo is a shell builtin\n")]
 	public async Task Shell_WithBuiltinInPipeline_PrintsPipelineOutput(string line, string expected)
 	{
 		// Act
@@ -298,5 +299,65 @@ public sealed class CommandLineProcessTests
 		{
 			File.Delete(file);
 		}
+	}
+
+	/// <summary>
+	/// Checks that a redirect typed with no spaces around it still writes the file.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithUnspacedRedirect_WritesFile()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var file = Path.Combine(folder, "foo.md");
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync($"echo hi>{file}\nexit\n").ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("$ $ ");
+			_ = (await File.ReadAllTextAsync(file).ConfigureAwait(true)).Should().Be("hi\n");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that quoted or escaped operators reach the command as plain arguments.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithQuotedOperators_PassesThemAsArguments()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("echo '>' \"|\" \\& x\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ > | & x\n$ ");
+	}
+
+	/// <summary>
+	/// Checks that an operator the shell can't run yet, or a redirect or pipe with nothing after it, is refused with
+	/// status 2 instead of being passed to the command.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="operatorText">The operator the error should name.</param>
+	[Theory]
+	[InlineData("echo a <x", "<")]
+	[InlineData("echo a 2>&1", "2>&")]
+	[InlineData("echo a & echo b", "&")]
+	[InlineData("echo a >", ">")]
+	[InlineData("echo a |", "|")]
+	public async Task Shell_WithUnusableOperator_PrintsErrorAndStatus2(string line, string operatorText)
+	{
+		// Act
+		var run = await ShellProcess.RunAsync($"{line}\necho $?\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ $ 2\n$ ");
+		_ = run.Error.Should().Be($"sharpie: can't use '{operatorText}' here\n");
 	}
 }

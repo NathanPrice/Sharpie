@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Aliases;
 
 namespace Sharpie.Shell.Tests.Features.Aliases;
@@ -80,9 +81,9 @@ public sealed class AliasCommandTests : IDisposable
 
 	/// <summary>
 	/// Checks which words <see cref="AliasCommand.Expand" /> replaces: only command names, which are the first word
-	/// and the word after each <c>|</c>.
+	/// and the word after each <c>|</c> operator, typed with or without spaces.
 	/// </summary>
-	/// <param name="line">The words, joined by spaces.</param>
+	/// <param name="line">The command line.</param>
 	/// <param name="expected">The expanded words, joined by spaces.</param>
 	[Theory]
 	[InlineData("greet world", "echo hello world")]
@@ -92,6 +93,8 @@ public sealed class AliasCommandTests : IDisposable
 	[InlineData("chain", "echo hello")]
 	[InlineData("loud x", "loud --shout x")]
 	[InlineData("piped", "ls | echo hello")]
+	[InlineData("greet|greet", "echo hello | echo hello")]
+	[InlineData("echo '|' greet", "echo | greet")]
 	public void Expand_WithAliases_ReplacesCommandNames(string line, string expected)
 	{
 		// Arrange
@@ -101,10 +104,10 @@ public sealed class AliasCommandTests : IDisposable
 		this.sut.Define("piped", "ls | greet");
 
 		// Act
-		var words = this.sut.Expand(line.Split(' '), null);
+		var words = this.sut.Expand(CommandLine.Split(line), null);
 
 		// Assert
-		_ = string.Join(' ', words).Should().Be(expected);
+		_ = string.Join(' ', words.Select(word => word.Text)).Should().Be(expected);
 	}
 
 	/// <summary>
@@ -117,10 +120,10 @@ public sealed class AliasCommandTests : IDisposable
 		this.sut.Define("say", "echo 'two words' $WHO");
 
 		// Act
-		var words = this.sut.Expand(["say"], new Dictionary<string, string> { ["WHO"] = "you" });
+		var words = this.sut.Expand(CommandLine.Split("say"), new Dictionary<string, string> { ["WHO"] = "you" });
 
 		// Assert
-		_ = words.Should().Equal("echo", "two words", "you");
+		_ = words.Select(word => word.Text).Should().Equal("echo", "two words", "you");
 	}
 
 	/// <summary>
@@ -133,7 +136,7 @@ public sealed class AliasCommandTests : IDisposable
 		this.sut.Define("nothing", string.Empty);
 
 		// Act
-		var words = this.sut.Expand(["nothing"], null);
+		var words = this.sut.Expand(CommandLine.Split("nothing"), null);
 
 		// Assert
 		_ = words.Should().BeEmpty();
