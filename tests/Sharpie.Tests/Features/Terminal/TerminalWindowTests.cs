@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
@@ -179,6 +180,71 @@ public sealed class TerminalWindowTests : IDisposable
 
 		// Assert
 		_ = this.ScreenText.Should().Contain("got:[<0;1;1M");
+	}
+
+	/// <summary>
+	/// Checks that a right click sends a report to a program tracking the mouse, and no menu pops up over it.
+	/// </summary>
+	[AvaloniaFact]
+	public void RightClick_WhenProgramTracksMouse_SendsReportNotMenu()
+	{
+		// Arrange
+		Assert.SkipWhen(PathFinder.FindExecutable("bash") is null, "bash isn't installed");
+		this.ShowAndWaitForPrompt();
+		// Reads up to the release report's closing m, so tracking stays on until the release has been sent.
+		this.Type("bash -c 'printf \"\\e[?1000h\\e[?1006hready\"; read -rsd m x; printf \"\\e[?1000l\"; echo; echo got:$x | tr -d \"\\033\"'");
+		this.Press(Key.Enter, PhysicalKey.Enter, null);
+		WaitFor(() => this.ScreenText.EndsWith("ready", StringComparison.Ordinal), "the program should have turned tracking on");
+
+		// Act
+		this.RightClick();
+		WaitFor(() => this.ScreenText.Contains("got:", StringComparison.Ordinal), "the program should have read the click");
+
+		// Assert
+		_ = this.ScreenText.Should().Contain("got:[<2;1;1M[<2;1;1");
+		_ = this.window.View.ContextMenu!.IsOpen.Should().BeFalse();
+	}
+
+	/// <summary>
+	/// Checks that a right click opens the menu with Copy greyed out when nothing is selected.
+	/// </summary>
+	[AvaloniaFact]
+	public void RightClick_WithNoSelection_OpensMenuWithCopyDisabled()
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+
+		// Act
+		this.RightClick();
+
+		// Assert
+		_ = this.window.View.ContextMenu!.IsOpen.Should().BeTrue();
+		_ = this.MenuItem("Copy").IsEnabled.Should().BeFalse();
+		_ = this.MenuItem("Paste").IsEnabled.Should().BeTrue();
+	}
+
+	/// <summary>
+	/// Checks that Copy is offered after dragging out a selection, so selecting and right clicking copies.
+	/// </summary>
+	[AvaloniaFact]
+	public void RightClick_WithSelection_OpensMenuWithCopyEnabled()
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+
+		var view = this.window.View;
+		var from = view.TranslatePoint(new Point(TerminalView.Padding + 1, TerminalView.Padding + 1), this.window)!.Value;
+		var to = view.TranslatePoint(new Point(TerminalView.Padding + 60, TerminalView.Padding + 1), this.window)!.Value;
+
+		this.window.MouseDown(from, MouseButton.Left, RawInputModifiers.None);
+		this.window.MouseMove(to, RawInputModifiers.LeftMouseButton);
+		this.window.MouseUp(to, MouseButton.Left, RawInputModifiers.None);
+
+		// Act
+		this.RightClick();
+
+		// Assert
+		_ = this.MenuItem("Copy").IsEnabled.Should().BeTrue();
 	}
 
 	/// <summary>
@@ -371,6 +437,20 @@ public sealed class TerminalWindowTests : IDisposable
 		this.Type(line);
 		this.Press(Key.Enter, PhysicalKey.Enter, null);
 		WaitFor(() => this.CountPrompts() > prompts, $"a new prompt should have shown after {line}");
+	}
+
+	private MenuItem MenuItem(string header) =>
+		this.window.View.ContextMenu!.Items.OfType<MenuItem>().First(item => (string?)item.Header == header);
+
+	// Clicks the right button on the top-left cell, which sits inside the padding past the title bar.
+	private void RightClick()
+	{
+		var view = this.window.View;
+		var point = view.TranslatePoint(new Point(TerminalView.Padding + 1, TerminalView.Padding + 1), this.window)!.Value;
+
+		this.window.MouseDown(point, MouseButton.Right, RawInputModifiers.None);
+		this.window.MouseUp(point, MouseButton.Right, RawInputModifiers.None);
+		Dispatcher.UIThread.RunJobs();
 	}
 
 	private void Type(string text)

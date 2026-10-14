@@ -85,6 +85,7 @@ internal sealed partial class TerminalView : Control
 			CellPixels = ((int)Math.Round(this.cellWidth), (int)Math.Round(this.cellHeight)),
 		};
 		this.Screen.StylesRenumbered += (_, _) => this.rows.Clear();
+		this.ContextMenu = TerminalMenu.Create(this);
 
 		this.blink = new DispatcherTimer(BlinkInterval, DispatcherPriority.Background, (_, _) =>
 		{

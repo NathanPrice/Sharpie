@@ -246,8 +246,6 @@ internal sealed partial class TerminalView
 	{
 		ArgumentNullException.ThrowIfNull(e);
 
-		base.OnPointerReleased(e);
-
 		var button = e.InitialPressMouseButton switch
 		{
 			MouseButton.Left => 0,
@@ -256,7 +254,14 @@ internal sealed partial class TerminalView
 			MouseButton.None or MouseButton.XButton1 or MouseButton.XButton2 or _ => -1,
 		};
 
-		_ = this.ReportMouse(MouseAction.Release, button, e.KeyModifiers, e.GetPosition(this));
+		// Before the base call, which opens the copy and paste menu on an unhandled right release. A program tracking
+		// the mouse gets its right clicks without a menu popping up over it.
+		if (this.ReportMouse(MouseAction.Release, button, e.KeyModifiers, e.GetPosition(this)))
+		{
+			e.Handled = true;
+		}
+
+		base.OnPointerReleased(e);
 		e.Pointer.Capture(null);
 	}
 
