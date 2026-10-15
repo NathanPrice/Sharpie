@@ -25,6 +25,29 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks that <c>~</c> reaches a command as the <c>HOME</c> folder.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithTilde_PassesHomeFolder()
+	{
+		// Arrange
+		var home = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync("echo ~/x\nexit\n", environment: new Dictionary<string, string> { ["HOME"] = home }).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be($"$ {home}/x\n$ ");
+		}
+		finally
+		{
+			Directory.Delete(home, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that <c>&gt;</c> and <c>1&gt;</c> send a builtin's output to a file, replacing what was there, and
 	/// that only the prompts reach the terminal.
 	/// </summary>

@@ -507,6 +507,120 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
+	/// Checks that an unquoted <c>~</c> at the start of a word, or after the <c>=</c> or a <c>:</c> of an assignment,
+	/// becomes <c>HOME</c>.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="expected">The words it should give.</param>
+	[Theory]
+	[InlineData("ls ~", new[] { "ls", "/h" })]
+	[InlineData("ls ~/Downloads", new[] { "ls", "/h/Downloads" })]
+	[InlineData("cp x ~/", new[] { "cp", "x", "/h/" })]
+	[InlineData("ls ~|wc", new[] { "ls", "/h", "|", "wc" })]
+	[InlineData("echo x > ~/out", new[] { "echo", "x", ">", "/h/out" })]
+	[InlineData("A=~/bin", new[] { "A=/h/bin" })]
+	[InlineData("PATH=~/a:~/b", new[] { "PATH=/h/a:/h/b" })]
+	[InlineData("make PREFIX=~", new[] { "make", "PREFIX=/h" })]
+	public void Split_WithTilde_ExpandsHome(string line, string[] expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["HOME"] = "/h" };
+
+		// Act
+		var words = CommandLine.Split(line, variables);
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that a <c>~</c> that is quoted, escaped, in the middle of a word, or names no user stays as typed.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="expected">The words it should give.</param>
+	[Theory]
+	[InlineData("echo '~' \"~/x\" \\~", new[] { "echo", "~", "~/x", "~" })]
+	[InlineData("echo a~ a/~", new[] { "echo", "a~", "a/~" })]
+	[InlineData("A=b=~ A=b~:~", new[] { "A=b=~", "A=b~:/h" })]
+	[InlineData("--opt=~ x:~", new[] { "--opt=~", "x:~" })]
+	[InlineData("echo ~$NOSUCHSAMPLEVAR ~'u' ~\\u", new[] { "echo", "~", "~u", "~u" })]
+	[InlineData("echo ~nosuchsampleuser/x ~:x", new[] { "echo", "~nosuchsampleuser/x", "~:x" })]
+	[InlineData("A=~nosuchsampleuser:~", new[] { "A=~nosuchsampleuser:/h" })]
+	public void Split_WithTildeNotExpandable_KeepsTilde(string line, string[] expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["HOME"] = "/h" };
+
+		// Act
+		var words = CommandLine.Split(line, variables);
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that with no variables, as the highlighter splits, <c>~</c> stays as typed.
+	/// </summary>
+	[Fact]
+	public void Split_WithoutVariables_KeepsTilde()
+	{
+		// Act
+		var words = CommandLine.Split("ls ~/x");
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal("ls", "~/x");
+	}
+
+	/// <summary>
+	/// Checks that an empty <c>HOME</c> falls back to the profile folder .NET reports.
+	/// </summary>
+	[Fact]
+	public void Split_WithEmptyHome_UsesProfileFolder()
+	{
+		// Act
+		var words = CommandLine.Split("ls ~", new Dictionary<string, string> { ["HOME"] = string.Empty });
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal("ls", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+	}
+
+	/// <summary>
+	/// Checks that <c>~user</c> gives that user's home folder from the system's user database, not <c>HOME</c>.
+	/// </summary>
+	[Fact]
+	public void Split_WithCurrentUserTilde_ExpandsToTheirHome()
+	{
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		// Act
+		var words = CommandLine.Split($"ls ~{Environment.UserName}/x A=~{Environment.UserName}:x", new Dictionary<string, string> { ["HOME"] = "/h" });
+
+		// Assert
+		_ = words[1].Text.Should().EndWith("/x").And.NotStartWith("~").And.NotStartWith("/h/");
+		_ = Directory.Exists(words[1].Text[..^2]).Should().BeTrue();
+		_ = words[2].Text.Should().Be($"A={words[1].Text[..^2]}:x");
+	}
+
+	/// <summary>
+	/// Checks that <c>~user</c> stays as typed when any of the user name is quoted, even for a user that exists.
+	/// </summary>
+	[Fact]
+	public void Split_WithQuotedUserName_KeepsTilde()
+	{
+		// Arrange
+		var user = Environment.UserName;
+
+		// Act
+		var words = CommandLine.Split($"ls ~'{user}'", new Dictionary<string, string> { ["HOME"] = "/h" });
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal("ls", $"~{user}");
+	}
+
+	/// <summary>
 	/// Checks that <see cref="CommandLine.Quote" /> gives one word that <see cref="CommandLine.Split" /> reads back
 	/// unchanged, whatever quotes, spaces or <c>$</c> it holds.
 	/// </summary>

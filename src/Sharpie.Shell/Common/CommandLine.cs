@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text;
 using DotNetTips.Spargine.Core;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Common;
 
@@ -69,6 +70,13 @@ internal static class CommandLine
 	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. <c>$?</c> is the last command's exit status. Values
 	/// aren't split on spaces.
 	/// </para>
+	/// <para>
+	/// When <paramref name="variables" /> is given, an unquoted <c>~</c> at the start of a word becomes the home
+	/// folder, so <c>~/Downloads</c> gives <c>$HOME/Downloads</c>. In a <c>NAME=value</c> word it also expands right
+	/// after the first <c>=</c> and after each <c>:</c>, so <c>PATH=~/bin:~/tools</c> works. <c>~user</c> gives that
+	/// user's home folder. A quoted or escaped <c>~</c>, one in the middle of a word, and <c>~user</c> for a user that
+	/// doesn't exist all stay as typed, as in bash.
+	/// </para>
 	/// </remarks>
 	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null)
 	{
@@ -122,6 +130,12 @@ internal static class CommandLine
 						_ = word.Append(value);
 						hasWord |= value.Length > 0;
 						index = end;
+
+						break;
+					case null when TryExpandTilde(line, index, word, hasWord, variables, out var home, out var tildeEnd):
+						_ = word.Append(home);
+						hasWord = true;
+						index = tildeEnd;
 
 						break;
 					// POSIX starts a comment only at the start of a word, so the # in a#b and \#x is kept.
@@ -290,6 +304,83 @@ internal static class CommandLine
 		end = index;
 
 		return false;
+	}
+
+	/// <summary>
+	/// Checks whether the <c>~</c> at <paramref name="index" /> starts the value of a <c>NAME=value</c> word, or a new
+	/// part of that value after a <c>:</c>.
+	/// </summary>
+	/// <param name="line">The command line being split.</param>
+	/// <param name="index">The position of the <c>~</c>, which isn't at the start of its word.</param>
+	/// <param name="word">The word read so far, quotes removed.</param>
+	/// <returns>
+	/// <see langword="true" /> when the character typed just before is the word's first <c>=</c> or a <c>:</c>, and
+	/// the word so far is an assignment.
+	/// </returns>
+	/// <remarks>
+	/// Bash does this for any word shaped like an assignment, arguments included, which is what makes
+	/// <c>make PREFIX=~/x</c> work. Only the first <c>=</c> counts, so <c>A=b=~</c> keeps its <c>~</c>.
+	/// </remarks>
+	private static bool IsAssignmentValueStart(string line, int index, StringBuilder word)
+	{
+		if (line[index - 1] is not ('=' or ':'))
+		{
+			return false;
+		}
+
+		var text = word.ToString();
+
+		return DeclareCommand.IsAssignment(text) && (line[index - 1] == ':' || text.IndexOf('=', StringComparison.Ordinal) == text.Length - 1);
+	}
+
+	/// <summary>
+	/// Reads the <c>~</c> or <c>~user</c>, if one starts at the unquoted <paramref name="index" />, and finds the home
+	/// folder it names.
+	/// </summary>
+	/// <param name="line">The command line being split.</param>
+	/// <param name="index">The position of the <c>~</c>.</param>
+	/// <param name="word">The word read so far, quotes removed.</param>
+	/// <param name="hasWord">
+	/// <see langword="true" /> when the <c>~</c> isn't at the start of its word, so it only expands in a
+	/// <c>NAME=value</c> word, where a <c>:</c> also ends the user name.
+	/// </param>
+	/// <param name="variables">
+	/// The shell variables, which <c>HOME</c> is read from first, or <see langword="null" /> to leave <c>~</c> as typed.
+	/// </param>
+	/// <param name="home">The home folder, or an empty string when there is none.</param>
+	/// <param name="end">The position of the last character the user name used, or of the <c>~</c> itself.</param>
+	/// <returns>
+	/// <see langword="false" /> when there is no <c>~</c> or it should stay as typed: it's in the middle of a word,
+	/// part of the name is quoted, escaped or a <c>$</c>, or no user has that name.
+	/// </returns>
+	/// <remarks>
+	/// Windows has no lookup of another user's home folder, so there <c>~user</c> always stays as typed.
+	/// </remarks>
+	private static bool TryExpandTilde(string line, int index, StringBuilder word, bool hasWord, IReadOnlyDictionary<string, string>? variables, out string home, out int end)
+	{
+		home = string.Empty;
+		end = index;
+
+		if (line[index] != '~' || variables is null || (hasWord && !IsAssignmentValueStart(line, index, word)))
+		{
+			return false;
+		}
+
+		while (end + 1 < line.Length && line[end + 1] is not ('/' or ' ' or '\t') && !(hasWord && line[end + 1] == ':')
+			&& !OperatorStarts.Contains(line[end + 1]))
+		{
+			end++;
+		}
+
+		// Quotes, backslashes and $ stay in the name, so ~'x' and ~$USER find no user and keep the ~, as in bash.
+		var user = line[(index + 1)..(end + 1)];
+
+		// .NET's UserProfile reads HOME on Unix and the profile folder on Windows, which usually has no HOME.
+		home = user.Length == 0
+			? Lookup(variables, "HOME") is { Length: > 0 } set ? set : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+			: (OperatingSystem.IsWindows() ? null : NativeMethods.HomeOf(user)) ?? string.Empty;
+
+		return user.Length == 0 || home.Length > 0;
 	}
 
 	/// <summary>

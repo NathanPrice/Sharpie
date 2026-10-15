@@ -362,6 +362,83 @@ internal static unsafe partial class NativeMethods
 	internal static partial nint SetSignalHandler(int signal, nint handler);
 
 	/// <summary>
+	/// Finds the home folder of the user named <paramref name="user" />, for <c>~user</c>.
+	/// </summary>
+	/// <param name="user">The login name.</param>
+	/// <returns>
+	/// The home folder, or <see langword="null" /> when no user has that name.
+	/// </returns>
+	/// <remarks>
+	/// getpwnam asks the system's user database, so users from LDAP or systemd-homed are found too, which reading
+	/// <c>/etc/passwd</c> would miss. It reuses one static buffer and isn't thread-safe, which is fine because the
+	/// shell splits command lines on one thread.
+	/// </remarks>
+	internal static string? HomeOf(string user)
+	{
+		var entry = GetPasswordEntry(user);
+
+		return entry is null
+			? null
+			: Marshal.PtrToStringUTF8(OperatingSystem.IsLinux() ? ((LinuxPasswordEntry*)entry)->Directory : ((BsdPasswordEntry*)entry)->Directory);
+	}
+
+	/// <summary>
+	/// Looks up a user in the system's user database.
+	/// </summary>
+	/// <param name="name">The login name.</param>
+	/// <returns>
+	/// The user's <c>struct passwd</c>, or null when there is no such user.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "getpwnam", StringMarshalling = StringMarshalling.Utf8)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial void* GetPasswordEntry(string name);
+
+	/// <summary>
+	/// The start of glibc's and musl's <c>struct passwd</c>, up to <c>pw_dir</c>.
+	/// </summary>
+	[StructLayout(LayoutKind.Sequential)]
+	private readonly struct LinuxPasswordEntry
+	{
+		private readonly nint name;
+		private readonly nint password;
+		private readonly uint userId;
+		private readonly uint groupId;
+		private readonly nint gecos;
+
+		/// <summary>
+		/// Gets the home folder, <c>pw_dir</c>.
+		/// </summary>
+		/// <value>
+		/// A pointer to a UTF-8 string ending in a zero byte.
+		/// </value>
+		public nint Directory { get; }
+	}
+
+	/// <summary>
+	/// The start of the <c>struct passwd</c> that macOS and the BSDs use, which has <c>pw_change</c> and
+	/// <c>pw_class</c> before <c>pw_gecos</c>.
+	/// </summary>
+	[StructLayout(LayoutKind.Sequential)]
+	private readonly struct BsdPasswordEntry
+	{
+		private readonly nint name;
+		private readonly nint password;
+		private readonly uint userId;
+		private readonly uint groupId;
+		private readonly long change;
+		private readonly nint userClass;
+		private readonly nint gecos;
+
+		/// <summary>
+		/// Gets the home folder, <c>pw_dir</c>.
+		/// </summary>
+		/// <value>
+		/// A pointer to a UTF-8 string ending in a zero byte.
+		/// </value>
+		public nint Directory { get; }
+	}
+
+	/// <summary>
 	/// Gets the name this process was started under, its <c>argv[0]</c>.
 	/// </summary>
 	/// <returns>

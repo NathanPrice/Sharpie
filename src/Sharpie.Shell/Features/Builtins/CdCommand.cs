@@ -102,13 +102,6 @@ internal class CdCommand : ICommand
 			input = input.Replace('\\', '/');
 		}
 
-		// Expand ~. Both "~/" and "~\" are checked because Windows keeps its backslashes;
-		// only the Unix branch above rewrites them.
-		if (input == "~" || input.StartsWith("~/", StringComparison.Ordinal) || input.StartsWith(@"~\", StringComparison.Ordinal))
-		{
-			input = input.Length > 1 ? Path.Combine(home, input[2..]) : home;
-		}
-
 		try
 		{
 			// Absolute input replaces the current directory; relative input joins it.

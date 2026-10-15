@@ -41,35 +41,16 @@ public sealed class CdCommandTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a bare <c>~</c>, or an empty word such as <c>cd ""</c> gives, goes to the home folder.
+	/// Checks that an empty word, such as <c>cd ""</c> gives, goes to the home folder.
 	/// </summary>
-	/// <param name="argument">The single argument passed to the command.</param>
-	[Theory]
-	[InlineData("~")]
-	[InlineData("")]
-	public void Run_WithHomeShorthand_GoesHome(string argument)
+	[Fact]
+	public void Run_WithEmptyWord_GoesHome()
 	{
 		// Act
-		_ = this.sut.Run([argument]);
+		_ = this.sut.Run([string.Empty]);
 
 		// Assert
 		_ = Directory.GetCurrentDirectory().Should().Be(this.home);
-	}
-
-	/// <summary>
-	/// Checks that <c>~/</c> at the start of the path expands to the home folder.
-	/// </summary>
-	[Fact]
-	public void Run_WithTildePrefix_GoesToFolderUnderHome()
-	{
-		// Arrange
-		var target = Directory.CreateDirectory(Path.Combine(this.home, "sub")).FullName;
-
-		// Act
-		_ = this.sut.Run(["~/sub"]);
-
-		// Assert
-		_ = Directory.GetCurrentDirectory().Should().Be(target);
 	}
 
 	/// <summary>
