@@ -51,6 +51,22 @@ public sealed class HighlighterTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that <c>NAME=VALUE</c> words in front of the command get no color and the word after them is the command.
+	/// </summary>
+	/// <param name="line">The typed line, ending in <c>prog</c>.</param>
+	[Theory]
+	[InlineData("LANG=C prog")]
+	[InlineData("A=1 B= prog")]
+	public void Highlight_AssignmentsBeforeCommand_MarksOnlyTheCommand(string line)
+	{
+		// Act
+		var tokens = Highlighter.Highlight(line, Builtins);
+
+		// Assert
+		_ = tokens.Should().ContainSingle().Which.Should().Be(new Token(line.Length - "prog".Length, "prog".Length, TokenKind.Command));
+	}
+
+	/// <summary>
 	/// Checks that a command name already looked up for this line isn't looked up again, so a program removed since
 	/// keeps its color until the next line, while a fresh lookup sees it's gone.
 	/// </summary>

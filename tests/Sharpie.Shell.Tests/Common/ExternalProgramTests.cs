@@ -251,6 +251,69 @@ public sealed partial class ExternalProgramTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that <c>NAME=VALUE</c> words reach the program's environment, an empty value included, a repeated name
+	/// takes its last value, and none of them are left in the shell's environment.
+	/// </summary>
+	/// <param name="assignments">The words typed in front of the program.</param>
+	/// <param name="expected">What the program prints for <c>SAMPLE_A</c> and <c>SAMPLE_B</c>.</param>
+	[Theory]
+	[InlineData(new[] { "SAMPLE_A=1" }, "1|unset\n")]
+	[InlineData(new[] { "SAMPLE_A=1", "SAMPLE_B=" }, "1|\n")]
+	[InlineData(new[] { "SAMPLE_A=1", "SAMPLE_A=2" }, "2|unset\n")]
+	public void Run_WithAssignments_GivesOnlyThatProgramTheValues(string[] assignments, string expected)
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "showenv", executable: true, "#!/bin/sh\necho \"${SAMPLE_A-unset}|${SAMPLE_B-unset}\"\n");
+		using var output = new MemoryStream();
+
+		// Act
+		_ = ExternalProgram.Run("showenv", [], output, assignments: assignments);
+
+		// Assert
+		_ = System.Text.Encoding.UTF8.GetString(output.ToArray()).Should().Be(expected);
+		_ = Environment.GetEnvironmentVariable("SAMPLE_A").Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that an assigned <c>PATH</c> is where the program is looked for, as in bash, so an empty one finds nothing.
+	/// </summary>
+	[Fact]
+	public void Run_WithAssignedPath_LooksThere()
+	{
+		// Arrange
+		var other = this.environment.CreateFolder();
+		_ = ShellEnvironment.CreateFile(other, "elsewhere", executable: true, "#!/bin/sh\nexit 6\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "here", executable: true, "#!/bin/sh\nexit 0\n");
+
+		// Act
+		var found = ExternalProgram.Run("elsewhere", [], assignments: [$"PATH={other}"]);
+		var missing = ExternalProgram.Run("here", [], assignments: ["PATH="]);
+
+		// Assert
+		_ = found.Should().Be(6);
+		_ = missing.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that each pipeline stage gets only its own <c>NAME=VALUE</c> words.
+	/// </summary>
+	[Fact]
+	public void RunPipeline_WithAssignments_GivesEachStageOnlyItsOwn()
+	{
+		// Arrange
+		var first = Path.Combine(this.folder, "first.txt");
+		var second = Path.Combine(this.folder, "second.txt");
+		_ = ShellEnvironment.CreateFile(this.folder, "recorder", executable: true, "#!/bin/sh\necho \"${SAMPLE_A-unset}\" > \"$1\"\n");
+
+		// Act
+		_ = ExternalProgram.RunPipeline([["recorder", first], ["recorder", second]], _ => { }, [["SAMPLE_A=1"], []]);
+
+		// Assert
+		_ = File.ReadAllText(first).Should().Be("1\n");
+		_ = File.ReadAllText(second).Should().Be("unset\n");
+	}
+
+	/// <summary>
 	/// Checks that a new job is numbered one past the newest job still listed, like bash, even after older ones ended.
 	/// </summary>
 	[Fact]

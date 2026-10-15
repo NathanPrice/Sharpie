@@ -32,6 +32,10 @@ internal static unsafe class PosixSpawn
 	/// <see langword="true" /> to start the program in a new session with no controlling terminal, so it can't read,
 	/// draw on or take over the shell's terminal. <paramref name="processGroup" /> must be -1 then.
 	/// </param>
+	/// <param name="assignments">
+	/// <c>NAME=VALUE</c> words that only this program gets in its environment, as in <c>LANG=C sort</c>, or
+	/// <see langword="null" /> for none. A later one wins over an earlier one with the same name.
+	/// </param>
 	/// <returns>
 	/// The new process id.
 	/// </returns>
@@ -40,15 +44,26 @@ internal static unsafe class PosixSpawn
 	/// The signals the shell ignores or catches for itself go back to their defaults in the program, and none are
 	/// blocked, so Ctrl+C, Ctrl+Z and a closed pipe act on it normally. The environment is .NET's copy, which holds
 	/// changes the shell made with <see cref="Environment.SetEnvironmentVariable(string, string)" /> that the C
-	/// library's own copy doesn't.
+	/// library's own copy doesn't. <paramref name="assignments" /> are written over it here rather than set in the
+	/// shell's environment first, because .NET deletes a variable set to an empty value, and
+	/// <c>GIT_PAGER= git log</c> needs <c>GIT_PAGER</c> present and empty.
 	/// </remarks>
-	public static int Start(string path, IReadOnlyList<string> arguments, int processGroup, int input = -1, int output = -1, int error = -1, bool newSession = false)
+	public static int Start(string path, IReadOnlyList<string> arguments, int processGroup, int input = -1, int output = -1, int error = -1, bool newSession = false, IReadOnlyList<string>? assignments = null)
 	{
+		var environment = Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value);
+
+		foreach (var assignment in assignments ?? [])
+		{
+			var parts = assignment.Split('=', 2);
+
+			environment[parts[0]] = parts[1];
+		}
+
 		var fileActions = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
 		var attributes = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
 		var signals = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
 		var argv = ToCStrings(arguments);
-		var envp = ToCStrings([.. Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().Select(entry => $"{entry.Key}={entry.Value}")]);
+		var envp = ToCStrings([.. environment.Select(entry => $"{entry.Key}={entry.Value}")]);
 
 		try
 		{

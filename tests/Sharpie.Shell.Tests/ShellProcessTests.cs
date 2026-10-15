@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentAssertions;
 using Sharpie.Shell.Common;
 
@@ -141,6 +142,60 @@ public sealed class ShellProcessTests
 		_ = run.Output.Should().Be("$ hi\n$ ");
 		_ = run.Exited.Should().BeTrue();
 		_ = run.ExitCode.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that <c>NAME=VALUE</c> words in front of a program, a builtin or one pipeline stage reach only that
+	/// command, and that the shell keeps none of them afterwards. A stage made only of them is still looked up as a
+	/// command, and not being found, stops the pipeline.
+	/// </summary>
+	/// <param name="input">The lines piped to the shell.</param>
+	/// <param name="expected">The shell's standard output.</param>
+	[Theory]
+	[InlineData("SAMPLE_A=hi showenv\necho \"[$SAMPLE_A]\"\n", "$ hi|unset\n$ []\n$ ")]
+	[InlineData("SAMPLE_A=hi SAMPLE_B= showenv\nshowenv\n", "$ hi|\n$ unset|unset\n$ ")]
+	[InlineData("SAMPLE_A=hi showenv | showenv\nshowenv | SAMPLE_A=hi showenv\n", "$ unset|unset\n$ hi|unset\n$ ")]
+	[InlineData("PATH=/nonexistent type showenv\ntype showenv\n", "$ showenv: not found\n$ showenv is {0}/showenv\n$ ")]
+	[InlineData("SAMPLE_A=hi | showenv\n", "$ $ ")]
+	public async Task Shell_WithAssignmentsBeforeCommand_SetsThemForThatCommandOnly(string input, string expected)
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-assign-").FullName;
+		var showenv = Path.Combine(folder, "showenv");
+		await File.WriteAllTextAsync(showenv, "#!/bin/sh\necho \"${SAMPLE_A-unset}|${SAMPLE_B-unset}\"\n").ConfigureAwait(true);
+		File.SetUnixFileMode(showenv, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync($"{input}exit\n", folder, new Dictionary<string, string> { ["PATH"] = folder }).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be(string.Format(CultureInfo.InvariantCulture, expected, folder));
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that when the program after <c>NAME=VALUE</c> words isn't found, the report points at the program's name.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithAssignmentsBeforeMissingProgram_PointsAtProgram()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("SAMPLE_A=1 nosuchcommand\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Error.Should().Be(new ShellError("sharpie::shell::command_not_found", "Command `nosuchcommand` not found")
+		{
+			Source = "SAMPLE_A=1 nosuchcommand",
+			Start = "SAMPLE_A=1 ".Length,
+			End = "SAMPLE_A=1 nosuchcommand".Length,
+			Label = "not a builtin, alias or program on PATH",
+		}.Render(color: false));
 	}
 
 	/// <summary>

@@ -58,22 +58,28 @@ internal static partial class ExternalProgram
 	/// What the program reads as standard input, closed once it's all written, or <see langword="null" /> to let it
 	/// read the terminal.
 	/// </param>
+	/// <param name="assignments">
+	/// <c>NAME=VALUE</c> words that only this program gets in its environment, as in <c>LANG=C sort</c>, or
+	/// <see langword="null" /> for none. An assigned <c>PATH</c> is also where the program is looked for, as in bash.
+	/// </param>
 	/// <returns>
 	/// The program's exit status, 128 plus the signal number when a signal ended it, 0 for a background job, or 126
 	/// when it was found but couldn't start (that error is printed here). <see langword="null" /> when the program
 	/// isn't on <c>PATH</c>, and nothing was printed.
 	/// </returns>
-	public static int? Run(string commandName, string[] arguments, Stream? output = null, Stream? error = null, bool background = false, Stream? input = null)
+	public static int? Run(string commandName, string[] arguments, Stream? output = null, Stream? error = null, bool background = false, Stream? input = null, IReadOnlyList<string>? assignments = null)
 	{
 		_ = commandName.ArgumentNotNull();
 		_ = arguments.ArgumentNotNull();
 
-		var fullPath = PathFinder.FindExecutable(commandName);
+		assignments ??= [];
+
+		var fullPath = PathFinder.FindExecutable(commandName, AssignedPath(assignments));
 
 		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
 		return fullPath is null ? null
-			: OperatingSystem.IsWindows() ? RunWithProcess(commandName, fullPath, arguments, output, error, background, input)
-			: RunWithSpawn(commandName, fullPath, arguments, output, error, background, input);
+			: OperatingSystem.IsWindows() ? RunWithProcess(commandName, fullPath, arguments, output, error, background, input, assignments)
+			: RunWithSpawn(commandName, fullPath, arguments, output, error, background, input, assignments);
 	}
 
 	/// <summary>
@@ -82,6 +88,10 @@ internal static partial class ExternalProgram
 	/// </summary>
 	/// <param name="stages">Each program's name followed by its arguments, in pipeline order.</param>
 	/// <param name="notFound">Reports the stage, by its index, whose program isn't on <c>PATH</c>.</param>
+	/// <param name="assignments">
+	/// Each stage's <c>NAME=VALUE</c> words, in the same order, which only that stage's program gets as <see cref="Run" />
+	/// describes, or <see langword="null" /> for none.
+	/// </param>
 	/// <remarks>
 	/// If any program isn't on <c>PATH</c>, <paramref name="notFound" /> is called for it and none of them run. Bash
 	/// would still start the others.
@@ -90,12 +100,14 @@ internal static partial class ExternalProgram
 	/// The last program's status as <see cref="Run" /> gives it, 127 when a program isn't on <c>PATH</c>, or 126 when
 	/// one couldn't start.
 	/// </returns>
-	public static int RunPipeline(string[][] stages, Action<int> notFound)
+	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null)
 	{
 		_ = stages.ArgumentNotNull();
 		_ = notFound.ArgumentNotNull();
 
-		var paths = stages.Select(stage => PathFinder.FindExecutable(stage[0])).ToArray();
+		assignments ??= [.. stages.Select(_ => Array.Empty<string>())];
+
+		var paths = stages.Select((stage, index) => PathFinder.FindExecutable(stage[0], AssignedPath(assignments[index]))).ToArray();
 
 		if (paths.Contains(null))
 		{
@@ -111,8 +123,18 @@ internal static partial class ExternalProgram
 		}
 
 		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
-		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!) : RunPipelineWithSpawn(stages, paths!);
+		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments) : RunPipelineWithSpawn(stages, paths!, assignments);
 	}
+
+	/// <summary>
+	/// Gets the value of the last <c>PATH=</c> word in <paramref name="assignments" />.
+	/// </summary>
+	/// <param name="assignments">A program's <c>NAME=VALUE</c> words.</param>
+	/// <returns>
+	/// The assigned <c>PATH</c>, or <see langword="null" /> when none of the words sets it.
+	/// </returns>
+	private static string? AssignedPath(IReadOnlyList<string> assignments) =>
+		assignments.LastOrDefault(assignment => assignment.StartsWith("PATH=", StringComparison.Ordinal))?["PATH=".Length..];
 
 	/// <summary>
 	/// Stops the program <see cref="Run" /> is waiting on, the way Ctrl+C does in other shells. Does nothing when

@@ -23,6 +23,7 @@ internal static partial class ExternalProgram
 	/// <param name="error">Where standard error goes, or <see langword="null" /> for the terminal.</param>
 	/// <param name="background"><see langword="true" /> to return without waiting; otherwise, <see langword="false" />.</param>
 	/// <param name="input">What the program reads, or <see langword="null" /> for the terminal.</param>
+	/// <param name="assignments">The <c>NAME=VALUE</c> words only this program gets in its environment.</param>
 	/// <returns>
 	/// The status as <see cref="Run" /> gives it.
 	/// </returns>
@@ -30,7 +31,7 @@ internal static partial class ExternalProgram
 	/// A file is handed to the program as is. Any other stream goes through a pipe the shell copies, except for a
 	/// background job, whose output then goes to the terminal: nobody would read the pipe once this returns.
 	/// </remarks>
-	private static int RunWithSpawn(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input)
+	private static int RunWithSpawn(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input, IReadOnlyList<string> assignments)
 	{
 		using var plumbing = new Plumbing();
 
@@ -40,12 +41,12 @@ internal static partial class ExternalProgram
 
 		// Rebuilt from the split words, so quotes the user typed don't show up in jobs. Pass the raw line instead if
 		// the listing ever has to match the input exactly.
-		var command = string.Join(' ', [commandName, .. arguments]);
+		var command = string.Join(' ', [.. assignments, commandName, .. arguments]);
 		int pid;
 
 		try
 		{
-			pid = PosixSpawn.Start(fullPath, [commandName, .. arguments], JobControl.Enabled ? 0 : -1, inputFile, outputFile, errorFile);
+			pid = PosixSpawn.Start(fullPath, [commandName, .. arguments], JobControl.Enabled ? 0 : -1, inputFile, outputFile, errorFile, assignments: assignments);
 		}
 		catch (Win32Exception exception)
 		{
@@ -84,6 +85,7 @@ internal static partial class ExternalProgram
 	/// </summary>
 	/// <param name="stages">Each program's name followed by its arguments, in pipeline order.</param>
 	/// <param name="paths">Where each program was found, in the same order.</param>
+	/// <param name="assignments">Each stage's <c>NAME=VALUE</c> words, in the same order.</param>
 	/// <returns>
 	/// The status as <see cref="RunPipeline" /> gives it.
 	/// </returns>
@@ -93,7 +95,7 @@ internal static partial class ExternalProgram
 	/// <c>head</c> does in <c>yes | head -n 3</c>, the earlier one gets SIGPIPE on its next write and ends, as in any
 	/// shell.
 	/// </remarks>
-	private static int RunPipelineWithSpawn(string[][] stages, string[] paths)
+	private static int RunPipelineWithSpawn(string[][] stages, string[] paths, string[][] assignments)
 	{
 		var pipes = new AnonymousPipeServerStream[stages.Length - 1];
 		Job? job = null;
@@ -115,9 +117,9 @@ internal static partial class ExternalProgram
 
 				try
 				{
-					var pid = PosixSpawn.Start(paths[index], stages[index], group, input, output);
+					var pid = PosixSpawn.Start(paths[index], stages[index], group, input, output, assignments: assignments[index]);
 
-					job ??= new Job(0, pid, string.Join(" | ", stages.Select(stage => string.Join(' ', stage))));
+					job ??= new Job(0, pid, string.Join(" | ", stages.Select((stage, stageIndex) => string.Join(' ', [.. assignments[stageIndex], .. stage]))));
 					job.Add(pid);
 				}
 				catch (Win32Exception exception)

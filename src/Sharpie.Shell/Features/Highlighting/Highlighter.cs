@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Features.Highlighting;
 
@@ -106,6 +107,10 @@ internal static class Highlighter
 			{
 				switch (command)
 				{
+					// NAME=VALUE words in front of the command go into its environment, so they aren't the command.
+					case null when DeclareCommand.IsAssignment(value):
+						kind = null;
+						break;
 					case null:
 						command = value;
 						kind = IsCommand(value, builtins, knownCommands) ? TokenKind.Command : TokenKind.UnknownCommand;

@@ -20,13 +20,14 @@ internal static partial class ExternalProgram
 	/// <param name="error">Where standard error goes, or <see langword="null" /> for the terminal.</param>
 	/// <param name="background"><see langword="true" /> to return without waiting; otherwise, <see langword="false" />.</param>
 	/// <param name="input">What the program reads, or <see langword="null" /> for the terminal.</param>
+	/// <param name="assignments">The <c>NAME=VALUE</c> words only this program gets in its environment.</param>
 	/// <returns>
 	/// The status as <see cref="Run" /> gives it.
 	/// </returns>
 	[SupportedOSPlatform("windows")]
-	private static int RunWithProcess(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input)
+	private static int RunWithProcess(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input, IReadOnlyList<string> assignments)
 	{
-		var startInfo = CreateStartInfo(commandName, fullPath, arguments);
+		var startInfo = CreateStartInfo(commandName, fullPath, arguments, assignments);
 
 		// A background job's output goes to the terminal even when redirected. Nobody would read its pipe once
 		// Run returns, so a chatty program would block when the pipe fills, and the caller closes the file
@@ -45,7 +46,7 @@ internal static partial class ExternalProgram
 			{
 				// Rebuilt from the split words, so quotes the user typed don't show up in jobs. Pass the raw line
 				// instead if the listing ever has to match the input exactly.
-				var job = new Job(0, process?.Id ?? 0, string.Join(' ', [commandName, .. arguments]), process);
+				var job = new Job(0, process?.Id ?? 0, string.Join(' ', [.. assignments, commandName, .. arguments]), process);
 
 				AddJob(job);
 
@@ -114,6 +115,7 @@ internal static partial class ExternalProgram
 	/// </summary>
 	/// <param name="stages">Each program's name followed by its arguments, in pipeline order.</param>
 	/// <param name="paths">Where each program was found, in the same order.</param>
+	/// <param name="assignments">Each stage's <c>NAME=VALUE</c> words, in the same order.</param>
 	/// <returns>
 	/// The status as <see cref="RunPipeline" /> gives it.
 	/// </returns>
@@ -133,7 +135,7 @@ internal static partial class ExternalProgram
 	/// </para>
 	/// </remarks>
 	[SupportedOSPlatform("windows")]
-	private static int RunPipelineWithProcesses(string[][] stages, string[] paths)
+	private static int RunPipelineWithProcesses(string[][] stages, string[] paths, string[][] assignments)
 	{
 		var processes = new List<Process>();
 
@@ -141,7 +143,7 @@ internal static partial class ExternalProgram
 		{
 			for (var index = 0; index < stages.Length; index++)
 			{
-				var startInfo = CreateStartInfo(stages[index][0], paths[index], stages[index][1..]);
+				var startInfo = CreateStartInfo(stages[index][0], paths[index], stages[index][1..], assignments[index]);
 
 				// The first program reads the terminal and the last one writes to it.
 				startInfo.RedirectStandardInput = index > 0;
@@ -217,16 +219,18 @@ internal static partial class ExternalProgram
 	/// <param name="commandName">The program name as the user typed it.</param>
 	/// <param name="fullPath">Where <see cref="PathFinder.FindExecutable" /> found the program on <c>PATH</c>.</param>
 	/// <param name="arguments">The arguments to pass to the program, each one as a separate argument.</param>
+	/// <param name="assignments">The <c>NAME=VALUE</c> words only this program gets in its environment.</param>
 	/// <returns>
 	/// Settings that start the program directly, without a shell in between.
 	/// </returns>
-	private static ProcessStartInfo CreateStartInfo(string commandName, string fullPath, string[] arguments)
+	private static ProcessStartInfo CreateStartInfo(string commandName, string fullPath, string[] arguments, IReadOnlyList<string> assignments)
 	{
 		// The typed name is passed rather than fullPath because .NET has no other way to make it the program's
 		// argv[0], which is what bash passes too. But on Unix, Process.Start looks for a bare name in the current
 		// folder and the shell's own folder before PATH, so a file planted there would run in place of the PATH
 		// program. In that case the full path is passed instead, and argv[0] becomes the full path.
-		var shadowed = File.Exists(commandName) || File.Exists(Path.Combine(AppContext.BaseDirectory, commandName));
+		// The same goes for an assigned PATH, since Process.Start searches the shell's own PATH.
+		var shadowed = File.Exists(commandName) || File.Exists(Path.Combine(AppContext.BaseDirectory, commandName)) || AssignedPath(assignments) is not null;
 
 		var startInfo = new ProcessStartInfo
 		{
@@ -237,6 +241,13 @@ internal static partial class ExternalProgram
 		foreach (var argument in arguments)
 		{
 			startInfo.ArgumentList.Add(argument);
+		}
+
+		foreach (var assignment in assignments)
+		{
+			var parts = assignment.Split('=', 2);
+
+			startInfo.Environment[parts[0]] = parts[1];
 		}
 
 		return startInfo;

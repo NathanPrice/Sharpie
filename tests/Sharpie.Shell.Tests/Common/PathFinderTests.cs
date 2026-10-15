@@ -49,6 +49,24 @@ public sealed class PathFinderTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a <c>PATH</c> passed in is searched instead of the one in the environment.
+	/// </summary>
+	[Fact]
+	public void FindExecutable_WithPathVariable_SearchesItInstead()
+	{
+		// Arrange
+		var folder = this.environment.CreateFolder();
+		var fullPath = ShellEnvironment.CreateFile(folder, "mytool", executable: true);
+		ShellEnvironment.SetPath(this.environment.CreateFolder());
+
+		// Act
+		var result = PathFinder.FindExecutable("mytool", folder);
+
+		// Assert
+		_ = result.Should().Be(fullPath);
+	}
+
+	/// <summary>
 	/// Checks that a matching file without an execute bit is ignored.
 	/// </summary>
 	[Fact]

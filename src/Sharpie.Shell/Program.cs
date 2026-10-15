@@ -496,8 +496,17 @@ internal static class Program
 			return commands["declare"].Run(only);
 		}
 
+		// NAME=VALUE words in front of a command go into that command's environment only, as in POSIX. The last word
+		// is always kept as the command, so A=1 | cat still reports A=1 as not found rather than running nothing.
+		var assignments = stages.Select(stage => stage.TakeWhile(DeclareCommand.IsAssignment).Take(stage.Length - 1).ToArray()).ToArray();
+
+		stages = [.. stages.Select((stage, index) => stage[assignments[index].Length..])];
+
 		// The word each stage's command name came from, in stage order, for a not-found report to point at.
-		var names = words.Where((word, index) => index == 0 || words[index - 1] is { IsOperator: true, Text: "|" }).ToArray();
+		var names = Enumerable.Range(0, words.Length)
+			.Where(index => index == 0 || words[index - 1] is { IsOperator: true, Text: "|" })
+			.Select((start, stage) => words[start + assignments[stage].Length])
+			.ToArray();
 		var arguments = stages[0][1..];
 
 		using var output = OpenRedirect(outputPath, appendOutput, out var outputFailed);
@@ -511,8 +520,8 @@ internal static class Program
 
 		return errorFailed ? 1
 			: stages.Length > 1 ? RunPipeline(stages)
-			: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltin(command, arguments, output, error)
-			: RunProgram(names[0], arguments, output, error, background);
+			: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltin(command, arguments, assignments[0], output, error)
+			: RunProgram(names[0], arguments, assignments[0], output, error, background);
 
 		// Opens the redirect file at path, or gives null when path is null. The file is created if missing, then
 		// emptied, or positioned at its end when append is true. Sets failed after reporting the reason when the file
@@ -564,30 +573,30 @@ internal static class Program
 
 			if (leftBuiltin is null && rightBuiltin is null)
 			{
-				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], null));
+				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], null), assignments);
 			}
 
 			if (rightBuiltin is not null)
 			{
 				_ = leftBuiltin is not null
-					? RunBuiltin(leftBuiltin, left[1..], Stream.Null, null)
-					: RunProgram(names[0], left[1..], Stream.Null, null, background: false);
+					? RunBuiltin(leftBuiltin, left[1..], assignments[0], Stream.Null, null)
+					: RunProgram(names[0], left[1..], assignments[0], Stream.Null, null, background: false);
 
-				return RunBuiltin(rightBuiltin, right[1..], null, null);
+				return RunBuiltin(rightBuiltin, right[1..], assignments[^1], null, null);
 			}
 
 			using var buffer = new MemoryStream();
 
-			_ = RunBuiltin(leftBuiltin!, left[1..], buffer, null);
+			_ = RunBuiltin(leftBuiltin!, left[1..], assignments[0], buffer, null);
 			buffer.Position = 0;
 
-			return RunProgram(names[^1], right[1..], null, null, background: false, buffer);
+			return RunProgram(names[^1], right[1..], assignments[^1], null, null, background: false, buffer);
 		}
 
-		// Runs a program on PATH, or reports that it isn't there.
-		int RunProgram(Word name, string[] arguments, Stream? output, Stream? error, bool background, Stream? input = null)
+		// Runs a program on PATH with its NAME=VALUE words in its environment, or reports that it isn't there.
+		int RunProgram(Word name, string[] arguments, string[] assignments, Stream? output, Stream? error, bool background, Stream? input = null)
 		{
-			if (ExternalProgram.Run(name.Text, arguments, output, error, background, input) is { } status)
+			if (ExternalProgram.Run(name.Text, arguments, output, error, background, input, assignments) is { } status)
 			{
 				return status;
 			}
@@ -596,34 +605,63 @@ internal static class Program
 
 			return ExternalProgram.NotFound;
 		}
+	}
 
-		// Runs a builtin with Console.Out and Console.Error pointed at output and error when given, then puts the
-		// terminal back.
-		static int RunBuiltin(ICommand command, string[] arguments, Stream? output, Stream? error)
+	/// <summary>
+	/// Runs a builtin with <see cref="Console.Out" /> and <see cref="Console.Error" /> pointed at
+	/// <paramref name="output" /> and <paramref name="error" /> when given, then puts the terminal back.
+	/// </summary>
+	/// <param name="command">The builtin.</param>
+	/// <param name="arguments">The words after the builtin's name.</param>
+	/// <param name="assignments">The <c>NAME=VALUE</c> words typed in front of the builtin's name.</param>
+	/// <param name="output">Where the builtin's output goes, or <see langword="null" /> for the terminal.</param>
+	/// <param name="error">Where the builtin's errors go, or <see langword="null" /> for the terminal.</param>
+	/// <returns>
+	/// The builtin's status.
+	/// </returns>
+	/// <remarks>
+	/// A builtin runs inside the shell, so <paramref name="assignments" /> are set in the shell's environment while it
+	/// runs, as bash does. That way <c>PATH=/opt/bin type tool</c> searches <c>/opt/bin</c>. An empty value unsets the
+	/// variable instead, because .NET can't hold an empty one, and no builtin tells the two apart.
+	/// </remarks>
+	private static int RunBuiltin(ICommand command, string[] arguments, string[] assignments, Stream? output, Stream? error)
+	{
+		// Every old value is read before any is set, so A=1 A=2 still puts back the value from before both.
+		var saved = assignments.Select(assignment => assignment.Split('=', 2))
+			.Select(parts => (Name: parts[0], Value: parts[1], Old: Environment.GetEnvironmentVariable(parts[0])))
+			.ToArray();
+		var terminalOut = Console.Out;
+		var terminalError = Console.Error;
+		var terminalColor = ShellError.UseColor;
+
+		using var outWriter = output is null ? null : new StreamWriter(output, leaveOpen: true);
+		using var errorWriter = error is null ? null : new StreamWriter(error, leaveOpen: true);
+
+		Console.SetOut(outWriter ?? terminalOut);
+		Console.SetError(errorWriter ?? terminalError);
+
+		// A report written into a 2> file shouldn't carry color codes.
+		ShellError.UseColor &= error is null;
+
+		try
 		{
-			var terminalOut = Console.Out;
-			var terminalError = Console.Error;
-			var terminalColor = ShellError.UseColor;
-
-			using var outWriter = output is null ? null : new StreamWriter(output, leaveOpen: true);
-			using var errorWriter = error is null ? null : new StreamWriter(error, leaveOpen: true);
-
-			Console.SetOut(outWriter ?? terminalOut);
-			Console.SetError(errorWriter ?? terminalError);
-
-			// A report written into a 2> file shouldn't carry color codes.
-			ShellError.UseColor &= error is null;
-
-			try
+			foreach (var (name, value, _) in saved)
 			{
-				return command.Run(arguments);
+				Environment.SetEnvironmentVariable(name, value);
 			}
-			finally
+
+			return command.Run(arguments);
+		}
+		finally
+		{
+			foreach (var (name, _, old) in saved)
 			{
-				Console.SetOut(terminalOut);
-				Console.SetError(terminalError);
-				ShellError.UseColor = terminalColor;
+				Environment.SetEnvironmentVariable(name, old);
 			}
+
+			Console.SetOut(terminalOut);
+			Console.SetError(terminalError);
+			ShellError.UseColor = terminalColor;
 		}
 	}
 

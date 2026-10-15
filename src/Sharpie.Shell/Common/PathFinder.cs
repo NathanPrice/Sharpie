@@ -11,15 +11,18 @@ internal static class PathFinder
 	/// Searches each <c>PATH</c> folder in order for an executable file named <paramref name="commandName" />.
 	/// </summary>
 	/// <param name="commandName">The bare command name to look for, such as <c>ls</c>.</param>
+	/// <param name="pathVariable">
+	/// The <c>PATH</c> to search, as in <c>PATH=/opt/bin tool</c>, or <see langword="null" /> for the shell's own.
+	/// </param>
 	/// <returns>
-	/// The full path of the first match, or <see langword="null" /> when <c>PATH</c> is unset or no folder holds an
-	/// executable file with that name.
+	/// The full path of the first match, or <see langword="null" /> when <c>PATH</c> is unset or empty, or no folder
+	/// holds an executable file with that name.
 	/// </returns>
-	public static string? FindExecutable(string commandName)
+	public static string? FindExecutable(string commandName, string? pathVariable = null)
 	{
 		_ = commandName.ArgumentNotNull();
 
-		var pathVariable = Environment.GetEnvironmentVariable("PATH");
+		pathVariable ??= Environment.GetEnvironmentVariable("PATH");
 
 		if (string.IsNullOrEmpty(pathVariable))
 		{
