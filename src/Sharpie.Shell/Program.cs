@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Serilog;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Aliases;
 using Sharpie.Shell.Features.Builtins;
@@ -125,6 +126,8 @@ internal static class Program
 	/// </returns>
 	private static int Main(string[] args)
 	{
+		AppLog.Start("shell");
+
 		// Windows consoles default to a code page without ❯ and most other non-ASCII characters, and a non-UTF-8 locale
 		// does the same on Unix. Sharpie's window decodes the shell's output as UTF-8.
 		Console.OutputEncoding = Encoding.UTF8;
@@ -396,8 +399,10 @@ internal static class Program
 
 			return process.ExitCode == 0;
 		}
-		catch (Win32Exception)
+		catch (Win32Exception exception)
 		{
+			Log.Debug(exception, "Can't start {Man} to check for a page", man);
+
 			return false;
 		}
 	}

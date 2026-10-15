@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Serilog;
 using Sharpie.Features.Ansi;
 
 namespace Sharpie.Features.Vt;
@@ -740,8 +741,9 @@ internal sealed partial class VtScreen
 			this.ManPageRequested?.Invoke(this, Encoding.UTF8.GetString(Convert.FromBase64String(encoded)));
 		}
 		// Not from the shell, since the shell always sends valid base64. Ignored like any unknown OSC.
-		catch (FormatException)
+		catch (FormatException exception)
 		{
+			Log.Debug(exception, "Ignored a man page request that isn't valid base64");
 		}
 	}
 

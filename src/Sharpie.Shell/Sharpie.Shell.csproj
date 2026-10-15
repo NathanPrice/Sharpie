@@ -32,6 +32,10 @@
   <ItemGroup>
     <!-- contentFiles excluded: Spargine adds its icon (SPARGINE-ICON-GRAPHIC-SMALL.ico) to every project that references it. -->
     <PackageReference Include="DotNetTips.Spargine.10.Core" Version="2026.10.10.1" ExcludeAssets="contentFiles" />
+    <!-- AppLog writes crashes and failures the shell otherwise hides to daily JSON files. -->
+    <PackageReference Include="Serilog" Version="4.4.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <!-- Spargine Core pulls in System.Security.Cryptography.Xml 10.0.0, which has known high severity
          vulnerabilities (NU1903). Pinned to the patched version Spargine's own Tester package uses. -->
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />

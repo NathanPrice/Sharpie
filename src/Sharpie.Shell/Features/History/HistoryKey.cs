@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using DotNetTips.Spargine.Core;
+using Serilog;
 using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Features.History;
@@ -196,8 +197,10 @@ internal static class HistoryKey
 			return process.ExitCode == 0 ? output : null;
 		}
 		// The tool isn't installed, as on a Linux box without libsecret.
-		catch (Win32Exception)
+		catch (Win32Exception exception)
 		{
+			Log.Warning(exception, "Can't start {Tool} to store the history key", path);
+
 			return null;
 		}
 	}

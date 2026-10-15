@@ -3,7 +3,9 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Styling;
 using Avalonia.Themes.Fluent;
+using Serilog;
 using Sharpie.Features.Terminal;
+using Sharpie.Shell.Common;
 
 namespace Sharpie;
 
@@ -13,14 +15,21 @@ namespace Sharpie;
 internal static class Program
 {
 	/// <summary>
-	/// Builds the Avalonia app and runs it until the last window closes.
+	/// Starts the window's log with <see cref="AppLog.Start" />, then builds the Avalonia app and runs it until the last
+	/// window closes.
 	/// </summary>
 	/// <param name="args">
 	/// The command-line arguments, passed through to Avalonia, which hands them to the window as
 	/// <see cref="IClassicDesktopStyleApplicationLifetime.Args" />.
 	/// </param>
 	[STAThread]
-	private static void Main(string[] args) => _ = AppBuilder.Configure<App>().UsePlatformDetect().StartWithClassicDesktopLifetime(args);
+	private static void Main(string[] args)
+	{
+		AppLog.Start("window");
+		Log.Information("Window started");
+
+		_ = AppBuilder.Configure<App>().UsePlatformDetect().StartWithClassicDesktopLifetime(args);
+	}
 }
 
 /// <summary>

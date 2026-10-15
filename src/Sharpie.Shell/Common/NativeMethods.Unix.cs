@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Serilog;
 
 namespace Sharpie.Shell.Common;
 
@@ -393,6 +394,8 @@ internal static unsafe partial class NativeMethods
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
+			Log.Debug(exception, "Can't read /proc/self/cmdline");
+
 			return null;
 		}
 	}

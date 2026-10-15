@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using DotNetTips.Spargine.Core;
+using Serilog;
 
 namespace Sharpie.Shell.Features.DotNetDocs;
 
@@ -120,6 +121,8 @@ internal sealed class DocsSource(HttpClient client, string cacheFolder, TimeProv
 		}
 		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException)
 		{
+			Log.Warning(exception, "Can't download {Url}, using the saved copy if there is one", url);
+
 			return file.Exists ? Read(file) : null;
 		}
 	}

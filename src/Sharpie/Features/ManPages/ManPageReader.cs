@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using DotNetTips.Spargine.Core;
+using Serilog;
 using Sharpie.Shell.Common;
 
 namespace Sharpie.Features.ManPages;
@@ -82,8 +83,10 @@ internal static class ManPageReader
 
 			return process.ExitCode == 0 && output.Length > 0 ? output : null;
 		}
-		catch (Win32Exception)
+		catch (Win32Exception exception)
 		{
+			Log.Warning(exception, "Can't start {Man}", fullPath);
+
 			return null;
 		}
 	}

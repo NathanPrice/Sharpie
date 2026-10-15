@@ -1,4 +1,5 @@
 using DotNetTips.Spargine.Core;
+using Serilog;
 
 namespace Sharpie.Shell.Features.Git;
 
@@ -60,6 +61,7 @@ internal static class GitRepository
 		// A repository that can't be read shows no branch rather than breaking the prompt.
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
+			Log.Debug(exception, "Can't read the git repository above {Directory}", directory);
 		}
 
 		return null;

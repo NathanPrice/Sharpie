@@ -15,8 +15,13 @@ internal sealed class HistorySession
 	/// <value>
 	/// <c>sharpie</c> under the user's local application data folder.
 	/// </value>
+	/// <remarks>
+	/// Without <see cref="Environment.SpecialFolderOption.DoNotVerify" />, a home with no <c>~/.local/share</c> yet
+	/// gets an empty path back, and the history and log files land in a <c>sharpie</c> folder under whatever folder the
+	/// shell was started in.
+	/// </remarks>
 	public static string Folder { get; } =
-		Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sharpie");
+		Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "sharpie");
 
 	/// <summary>
 	/// Gets the encrypted history file.

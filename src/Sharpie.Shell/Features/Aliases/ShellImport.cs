@@ -4,6 +4,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
 using DotNetTips.Spargine.Core;
+using Serilog;
 using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Features.Aliases;
@@ -151,8 +152,9 @@ internal static class ShellImport
 		{
 			output = shellPath is null ? null : Capture(shellPath, [shellPath, .. flags, "-c", script], marker, timeout ?? DefaultTimeout);
 		}
-		catch (Win32Exception)
+		catch (Win32Exception exception)
 		{
+			Log.Warning(exception, "Can't start {Shell} to import its aliases and variables", shellPath);
 			output = null;
 		}
 

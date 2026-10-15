@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using DotNetTips.Spargine.Core;
+using Serilog;
 
 namespace Sharpie.Shell.Features.Completion;
 
@@ -152,8 +153,10 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 			return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal)];
 		}
 		// A missing or non-executable script must not end the shell, so Tab falls back to normal completion.
-		catch (Win32Exception)
+		catch (Win32Exception exception)
 		{
+			Log.Warning(exception, "Can't start completion script {Script}", script);
+
 			return [];
 		}
 	}
