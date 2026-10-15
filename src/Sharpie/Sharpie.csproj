@@ -17,7 +17,7 @@
     <PackageReference Include="Porta.Pty" Version="2.2.3" />
     <!-- Spargine Core pulls in System.Security.Cryptography.Xml 10.0.0, which has known high severity
          vulnerabilities (NU1903). Pinned to the patched version Spargine's own Tester package uses. -->
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />
   </ItemGroup>
 
   <!-- icon.png is rendered from icon.svg with: rsvg-convert -w 256 Assets/icon.svg -o Assets/icon.png -->

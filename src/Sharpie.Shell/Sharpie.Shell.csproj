@@ -34,7 +34,7 @@
     <PackageReference Include="DotNetTips.Spargine.10.Core" Version="2026.10.10.1" ExcludeAssets="contentFiles" />
     <!-- Spargine Core pulls in System.Security.Cryptography.Xml 10.0.0, which has known high severity
          vulnerabilities (NU1903). Pinned to the patched version Spargine's own Tester package uses. -->
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
     <!-- dman colors the code in examples by asking the compiler what each name is: type, method, parameter or
          variable. A token-based guess can't tell a type from a variable in Console.WriteLine. -->
