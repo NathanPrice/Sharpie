@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Builtins;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
 
@@ -146,7 +147,7 @@ public sealed class CdCommandTests : IDisposable
 		_ = this.sut.Run(["my", "dir"]);
 
 		// Assert
-		_ = this.environment.Output.Should().Be("cd: too many arguments\n");
+		_ = this.environment.Error.Should().Contain("sharpie::cd::too_many_arguments");
 		_ = Directory.GetCurrentDirectory().Should().Be(this.start);
 	}
 
@@ -180,7 +181,7 @@ public sealed class CdCommandTests : IDisposable
 		_ = this.sut.Run(["nosuchfolder"]);
 
 		// Assert
-		_ = this.environment.Output.Should().Be($"cd: {missing}: No such file or directory{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::cd::not_found", $"No such folder: `{missing}`").Render(color: false));
 		_ = Directory.GetCurrentDirectory().Should().Be(this.start);
 	}
 
@@ -198,7 +199,7 @@ public sealed class CdCommandTests : IDisposable
 		_ = this.sut.Run([argument]);
 
 		// Assert
-		_ = this.environment.Output.Should().Be($"Windows path not valid on this OS: {argument}{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::cd::windows_path", $"Windows path not valid on this OS: `{argument}`").Render(color: false));
 		_ = Directory.GetCurrentDirectory().Should().Be(this.start);
 	}
 
@@ -234,7 +235,7 @@ public sealed class CdCommandTests : IDisposable
 			_ = this.sut.Run([folder]);
 
 			// Assert
-			_ = this.environment.Output.Should().Be($"Access denied: {folder}{Environment.NewLine}");
+			_ = this.environment.Error.Should().Be(new ShellError("sharpie::cd::access_denied", $"Access denied: `{folder}`").Render(color: false));
 			_ = Directory.GetCurrentDirectory().Should().Be(this.start);
 		}
 		finally
@@ -255,7 +256,7 @@ public sealed class CdCommandTests : IDisposable
 		_ = this.sut.Run(["a\0b"]);
 
 		// Assert
-		_ = this.environment.Output.Should().StartWith("Invalid path: ");
+		_ = this.environment.Error.Should().Contain("× Invalid path: ");
 		_ = Directory.GetCurrentDirectory().Should().Be(this.start);
 	}
 

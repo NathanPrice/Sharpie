@@ -20,7 +20,13 @@ public sealed class ShellProcessTests
 		var run = await ShellProcess.RunAsync("echo hi\nnosuchcommand\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().Be("$ hi\n$ nosuchcommand: command not found\n$ ");
+		_ = run.Output.Should().Be("$ hi\n$ $ ");
+		_ = run.Error.Should().Be(new ShellError("sharpie::shell::command_not_found", "Command `nosuchcommand` not found")
+		{
+			Source = "nosuchcommand",
+			End = "nosuchcommand".Length,
+			Label = "not a builtin, alias or program on PATH",
+		}.Render(color: false));
 		_ = run.Exited.Should().BeTrue();
 		_ = run.ExitCode.Should().Be(127);
 	}

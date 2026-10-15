@@ -61,7 +61,7 @@ public sealed class AliasCommandTests : IDisposable
 		_ = this.sut.Run(["missing"]);
 
 		// Assert
-		_ = this.environment.Error.Should().Be($"alias: missing: not found{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::alias::not_found", "No alias named `missing`").Render(color: false));
 		_ = this.environment.Output.Should().BeEmpty();
 	}
 
@@ -75,7 +75,7 @@ public sealed class AliasCommandTests : IDisposable
 		_ = this.sut.Run(["a/b=ls"]);
 
 		// Assert
-		_ = this.environment.Error.Should().Be($"alias: `a/b': invalid alias name{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::alias::invalid_name", "`a/b` isn't a valid alias name").Render(color: false));
 		_ = this.sut.Aliases.Should().BeEmpty();
 	}
 
@@ -140,6 +140,23 @@ public sealed class AliasCommandTests : IDisposable
 
 		// Assert
 		_ = words.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that the words an alias expands to take the position of the alias as typed, so an error in them points
+	/// at what the user typed.
+	/// </summary>
+	[Fact]
+	public void Expand_WithAlias_GivesWordsTheAliasPosition()
+	{
+		// Arrange
+		this.sut.Define("ll", "ls -la");
+
+		// Act
+		var words = this.sut.Expand(CommandLine.Split("x | ll y"), null);
+
+		// Assert
+		_ = words.Select(word => $"{word.Text}@{word.Start}-{word.End}").Should().Equal("x@0-1", "|@2-3", "ls@4-6", "-la@4-6", "y@7-8");
 	}
 
 	/// <summary>

@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Completion;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Completion;
 
@@ -26,7 +27,7 @@ public sealed class CompleteCommandTests : IDisposable
 		_ = this.sut.Run(["-p", command]);
 
 		// Assert
-		_ = this.environment.Output.Should().Be($"complete: {command}: no completion specification" + Environment.NewLine);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::complete::not_found", $"No completion is set for `{command}`").Render(color: false));
 	}
 
 	/// <summary>
@@ -125,7 +126,7 @@ public sealed class CompleteCommandTests : IDisposable
 		_ = this.sut.Run(["-p", "git"]);
 
 		// Assert
-		_ = this.environment.Output.Should().Be("complete: git: no completion specification" + Environment.NewLine);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::complete::not_found", "No completion is set for `git`").Render(color: false));
 	}
 
 	/// <summary>

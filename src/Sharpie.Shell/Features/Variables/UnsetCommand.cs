@@ -34,7 +34,7 @@ internal sealed class UnsetCommand(DeclareCommand declare) : ICommand
 			}
 			else
 			{
-				Console.Error.WriteLine($"{this.Name}: `{name}': not a valid identifier");
+				new ShellError("sharpie::unset::invalid_identifier", $"`{name}` isn't a valid variable name") { Help = DeclareCommand.IdentifierHelp }.Write();
 				status = 1;
 			}
 		}

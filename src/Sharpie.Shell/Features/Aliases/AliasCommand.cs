@@ -67,7 +67,7 @@ internal sealed partial class AliasCommand : ICommand
 			}
 			else
 			{
-				Console.Error.WriteLine($"{this.Name}: {arg}: not found");
+				new ShellError("sharpie::alias::not_found", $"No alias named `{arg}`").Write();
 				status = 1;
 			}
 		}
@@ -91,7 +91,7 @@ internal sealed partial class AliasCommand : ICommand
 		}
 		else
 		{
-			Console.Error.WriteLine($"{this.Name}: `{name}': invalid alias name");
+			new ShellError("sharpie::alias::invalid_name", $"`{name}` isn't a valid alias name").Write();
 		}
 	}
 
@@ -101,7 +101,8 @@ internal sealed partial class AliasCommand : ICommand
 	/// <param name="words">The words from <see cref="CommandLine.Split" />.</param>
 	/// <param name="variables">The shell variables that <c>$NAME</c> in an alias value expands from.</param>
 	/// <returns>
-	/// The words with every alias replaced, or the same words when none is used.
+	/// The words with every alias replaced, or the same words when none is used. Words from an alias value take the
+	/// position of the alias word, so an error in them points at what the user typed.
 	/// </returns>
 	/// <remarks>
 	/// A command name is the first word and the word after each <c>|</c> operator, including one that came from an
@@ -125,10 +126,17 @@ internal sealed partial class AliasCommand : ICommand
 
 			var used = new HashSet<string>(StringComparer.Ordinal);
 
-			while (index < result.Count && result[index] is { IsOperator: false, Text: var name } && this.aliases.TryGetValue(name, out var value) && used.Add(name))
+			while (index < result.Count && result[index] is { IsOperator: false, Text: var name } typed && this.aliases.TryGetValue(name, out var value) && used.Add(name))
 			{
+				var expansion = CommandLine.Split(value, variables);
+
+				for (var word = 0; word < expansion.Length; word++)
+				{
+					expansion[word] = expansion[word] with { Start = typed.Start, End = typed.End };
+				}
+
 				result.RemoveAt(index);
-				result.InsertRange(index, CommandLine.Split(value, variables));
+				result.InsertRange(index, expansion);
 			}
 		}
 

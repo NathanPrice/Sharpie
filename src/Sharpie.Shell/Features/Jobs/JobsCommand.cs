@@ -92,7 +92,7 @@ internal class JobsCommand : ICommand
 	{
 		if (!JobControl.Enabled)
 		{
-			Console.WriteLine($@"{command}: no job control");
+			new ShellError($"sharpie::{command}::no_job_control", "Job control is off in this shell").Write();
 
 			return null;
 		}
@@ -104,7 +104,7 @@ internal class JobsCommand : ICommand
 				return newest;
 			}
 
-			Console.WriteLine($@"{command}: current: no such job");
+			new ShellError($"sharpie::{command}::no_such_job", "There is no current job").Write();
 
 			return null;
 		}
@@ -116,7 +116,7 @@ internal class JobsCommand : ICommand
 			return found;
 		}
 
-		Console.WriteLine($@"{command}: {args[0]}: no such job");
+		new ShellError($"sharpie::{command}::no_such_job", $"No job `{args[0]}`") { Help = "jobs lists the running and stopped jobs" }.Write();
 
 		return null;
 	}

@@ -90,7 +90,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 
 		// Assert
 		_ = result.Should().Be(ExternalProgram.CannotRun);
-		_ = this.environment.Output.Should().StartWith("broken: ");
+		_ = this.environment.Error.Should().Contain("× Can't start `broken`: ");
 	}
 
 	/// <summary>
@@ -184,14 +184,15 @@ public sealed partial class ExternalProgramTests : IDisposable
 		var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
 		// Act
-		_ = ExternalProgram.RunPipeline([["spew"], ["firstline"]]);
+		_ = ExternalProgram.RunPipeline([["spew"], ["firstline"]], _ => { });
 
 		// Assert
 		_ = stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
 	}
 
 	/// <summary>
-	/// Checks that a pipeline with programs that aren't on <c>PATH</c> names each of them and runs none of the others.
+	/// Checks that a pipeline with programs that aren't on <c>PATH</c> reports each of them by index and runs none of the
+	/// others.
 	/// </summary>
 	[Fact]
 	public void RunPipeline_WithMissingPrograms_ReportsEachAndRunsNothing()
@@ -200,12 +201,14 @@ public sealed partial class ExternalProgramTests : IDisposable
 		var marker = Path.Combine(this.folder, "ran");
 		_ = ShellEnvironment.CreateFile(this.folder, "toucher", executable: true, $"#!/bin/sh\n/usr/bin/touch {marker}\n");
 
+		var missing = new List<int>();
+
 		// Act
-		var result = ExternalProgram.RunPipeline([["nope1"], ["toucher"], ["nope2"]]);
+		var result = ExternalProgram.RunPipeline([["nope1"], ["toucher"], ["nope2"]], missing.Add);
 
 		// Assert
 		_ = result.Should().Be(ExternalProgram.NotFound);
-		_ = this.environment.Output.Should().Be($"nope1: command not found{Environment.NewLine}nope2: command not found{Environment.NewLine}");
+		_ = missing.Should().Equal(0, 2);
 		_ = File.Exists(marker).Should().BeFalse();
 	}
 
@@ -224,7 +227,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.folder, "last", executable: true, $"#!/bin/sh\nexit {last}\n");
 
 		// Act
-		var result = ExternalProgram.RunPipeline([["first"], ["last"]]);
+		var result = ExternalProgram.RunPipeline([["first"], ["last"]], _ => { });
 
 		// Assert
 		_ = result.Should().Be(last);
@@ -241,7 +244,7 @@ public sealed partial class ExternalProgramTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.folder, "broken", executable: true, "not a program");
 
 		// Act
-		var result = ExternalProgram.RunPipeline([["fine"], ["broken"]]);
+		var result = ExternalProgram.RunPipeline([["fine"], ["broken"]], _ => { });
 
 		// Assert
 		_ = result.Should().Be(ExternalProgram.CannotRun);

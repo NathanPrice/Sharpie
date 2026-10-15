@@ -129,6 +129,15 @@ internal static class Program
 		// does the same on Unix. Sharpie's window decodes the shell's output as UTF-8.
 		Console.OutputEncoding = Encoding.UTF8;
 
+		// Error reports are colored only on a terminal, and a Windows console prints the color codes as text until
+		// escape handling is on.
+		if (!Console.IsErrorRedirected && OperatingSystem.IsWindows())
+		{
+			NativeMethods.EnableVirtualTerminalOutput();
+		}
+
+		ShellError.UseColor = !Console.IsErrorRedirected;
+
 		if (args is [ShellImport.PrintEnvironmentOption])
 		{
 			ShellImport.PrintEnvironment();
@@ -138,7 +147,7 @@ internal static class Program
 
 		if (ShellOptions.Parse(NativeMethods.ProgramName(), args, out var error) is not { } options)
 		{
-			Console.Error.WriteLine($"sharpie: {error}");
+			new ShellError("sharpie::options::invalid", error!).Write();
 
 			return 2;
 		}
@@ -440,7 +449,10 @@ internal static class Program
 	/// <param name="commands">The builtins, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
 	/// <param name="variables">The shell variables that <c>$NAME</c> expands to.</param>
-	/// <param name="line">The command, with no <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> left in it.</param>
+	/// <param name="line">
+	/// The command, with no <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> left in it, which error reports show and point
+	/// into.
+	/// </param>
 	/// <returns>
 	/// The command's status: <see cref="ExternalProgram.NotFound" /> when it isn't found, 1 when a redirect file
 	/// can't be opened, and <see cref="CommandList.UnsupportedStatus" /> when it holds an operator the shell can't run.
@@ -468,9 +480,7 @@ internal static class Program
 		// Operators the shell can't run yet, like < or 2>&1, are refused rather than passed on as arguments.
 		if (stages is [])
 		{
-			var unusable = Array.Find(words, word => word is { IsOperator: true, Text: not "|" }).Text ?? "|";
-
-			Console.Error.WriteLine($"sharpie: can't use '{unusable}' here");
+			ReportUnusable(line, words);
 
 			return CommandList.UnsupportedStatus;
 		}
@@ -481,7 +491,8 @@ internal static class Program
 			return commands["declare"].Run(only);
 		}
 
-		var commandName = stages[0][0];
+		// The word each stage's command name came from, in stage order, for a not-found report to point at.
+		var names = words.Where((word, index) => index == 0 || words[index - 1] is { IsOperator: true, Text: "|" }).ToArray();
 		var arguments = stages[0][1..];
 
 		using var output = OpenRedirect(outputPath, appendOutput, out var outputFailed);
@@ -494,30 +505,36 @@ internal static class Program
 		using var error = OpenRedirect(errorPath, appendError, out var errorFailed);
 
 		return errorFailed ? 1
-			: stages.Length > 1 ? RunPipeline(commands, stages)
-			: commands.TryGetValue(commandName, out var command) ? RunBuiltin(command, arguments, output, error)
-			: RunProgram(commandName, arguments, output, error, background);
+			: stages.Length > 1 ? RunPipeline(stages)
+			: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltin(command, arguments, output, error)
+			: RunProgram(names[0], arguments, output, error, background);
 
 		// Opens the redirect file at path, or gives null when path is null. The file is created if missing, then
-		// emptied, or positioned at its end when append is true. Sets failed after printing the reason when the file
+		// emptied, or positioned at its end when append is true. Sets failed after reporting the reason when the file
 		// can't be opened.
-		static FileStream? OpenRedirect(string? path, bool append, out bool failed)
+		FileStream? OpenRedirect(Word? path, bool append, out bool failed)
 		{
 			failed = false;
 
-			if (path is null)
+			if (path is not { } file)
 			{
 				return null;
 			}
 
 			try
 			{
-				return append ? new FileStream(path, FileMode.Append) : File.Create(path);
+				return append ? new FileStream(file.Text, FileMode.Append) : File.Create(file.Text);
 			}
 			// A missing folder, a read-only file, or an empty name like > "" would otherwise end the whole shell.
 			catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
 			{
-				Console.Error.WriteLine($"{path}: {exception.Message}");
+				new ShellError("sharpie::shell::redirect_failed", $"Can't open `{file.Text}` for writing")
+				{
+					Source = line,
+					Start = file.Start,
+					End = file.End,
+					Label = exception.Message,
+				}.Write();
 				failed = true;
 
 				return null;
@@ -533,7 +550,7 @@ internal static class Program
 		// stages builtins aren't looked up, so echo runs the program on PATH and type isn't found. Handling them
 		// there means running the stages before the last builtin into Stream.Null.
 		// The status is the last stage's, as in bash without pipefail.
-		static int RunPipeline(Dictionary<string, ICommand> commands, string[][] stages)
+		int RunPipeline(string[][] stages)
 		{
 			var left = stages[0];
 			var right = stages[^1];
@@ -542,14 +559,14 @@ internal static class Program
 
 			if (leftBuiltin is null && rightBuiltin is null)
 			{
-				return ExternalProgram.RunPipeline(stages);
+				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], null));
 			}
 
 			if (rightBuiltin is not null)
 			{
 				_ = leftBuiltin is not null
 					? RunBuiltin(leftBuiltin, left[1..], Stream.Null, null)
-					: RunProgram(left[0], left[1..], Stream.Null, null, background: false);
+					: RunProgram(names[0], left[1..], Stream.Null, null, background: false);
 
 				return RunBuiltin(rightBuiltin, right[1..], null, null);
 			}
@@ -559,18 +576,18 @@ internal static class Program
 			_ = RunBuiltin(leftBuiltin!, left[1..], buffer, null);
 			buffer.Position = 0;
 
-			return RunProgram(right[0], right[1..], null, null, background: false, buffer);
+			return RunProgram(names[^1], right[1..], null, null, background: false, buffer);
 		}
 
-		// Runs a program on PATH, or says it isn't there.
-		static int RunProgram(string commandName, string[] arguments, Stream? output, Stream? error, bool background, Stream? input = null)
+		// Runs a program on PATH, or reports that it isn't there.
+		int RunProgram(Word name, string[] arguments, Stream? output, Stream? error, bool background, Stream? input = null)
 		{
-			if (ExternalProgram.Run(commandName, arguments, output, error, background, input) is { } status)
+			if (ExternalProgram.Run(name.Text, arguments, output, error, background, input) is { } status)
 			{
 				return status;
 			}
 
-			Console.WriteLine($@"{commandName}: command not found");
+			ReportNotFound(commands, aliases, line, name, error);
 
 			return ExternalProgram.NotFound;
 		}
@@ -581,12 +598,16 @@ internal static class Program
 		{
 			var terminalOut = Console.Out;
 			var terminalError = Console.Error;
+			var terminalColor = ShellError.UseColor;
 
 			using var outWriter = output is null ? null : new StreamWriter(output, leaveOpen: true);
 			using var errorWriter = error is null ? null : new StreamWriter(error, leaveOpen: true);
 
 			Console.SetOut(outWriter ?? terminalOut);
 			Console.SetError(errorWriter ?? terminalError);
+
+			// A report written into a 2> file shouldn't carry color codes.
+			ShellError.UseColor &= error is null;
 
 			try
 			{
@@ -596,8 +617,85 @@ internal static class Program
 			{
 				Console.SetOut(terminalOut);
 				Console.SetError(terminalError);
+				ShellError.UseColor = terminalColor;
 			}
 		}
+	}
+
+	/// <summary>
+	/// Reports the operator that keeps <paramref name="words" /> from running, pointing at where it was typed.
+	/// </summary>
+	/// <param name="line">The command as typed.</param>
+	/// <param name="words">
+	/// The command's words, which <see cref="CommandLine.SplitPipeline" /> refused. Either some operator other than
+	/// <c>|</c> is left in them, or a <c>|</c> has no command on one side.
+	/// </param>
+	private static void ReportUnusable(string line, Word[] words)
+	{
+		var index = Array.FindIndex(words, word => word is { IsOperator: true, Text: not "|" });
+
+		if (index < 0)
+		{
+			index = Array.FindIndex(words, word => word.IsOperator);
+
+			while (index > 0 && index < words.Length - 1 && !words[index + 1].IsOperator)
+			{
+				index = Array.FindIndex(words, index + 1, word => word.IsOperator);
+			}
+		}
+
+		var unusable = words[index];
+
+		new ShellError("sharpie::parser::unsupported_operator", $"`{unusable.Text}` can't be used here")
+		{
+			Source = line,
+			Start = unusable.Start,
+			End = unusable.End,
+			Label = unusable.Text switch
+			{
+				"|" => "needs a command on both sides",
+				">" or ">>" or "1>" or "1>>" or "2>" or "2>>" => "needs a file name after it",
+				_ => "Sharpie can't run this operator yet",
+			},
+		}.Write();
+	}
+
+	/// <summary>
+	/// Reports that a command is neither a builtin, an alias nor a program on <c>PATH</c>, suggesting a close name
+	/// that is.
+	/// </summary>
+	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="aliases">The <c>alias</c> builtin.</param>
+	/// <param name="line">The command as typed.</param>
+	/// <param name="name">The word the command name came from.</param>
+	/// <param name="error">
+	/// The command's <c>2&gt;</c> file, which gets the report as bash's does, or <see langword="null" /> for the
+	/// shell's standard error.
+	/// </param>
+	private static void ReportNotFound(Dictionary<string, ICommand> commands, AliasCommand aliases, string line, Word name, Stream? error)
+	{
+		var suggestion = ShellError.DidYouMean(name.Text, commands.Keys.Concat(aliases.Aliases.Keys).Concat(PathFinder.FindFileNames()))
+			.FirstOrDefault(match => commands.ContainsKey(match) || aliases.Aliases.ContainsKey(match) || PathFinder.FindExecutable(match) is not null);
+
+		var report = new ShellError("sharpie::shell::command_not_found", $"Command `{name.Text}` not found")
+		{
+			Source = line,
+			Start = name.Start,
+			End = name.End,
+			Label = "not a builtin, alias or program on PATH",
+			Help = suggestion is null ? null : $"did you mean `{suggestion}`?",
+		};
+
+		if (error is null)
+		{
+			report.Write();
+
+			return;
+		}
+
+		using var writer = new StreamWriter(error, leaveOpen: true);
+
+		writer.Write(report.Render(color: false));
 	}
 
 	/// <summary>

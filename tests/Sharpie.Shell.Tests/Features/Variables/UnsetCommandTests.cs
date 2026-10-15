@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Variables;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Variables;
 
@@ -72,7 +73,7 @@ public sealed class UnsetCommandTests : IDisposable
 		_ = this.sut.Run([SampleVariable, name]);
 
 		// Assert
-		_ = this.environment.Error.Should().Be($"unset: `{name}': not a valid identifier{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::unset::invalid_identifier", $"`{name}` isn't a valid variable name") { Help = DeclareCommand.IdentifierHelp }.Render(color: false));
 	}
 
 	/// <summary>

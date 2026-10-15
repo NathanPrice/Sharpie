@@ -78,12 +78,12 @@ internal class HistoryCommand : ICommand
 		}
 		catch (Exception e) when (e is FileNotFoundException or System.IO.DirectoryNotFoundException)
 		{
-			Console.Error.WriteLine($"history: {path}: No such file or directory");
+			new ShellError("sharpie::history::file_not_found", $"No such file: `{path}`").Write();
 		}
 		// ArgumentException is an empty path, like history -r "", which would otherwise end the whole shell.
 		catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
 		{
-			Console.Error.WriteLine($"history: {path}: {e.Message}");
+			new ShellError("sharpie::history::file_error", $"`{path}`: {e.Message}").Write();
 		}
 
 		return null;
@@ -119,12 +119,12 @@ internal class HistoryCommand : ICommand
 		}
 		catch (System.IO.DirectoryNotFoundException)
 		{
-			Console.Error.WriteLine($"history: {path}: No such file or directory");
+			new ShellError("sharpie::history::file_not_found", $"No such file: `{path}`").Write();
 		}
 		// ArgumentException is an empty path, like history -r "", which would otherwise end the whole shell.
 		catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
 		{
-			Console.Error.WriteLine($"history: {path}: {e.Message}");
+			new ShellError("sharpie::history::file_error", $"`{path}`: {e.Message}").Write();
 		}
 
 		return false;
@@ -212,7 +212,7 @@ internal class HistoryCommand : ICommand
 		var count = this.Lines.Count;
 		if (args.Length > 0 && (!int.TryParse(args[0], out count) || !count.CheckIsInRange(0, int.MaxValue)))
 		{
-			Console.Error.WriteLine($"history: {args[0]}: numeric argument required");
+			new ShellError("sharpie::history::not_a_number", $"`{args[0]}` isn't a number") { Help = "history N shows the last N lines" }.Write();
 
 			return 1;
 		}

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using DotNetTips.Spargine.Core;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Features.History;
 
@@ -63,7 +64,7 @@ internal static class HistoryFile
 
 			if (info.LinkTarget is not null)
 			{
-				Console.Error.WriteLine($"history: {folder} is a symbolic link, so history won't be saved");
+				new ShellError("sharpie::history::symbolic_link", $"`{folder}` is a symbolic link, so history won't be saved").Write();
 
 				return false;
 			}
@@ -73,14 +74,14 @@ internal static class HistoryFile
 				return true;
 			}
 
-			Console.Error.WriteLine($"history: {folder} is writable by other users, so history won't be saved");
+			new ShellError("sharpie::history::unsafe_folder", $"`{folder}` is writable by other users, so history won't be saved").Write();
 
 			return false;
 
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
-			Console.Error.WriteLine($"history: {exception.Message}");
+			new ShellError("sharpie::history::file_error", exception.Message).Write();
 
 			return false;
 		}
@@ -135,13 +136,13 @@ internal static class HistoryFile
 		}
 		catch (CryptographicException)
 		{
-			Console.Error.WriteLine($"history: {path} was changed or saved with another key, so it was left alone");
+			new ShellError("sharpie::history::changed_elsewhere", $"`{path}` was changed or saved with another key, so it was left alone").Write();
 
 			return null;
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
-			Console.Error.WriteLine($"history: {exception.Message}");
+			new ShellError("sharpie::history::file_error", exception.Message).Write();
 
 			return null;
 		}
@@ -186,7 +187,7 @@ internal static class HistoryFile
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
-			Console.Error.WriteLine($"history: {exception.Message}");
+			new ShellError("sharpie::history::file_error", exception.Message).Write();
 
 			return false;
 		}
@@ -279,7 +280,7 @@ internal static class HistoryFile
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
-			Console.Error.WriteLine($"history: {exception.Message}");
+			new ShellError("sharpie::history::file_error", exception.Message).Write();
 			File.Delete(temporaryPath);
 
 			return false;

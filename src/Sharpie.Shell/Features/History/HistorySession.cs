@@ -1,4 +1,5 @@
 using DotNetTips.Spargine.Core;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Features.History;
 
@@ -221,7 +222,7 @@ internal sealed class HistorySession
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
 		{
-			Console.Error.WriteLine($"history: {exception.Message}");
+			new ShellError("sharpie::history::file_error", exception.Message).Write();
 		}
 
 		Console.Error.WriteLine($"history: imported {imported.Count} lines from {histFile} into encrypted history; {histFile} is still plain text");

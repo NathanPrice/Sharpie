@@ -49,7 +49,7 @@ internal static partial class ExternalProgram
 		}
 		catch (Win32Exception exception)
 		{
-			Console.WriteLine($@"{commandName}: {exception.Message}");
+			new ShellError("sharpie::shell::cannot_start", $"Can't start `{commandName}`: {exception.Message}").Write();
 
 			return CannotRun;
 		}
@@ -122,7 +122,7 @@ internal static partial class ExternalProgram
 				}
 				catch (Win32Exception exception)
 				{
-					Console.WriteLine($@"{stages[index][0]}: {exception.Message}");
+					new ShellError("sharpie::shell::cannot_start", $"Can't start `{stages[index][0]}`: {exception.Message}").Write();
 
 					// The ones already running would otherwise be left behind, the first of them still reading the
 					// terminal.

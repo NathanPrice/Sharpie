@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using DotNetTips.Spargine.Core;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Features.History;
 
@@ -53,7 +54,7 @@ internal static class HistoryKey
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or CryptographicException)
 		{
-			Console.Error.WriteLine($"history: {exception.Message}");
+			new ShellError("sharpie::history::key_error", exception.Message).Write();
 			return null;
 		}
 	}

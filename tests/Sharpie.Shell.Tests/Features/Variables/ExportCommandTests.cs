@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Variables;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Variables;
 
@@ -87,7 +88,7 @@ public sealed class ExportCommandTests : IDisposable
 		_ = this.sut.Run([argument, $"{SampleVariable}=kept"]);
 
 		// Assert
-		_ = this.environment.Error.Should().Be($"export: `{argument}': not a valid identifier{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::export::invalid_identifier", $"`{argument}` isn't a valid variable name") { Help = DeclareCommand.IdentifierHelp }.Render(color: false));
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("kept");
 	}
 

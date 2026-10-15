@@ -44,7 +44,7 @@ internal sealed class ExportCommand(DeclareCommand declare) : ICommand
 
 			if (!DeclareCommand.IsIdentifier(parts[0]))
 			{
-				Console.Error.WriteLine($"{this.Name}: `{arg}': not a valid identifier");
+				new ShellError("sharpie::export::invalid_identifier", $"`{arg}` isn't a valid variable name") { Help = DeclareCommand.IdentifierHelp }.Write();
 				status = 1;
 			}
 			else if (parts.Length == 2)

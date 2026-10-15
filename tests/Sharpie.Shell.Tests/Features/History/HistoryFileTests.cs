@@ -242,7 +242,7 @@ public sealed class HistoryFileTests : IDisposable
 
 		// Assert
 		_ = prepared.Should().BeFalse();
-		_ = this.environment.Error.Should().Contain($"history: {link} is a symbolic link, so history won't be saved");
+		_ = this.environment.Error.Should().Contain($"× `{link}` is a symbolic link, so history won't be saved");
 	}
 
 	/// <summary>
@@ -260,7 +260,7 @@ public sealed class HistoryFileTests : IDisposable
 
 		// Assert
 		_ = prepared.Should().BeFalse();
-		_ = this.environment.Error.Should().Contain($"history: {folder} is writable by other users, so history won't be saved");
+		_ = this.environment.Error.Should().Contain($"× `{folder}` is writable by other users, so history won't be saved");
 	}
 
 	/// <summary>
@@ -277,7 +277,7 @@ public sealed class HistoryFileTests : IDisposable
 
 		// Assert
 		_ = prepared.Should().BeFalse();
-		_ = this.environment.Error.Should().Contain("history: ");
+		_ = this.environment.Error.Should().Contain("sharpie::history::");
 	}
 
 	/// <summary>
@@ -293,7 +293,7 @@ public sealed class HistoryFileTests : IDisposable
 		_ = HistoryFile.Load(this.path, this.key);
 
 		// Assert
-		_ = this.environment.Error.Should().Contain($"history: {this.path} was changed or saved with another key, so it was left alone");
+		_ = this.environment.Error.Should().Contain($"× `{this.path}` was changed or saved with another key, so it was left alone");
 	}
 
 	/// <summary>
@@ -311,7 +311,7 @@ public sealed class HistoryFileTests : IDisposable
 
 		// Assert
 		_ = lines.Should().BeNull();
-		_ = this.environment.Error.Should().Contain("history: ");
+		_ = this.environment.Error.Should().Contain("sharpie::history::");
 	}
 
 	/// <summary>
@@ -423,7 +423,7 @@ public sealed class HistoryFileTests : IDisposable
 		// Assert
 		_ = appended.Should().BeFalse();
 		_ = clock.Elapsed.Should().BeGreaterThan(TimeSpan.FromMilliseconds(500));
-		_ = this.environment.Error.Should().Contain("history: ");
+		_ = this.environment.Error.Should().Contain("sharpie::history::");
 		_ = HistoryFile.Load(this.path, this.key).Should().Equal("echo hi");
 	}
 
@@ -441,7 +441,7 @@ public sealed class HistoryFileTests : IDisposable
 
 		// Assert
 		_ = appended.Should().BeFalse();
-		_ = this.environment.Error.Should().Contain("history: ");
+		_ = this.environment.Error.Should().Contain("sharpie::history::");
 	}
 
 	/// <summary>
@@ -476,7 +476,7 @@ public sealed class HistoryFileTests : IDisposable
 
 		// Assert
 		_ = saved.Should().BeFalse();
-		_ = this.environment.Error.Should().Contain("history: ");
+		_ = this.environment.Error.Should().Contain("sharpie::history::");
 		_ = Directory.GetFileSystemEntries(Path.GetDirectoryName(this.path)!).Should().Equal(this.path);
 	}
 

@@ -81,17 +81,19 @@ internal static partial class ExternalProgram
 	/// standard input, and waits for all of them to finish.
 	/// </summary>
 	/// <param name="stages">Each program's name followed by its arguments, in pipeline order.</param>
+	/// <param name="notFound">Reports the stage, by its index, whose program isn't on <c>PATH</c>.</param>
 	/// <remarks>
-	/// If any program isn't on <c>PATH</c>, its name is reported and none of them run. Bash would still start the
-	/// others.
+	/// If any program isn't on <c>PATH</c>, <paramref name="notFound" /> is called for it and none of them run. Bash
+	/// would still start the others.
 	/// </remarks>
 	/// <returns>
 	/// The last program's status as <see cref="Run" /> gives it, 127 when a program isn't on <c>PATH</c>, or 126 when
 	/// one couldn't start.
 	/// </returns>
-	public static int RunPipeline(string[][] stages)
+	public static int RunPipeline(string[][] stages, Action<int> notFound)
 	{
 		_ = stages.ArgumentNotNull();
+		_ = notFound.ArgumentNotNull();
 
 		var paths = stages.Select(stage => PathFinder.FindExecutable(stage[0])).ToArray();
 
@@ -101,7 +103,7 @@ internal static partial class ExternalProgram
 			{
 				if (paths[index] is null)
 				{
-					Console.WriteLine($@"{stages[index][0]}: command not found");
+					notFound(index);
 				}
 			}
 

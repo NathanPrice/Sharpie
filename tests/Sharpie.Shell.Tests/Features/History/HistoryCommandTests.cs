@@ -95,7 +95,7 @@ public sealed class HistoryCommandTests : IDisposable
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
-		_ = this.environment.Error.Should().Contain($"history: {count}: numeric argument required{Environment.NewLine}");
+		_ = this.environment.Error.Should().Contain($"× `{count}` isn't a number");
 	}
 
 	/// <summary>
@@ -136,7 +136,7 @@ public sealed class HistoryCommandTests : IDisposable
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
 		_ = this.sut.Lines.Should().Equal($"history -r {path}", "echo hello", "echo world");
-		_ = this.environment.Error.Should().NotContain("history:");
+		_ = this.environment.Error.Should().NotContain("sharpie::history::");
 	}
 
 	/// <summary>
@@ -155,7 +155,7 @@ public sealed class HistoryCommandTests : IDisposable
 		// Assert
 		_ = this.sut.Lines.Should().Equal("echo hi");
 		_ = this.environment.Output.Should().BeEmpty();
-		_ = this.environment.Error.Should().Contain($"history: {path}: No such file or directory{Environment.NewLine}");
+		_ = this.environment.Error.Should().Contain($"× No such file: `{path}`");
 	}
 
 	/// <summary>
@@ -190,7 +190,7 @@ public sealed class HistoryCommandTests : IDisposable
 		_ = this.sut.Run(["-r", string.Empty]);
 
 		// Assert
-		_ = this.environment.Error.Should().Contain("history: : ");
+		_ = this.environment.Error.Should().Contain("× ``: ");
 		_ = this.sut.Lines.Should().BeEmpty();
 	}
 
@@ -213,7 +213,7 @@ public sealed class HistoryCommandTests : IDisposable
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
 		_ = File.ReadAllLines(path).Should().Equal("one", "two", "three");
-		_ = this.environment.Error.Should().NotContain("history:");
+		_ = this.environment.Error.Should().NotContain("sharpie::history::");
 	}
 
 	/// <summary>
@@ -251,7 +251,7 @@ public sealed class HistoryCommandTests : IDisposable
 		_ = this.sut.Run(["-a", path]);
 
 		// Assert
-		_ = this.environment.Error.Should().Contain($"history: {missing}: No such file or directory{Environment.NewLine}");
+		_ = this.environment.Error.Should().Contain($"× No such file: `{missing}`");
 		_ = File.ReadAllLines(path).Should().Equal("one");
 	}
 
@@ -265,7 +265,7 @@ public sealed class HistoryCommandTests : IDisposable
 		_ = this.sut.Run(["-w", string.Empty]);
 
 		// Assert
-		_ = this.environment.Error.Should().Contain("history: : ");
+		_ = this.environment.Error.Should().Contain("× ``: ");
 	}
 
 	/// <summary>

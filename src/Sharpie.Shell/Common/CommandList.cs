@@ -46,9 +46,25 @@ internal static class CommandList
 	/// next run as <c>a &amp;&amp; b</c>, as POSIX allows. Command substitution is refused, not passed on as text, so
 	/// a command meant to get the output of another never runs with the wrong arguments.
 	/// </remarks>
-	public static IReadOnlyList<(string Operator, string Command)>? Split(string line)
+	public static IReadOnlyList<(string Operator, string Command)>? Split(string line) => SplitOrRefuse(line, out _);
+
+	/// <summary>
+	/// Cuts <paramref name="line" /> into its commands, as <see cref="Split" /> describes.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="refused">
+	/// When this method returns <see langword="null" />, contains where the <c>$(</c> or backquote starts; otherwise,
+	/// -1.
+	/// </param>
+	/// <returns>
+	/// The commands, or <see langword="null" /> when the line uses command substitution.
+	/// </returns>
+	private static List<(string Operator, string Command)>? SplitOrRefuse(string line, out int refused)
 	{
 		_ = line.ArgumentNotNull();
+
+		// Stryker disable once Unary : refused is only read when the line is refused, and every refusal sets it.
+		refused = -1;
 
 		var commands = new List<(string Operator, string Command)>();
 		var command = new StringBuilder();
@@ -74,6 +90,8 @@ internal static class CommandList
 
 			if (character == '`' || (character == '$' && index + 1 < line.Length && line[index + 1] == '('))
 			{
+				refused = index;
+
 				return null;
 			}
 
@@ -170,9 +188,16 @@ internal static class CommandList
 	{
 		_ = run.ArgumentNotNull();
 
-		if (Split(line) is not { } commands)
+		if (SplitOrRefuse(line, out var refused) is not { } commands)
 		{
-			Console.Error.WriteLine("sharpie: $(...) and `...` aren't supported");
+			new ShellError("sharpie::parser::command_substitution", "Command substitution isn't supported")
+			{
+				Source = line,
+				Start = refused,
+				End = refused + (line[refused] == '`' ? 1 : 2),
+				Label = "runs a command for its output",
+				Help = "run the inner command on its own line, or quote it to pass it as text",
+			}.Write();
 
 			return UnsupportedStatus;
 		}

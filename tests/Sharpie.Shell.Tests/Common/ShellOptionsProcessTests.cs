@@ -81,7 +81,7 @@ public sealed class ShellOptionsProcessTests : IDisposable
 
 		// Assert
 		_ = run.Output.Should().BeEmpty();
-		_ = run.Error.Should().Be("sharpie: $(...) and `...` aren't supported\n");
+		_ = run.Error.Should().Contain("sharpie::parser::command_substitution");
 		_ = run.ExitCode.Should().Be(CommandList.UnsupportedStatus);
 	}
 
@@ -91,8 +91,8 @@ public sealed class ShellOptionsProcessTests : IDisposable
 	/// <param name="args">The arguments.</param>
 	/// <param name="expected">The error line.</param>
 	[Theory]
-	[InlineData(new[] { "-x" }, "sharpie: -x: invalid option\n")]
-	[InlineData(new[] { "-c" }, "sharpie: -c: option requires an argument\n")]
+	[InlineData(new[] { "-x" }, "-x: invalid option")]
+	[InlineData(new[] { "-c" }, "-c: option requires an argument")]
 	public async Task Shell_WithBadArguments_ExitsTwo(string[] args, string expected)
 	{
 		// Act
@@ -100,7 +100,7 @@ public sealed class ShellOptionsProcessTests : IDisposable
 
 		// Assert
 		_ = run.Output.Should().BeEmpty();
-		_ = run.Error.Should().Be(expected);
+		_ = run.Error.Should().Be(new ShellError("sharpie::options::invalid", expected).Render(color: false));
 		_ = run.ExitCode.Should().Be(2);
 	}
 
@@ -113,7 +113,7 @@ public sealed class ShellOptionsProcessTests : IDisposable
 	/// <param name="expectedCode">The expected exit code.</param>
 	[Theory]
 	[InlineData(new[] { "-i", "-c", "samplegreet" }, "hello\n", 0)]
-	[InlineData(new[] { "-c", "samplegreet" }, "samplegreet: command not found\n", 127)]
+	[InlineData(new[] { "-c", "samplegreet" }, "", 127)]
 	public async Task Shell_WithCommandOption_RunsStartupFileOnlyWhenInteractive(string[] args, string expectedOutput, int expectedCode)
 	{
 		// Arrange
@@ -200,7 +200,8 @@ public sealed class ShellOptionsProcessTests : IDisposable
 		var run = await ShellProcess.RunAsync("false; echo $?\ncd /nonexistent-sharpie-folder && echo no || echo yes\necho $?\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().Be("$ 1\n$ cd: /nonexistent-sharpie-folder: No such file or directory\nyes\n$ 0\n$ ");
+		_ = run.Output.Should().Be("$ 1\n$ yes\n$ 0\n$ ");
+		_ = run.Error.Should().Be(new ShellError("sharpie::cd::not_found", "No such folder: `/nonexistent-sharpie-folder`").Render(color: false));
 		_ = run.ExitCode.Should().Be(0);
 	}
 

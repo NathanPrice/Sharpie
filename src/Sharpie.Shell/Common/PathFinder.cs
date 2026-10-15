@@ -39,10 +39,32 @@ internal static class PathFinder
 	/// The matching file names without their folders, in <c>PATH</c> order. A name found in more than one folder
 	/// appears more than once. Empty when <c>PATH</c> is unset.
 	/// </returns>
-	public static IEnumerable<string> FindExecutableNames(string prefix)
-	{
-		_ = prefix.ArgumentNotNull();
+	public static IEnumerable<string> FindExecutableNames(string prefix) =>
+		FindFiles(prefix.ArgumentNotNull()).Where(IsExecutable).Select(file => Path.GetFileName(file));
 
+	/// <summary>
+	/// Lists the names of every file in the <c>PATH</c> folders, without checking whether each can run.
+	/// </summary>
+	/// <returns>
+	/// The file names without their folders, in <c>PATH</c> order. A name found in more than one folder appears more
+	/// than once. Empty when <c>PATH</c> is unset.
+	/// </returns>
+	/// <remarks>
+	/// Checking the execute bit reads each file's details, and <c>PATH</c> on Linux holds thousands of files. The
+	/// command-not-found suggestion only needs the few names close to what was typed, and checks just those with
+	/// <see cref="FindExecutable" />.
+	/// </remarks>
+	public static IEnumerable<string> FindFileNames() => FindFiles(string.Empty).Select(file => Path.GetFileName(file));
+
+	/// <summary>
+	/// Lists the files in the <c>PATH</c> folders whose names start with <paramref name="prefix" />.
+	/// </summary>
+	/// <param name="prefix">The start of the file name, or empty for every file.</param>
+	/// <returns>
+	/// The full paths, in <c>PATH</c> order. Empty when <c>PATH</c> is unset.
+	/// </returns>
+	private static IEnumerable<string> FindFiles(string prefix)
+	{
 		var pathVariable = Environment.GetEnvironmentVariable("PATH");
 
 		if (string.IsNullOrEmpty(pathVariable))
@@ -66,12 +88,10 @@ internal static class PathFinder
 
 			foreach (var file in files)
 			{
-				var name = Path.GetFileName(file);
-
 				// A * or ? typed in prefix acts as a wildcard in the search pattern, so check the real prefix too.
-				if (name.StartsWith(prefix, StringComparison.Ordinal) && IsExecutable(file))
+				if (Path.GetFileName(file.AsSpan()).StartsWith(prefix, StringComparison.Ordinal))
 				{
-					yield return name;
+					yield return file;
 				}
 			}
 		}

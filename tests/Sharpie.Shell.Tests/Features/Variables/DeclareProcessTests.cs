@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Variables;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Variables;
 
@@ -33,7 +34,7 @@ public sealed class DeclareProcessTests
 		var run = await ShellProcess.RunAsync("declare -p missing_variable\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Error.Should().Be("declare: missing_variable: not found\n");
+		_ = run.Error.Should().Be(new ShellError("sharpie::declare::not_found", "No variable named `missing_variable`").Render(color: false));
 		_ = run.Output.Should().Be("$ $ ");
 		_ = run.Exited.Should().BeTrue();
 	}
@@ -51,7 +52,7 @@ public sealed class DeclareProcessTests
 
 		// Assert
 		_ = run.Output.Should().Be("$ $ declare -- foo=\"bar\"\n$ $ $ declare -- foo=\"bar2\"\n$ ");
-		_ = run.Error.Should().Be("declare: missing_variable: not found\n");
+		_ = run.Error.Should().Be(new ShellError("sharpie::declare::not_found", "No variable named `missing_variable`").Render(color: false));
 		_ = run.Exited.Should().BeTrue();
 	}
 

@@ -158,7 +158,7 @@ internal static class ShellImport
 
 		if (output is null || Parse(output, marker) is not var (environment, found))
 		{
-			Console.Error.WriteLine($"sharpie: couldn't read settings from {shell}");
+			new ShellError("sharpie::import::failed", $"Couldn't read settings from `{shell}`").Write();
 
 			return;
 		}

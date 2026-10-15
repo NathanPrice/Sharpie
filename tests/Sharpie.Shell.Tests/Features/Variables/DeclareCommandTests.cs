@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Variables;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Variables;
 
@@ -55,7 +56,7 @@ public sealed class DeclareCommandTests : IDisposable
 		_ = this.sut.Run(["-p", name]);
 
 		// Assert
-		_ = this.environment.Error.Should().StartWith($"declare: `{argument}': not a valid identifier{Environment.NewLine}");
+		_ = this.environment.Error.Should().StartWith(new ShellError("sharpie::declare::invalid_identifier", $"`{argument}` isn't a valid variable name") { Help = DeclareCommand.IdentifierHelp }.Render(color: false));
 		_ = this.environment.Output.Should().BeEmpty();
 	}
 
@@ -71,7 +72,7 @@ public sealed class DeclareCommandTests : IDisposable
 
 		// Assert
 		_ = this.environment.Output.Should().BeEmpty();
-		_ = this.environment.Error.Should().Contain($"declare: missing: not found{Environment.NewLine}declare: missing: not found{Environment.NewLine}");
+		_ = this.environment.Error.Should().Contain(string.Concat(Enumerable.Repeat(new ShellError("sharpie::declare::not_found", "No variable named `missing`").Render(color: false), 2)));
 	}
 
 	/// <summary>

@@ -27,7 +27,7 @@ internal class CdCommand : ICommand
 
 		if (!Directory.Exists(targetPath))
 		{
-			Console.WriteLine($@"{this.Name}: {targetPath}: No such file or directory");
+			new ShellError("sharpie::cd::not_found", $"No such folder: `{targetPath}`").Write();
 
 			return 1;
 		}
@@ -40,7 +40,7 @@ internal class CdCommand : ICommand
 		}
 		catch (UnauthorizedAccessException)
 		{
-			Console.WriteLine($@"Access denied: {targetPath}");
+			new ShellError("sharpie::cd::access_denied", $"Access denied: `{targetPath}`").Write();
 
 			return 1;
 		}
@@ -73,7 +73,10 @@ internal class CdCommand : ICommand
 		// a mistake, as in bash.
 		if (args.Length > 1)
 		{
-			Console.WriteLine(Properties.Resources.CdTooManyArguments);
+			new ShellError("sharpie::cd::too_many_arguments", Properties.Resources.CdTooManyArguments)
+			{
+				Help = "quote a folder name that has spaces, like cd 'My Files'",
+			}.Write();
 
 			return null;
 		}
@@ -90,7 +93,7 @@ internal class CdCommand : ICommand
 			// Windows-only path forms have no meaning on Unix
 			if (HasDriveLetter(input) || input.StartsWith(@"\\", StringComparison.Ordinal))
 			{
-				Console.WriteLine($@"Windows path not valid on this OS: {input}");
+				new ShellError("sharpie::cd::windows_path", $"Windows path not valid on this OS: `{input}`").Write();
 
 				return null;
 			}
@@ -114,7 +117,7 @@ internal class CdCommand : ICommand
 		}
 		catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
 		{
-			Console.WriteLine($@"Invalid path: {ex.Message}");
+			new ShellError("sharpie::cd::invalid_path", $"Invalid path: {ex.Message}").Write();
 
 			return null;
 		}

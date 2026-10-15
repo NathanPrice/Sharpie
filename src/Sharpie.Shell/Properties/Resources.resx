@@ -16,13 +16,13 @@
     <value>Unknown history file format.</value>
   </data>
   <data name="CdTooManyArguments" xml:space="preserve">
-    <value>cd: too many arguments</value>
+    <value>Too many arguments</value>
   </data>
   <data name="DmanUsage" xml:space="preserve">
     <value>usage: dman [-vb] NAME | dman --download   (NAME is a C# or VB keyword, a .NET namespace, type or member like String.Split, or a learn.microsoft.com address)</value>
   </data>
   <data name="DmanNotFound" xml:space="preserve">
-    <value>dman: no .NET or language page for '{0}'</value>
+    <value>No .NET or language page for '{0}'</value>
   </data>
   <data name="DmanDownloadingIndex" xml:space="preserve">
     <value>dman: downloading the {0} name index, only needed once...</value>

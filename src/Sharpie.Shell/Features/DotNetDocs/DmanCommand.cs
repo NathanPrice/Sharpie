@@ -62,7 +62,7 @@ internal sealed class DmanCommand : ICommand
 
 		if (page is null)
 		{
-			Console.Error.WriteLine(string.Format(CultureInfo.CurrentCulture, NotFoundFormat, Parse(args)!.Value.Name));
+			new ShellError("sharpie::dman::not_found", string.Format(CultureInfo.CurrentCulture, NotFoundFormat, Parse(args)!.Value.Name)).Write();
 
 			return 1;
 		}

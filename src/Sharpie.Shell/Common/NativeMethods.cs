@@ -20,27 +20,31 @@ internal static partial class NativeMethods
 	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
 	internal static partial int Kill(int pid, int sig);
 
-	// GetStdHandle's id for standard output, and the console mode flag that makes the console act on escape sequences
-	// instead of printing them.
+	// GetStdHandle's ids for standard output and standard error, and the console mode flag that makes the console act
+	// on escape sequences instead of printing them.
 	private const int StandardOutput = -11;
+	private const int StandardError = -12;
 	private const uint VirtualTerminalProcessing = 0x0004;
 
 	/// <summary>
 	/// Turns on escape sequence handling for the console the shell writes to, so the colors and cursor moves of the
-	/// line editor work on Windows.
+	/// line editor and the colors of error reports work on Windows.
 	/// </summary>
 	/// <remarks>
-	/// Does nothing when standard output isn't a console. Programs the shell starts inherit the console, and with it
+	/// Does nothing for a standard output or standard error that isn't a console. Programs the shell starts inherit the console, and with it
 	/// this mode.
 	/// </remarks>
 	[SupportedOSPlatform("windows")]
 	internal static void EnableVirtualTerminalOutput()
 	{
-		var handle = GetStdHandle(StandardOutput);
-
-		if (GetConsoleMode(handle, out var mode))
+		foreach (var id in (ReadOnlySpan<int>)[StandardOutput, StandardError])
 		{
-			_ = SetConsoleMode(handle, mode | VirtualTerminalProcessing);
+			var handle = GetStdHandle(id);
+
+			if (GetConsoleMode(handle, out var mode))
+			{
+				_ = SetConsoleMode(handle, mode | VirtualTerminalProcessing);
+			}
 		}
 	}
 

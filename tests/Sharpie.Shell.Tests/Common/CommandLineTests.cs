@@ -285,7 +285,7 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = result.Select(word => word.Text).Should().Equal(expectedWords);
-		_ = path.Should().Be(expectedPath);
+		_ = path!.Value.Text.Should().Be(expectedPath);
 		_ = append.Should().BeFalse();
 		_ = errorPath.Should().BeNull();
 	}
@@ -306,7 +306,7 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = result.Select(word => word.Text).Should().Equal("echo", "hi");
-		_ = path.Should().Be("out.md");
+		_ = path!.Value.Text.Should().Be("out.md");
 		_ = append.Should().BeTrue();
 		_ = errorPath.Should().BeNull();
 	}
@@ -322,7 +322,7 @@ public sealed class CommandLineTests
 		var (_, path, append, _, _) = CommandLine.SplitRedirect(CommandLine.Split("echo hi >> a.md > b.md"));
 
 		// Assert
-		_ = path.Should().Be("b.md");
+		_ = path!.Value.Text.Should().Be("b.md");
 		_ = append.Should().BeFalse();
 	}
 
@@ -342,7 +342,7 @@ public sealed class CommandLineTests
 		// Assert
 		_ = result.Select(word => word.Text).Should().Equal("cat", "a", "nonexistent");
 		_ = path.Should().BeNull();
-		_ = errorPath.Should().Be("err.md");
+		_ = errorPath!.Value.Text.Should().Be("err.md");
 		_ = errorAppend.Should().BeFalse();
 	}
 
@@ -363,7 +363,7 @@ public sealed class CommandLineTests
 		_ = result.Select(word => word.Text).Should().Equal("cat", "nonexistent");
 		_ = path.Should().BeNull();
 		_ = append.Should().BeFalse();
-		_ = errorPath.Should().Be("err.md");
+		_ = errorPath!.Value.Text.Should().Be("err.md");
 		_ = errorAppend.Should().BeTrue();
 	}
 
@@ -378,8 +378,8 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = result.Select(word => word.Text).Should().Equal("ls");
-		_ = path.Should().Be("out.md");
-		_ = errorPath.Should().Be("err.md");
+		_ = path!.Value.Text.Should().Be("out.md");
+		_ = errorPath!.Value.Text.Should().Be("err.md");
 	}
 
 	/// <summary>
@@ -523,5 +523,42 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = words.Select(word => word.Text).Should().Equal(text);
+	}
+
+	/// <summary>
+	/// Checks that each word records where it was typed, quotes and backslashes included, so an error can point at it.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="expected">Each word's start and end, as <c>start-end</c>.</param>
+	[Theory]
+	[InlineData("ls -la", new[] { "0-2", "3-6" })]
+	[InlineData("  cd  x  ", new[] { "2-4", "6-7" })]
+	[InlineData("echo 'a b'", new[] { "0-4", "5-10" })]
+	[InlineData(@"a\ b c", new[] { "0-4", "5-6" })]
+	[InlineData("ls|wc", new[] { "0-2", "2-3", "3-5" })]
+	[InlineData("echo a 2>err", new[] { "0-4", "5-6", "7-9", "9-12" })]
+	[InlineData("echo a >> f", new[] { "0-4", "5-6", "7-9", "10-11" })]
+	public void Split_WithLine_RecordsWordPositions(string line, string[] expected)
+	{
+		// Act
+		var words = CommandLine.Split(line);
+
+		// Assert
+		_ = words.Select(word => $"{word.Start}-{word.End}").Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.SplitRedirect" /> keeps the file name's position, so a failed redirect can
+	/// point at it.
+	/// </summary>
+	[Fact]
+	public void SplitRedirect_WithPath_KeepsPathPosition()
+	{
+		// Act
+		var (_, path, _, errorPath, _) = CommandLine.SplitRedirect(CommandLine.Split("ls > out 2> err"));
+
+		// Assert
+		_ = path.Should().Be(new Word("out", IsOperator: false, 5, 8));
+		_ = errorPath.Should().Be(new Word("err", IsOperator: false, 12, 15));
 	}
 }

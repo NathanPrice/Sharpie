@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Builtins;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
 
@@ -150,7 +151,7 @@ public sealed class SourceCommandTests : IDisposable
 
 		// Assert
 		_ = this.ran.Should().BeEmpty();
-		_ = this.environment.Error.Should().StartWith($".: {path}: ").And.EndWith(Environment.NewLine);
+		_ = this.environment.Error.Should().Contain($"× Can't read `{path}`: ");
 	}
 
 	/// <summary>
@@ -165,7 +166,7 @@ public sealed class SourceCommandTests : IDisposable
 
 		// Assert
 		_ = this.ran.Should().BeEmpty();
-		_ = this.environment.Error.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).Should().HaveCount(2);
+		_ = this.environment.Error.Split("sharpie::source::unreadable").Should().HaveCount(3);
 	}
 
 	/// <summary>
@@ -178,7 +179,7 @@ public sealed class SourceCommandTests : IDisposable
 		_ = this.sut.Run([]);
 
 		// Assert
-		_ = this.environment.Error.Should().Be($".: filename argument required{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::source::missing_file", "`.` needs a file to run").Render(color: false));
 	}
 
 	/// <summary>
@@ -209,7 +210,10 @@ public sealed class SourceCommandTests : IDisposable
 		// Assert
 		_ = afterLoop.Should().Be(SourceCommand.MaxDepth);
 		_ = runs.Should().Be(SourceCommand.MaxDepth * 2);
-		var error = $".: {path}: files nested more than {SourceCommand.MaxDepth} deep{Environment.NewLine}";
+		var error = new ShellError("sharpie::source::too_deep", $"`{path}` is nested more than {SourceCommand.MaxDepth} files deep")
+		{
+			Help = "a file that runs itself, directly or through another file, never ends",
+		}.Render(color: false);
 
 		_ = this.environment.Error.Should().Be(error + error);
 	}

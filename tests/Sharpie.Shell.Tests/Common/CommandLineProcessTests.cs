@@ -345,19 +345,146 @@ public sealed class CommandLineProcessTests
 	/// </summary>
 	/// <param name="line">The command line.</param>
 	/// <param name="operatorText">The operator the error should name.</param>
+	/// <param name="start">Where the operator starts in <paramref name="line" />.</param>
+	/// <param name="label">The note the error puts under the operator.</param>
 	[Theory]
-	[InlineData("echo a <x", "<")]
-	[InlineData("echo a 2>&1", "2>&")]
-	[InlineData("echo a & echo b", "&")]
-	[InlineData("echo a >", ">")]
-	[InlineData("echo a |", "|")]
-	public async Task Shell_WithUnusableOperator_PrintsErrorAndStatus2(string line, string operatorText)
+	[InlineData("echo a <x", "<", 7, "Sharpie can't run this operator yet")]
+	[InlineData("echo a 2>&1", "2>&", 7, "Sharpie can't run this operator yet")]
+	[InlineData("echo a & echo b", "&", 7, "Sharpie can't run this operator yet")]
+	[InlineData("echo a >", ">", 7, "needs a file name after it")]
+	[InlineData("echo a |", "|", 7, "needs a command on both sides")]
+	[InlineData("| echo a", "|", 0, "needs a command on both sides")]
+	[InlineData("echo a | | wc", "|", 7, "needs a command on both sides")]
+	public async Task Shell_WithUnusableOperator_PrintsErrorAndStatus2(string line, string operatorText, int start, string label)
 	{
 		// Act
 		var run = await ShellProcess.RunAsync($"{line}\necho $?\nexit\n").ConfigureAwait(true);
 
 		// Assert
 		_ = run.Output.Should().Be("$ $ 2\n$ ");
-		_ = run.Error.Should().Be($"sharpie: can't use '{operatorText}' here\n");
+		_ = run.Error.Should().Be(new ShellError("sharpie::parser::unsupported_operator", $"`{operatorText}` can't be used here")
+		{
+			Source = line,
+			Start = start,
+			End = start + operatorText.Length,
+			Label = label,
+		}.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that a mistyped command is reported on standard error, pointing at the name, with the program on
+	/// <c>PATH</c> it was probably meant to be.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithMistypedCommand_SuggestsCloseProgram()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		_ = ShellEnvironment.CreateFile(folder, "sampletool", executable: true, "#!/bin/sh\n");
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync("echo hi; sampletoll --flag\nexit\n", environment: new Dictionary<string, string> { ["PATH"] = folder }).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("$ hi\n$ ");
+			_ = run.Error.Should().Be(new ShellError("sharpie::shell::command_not_found", "Command `sampletoll` not found")
+			{
+				Source = "sampletoll --flag",
+				End = 10,
+				Label = "not a builtin, alias or program on PATH",
+				Help = "did you mean `sampletool`?",
+			}.Render(color: false));
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a command that isn't found reports into its <c>2&gt;</c> file, as bash does, so
+	/// <c>2&gt;/dev/null</c> hides it.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithMissingCommandAndErrorRedirect_ReportsIntoFile()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var file = Path.Combine(folder, "err.txt");
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync($"nosuchsample 2> {file}\nexit\n", folder).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Error.Should().BeEmpty();
+			_ = (await File.ReadAllTextAsync(file).ConfigureAwait(true)).Should().StartWith("Error: sharpie::shell::command_not_found\n");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a redirect file that can't be opened is reported with the file name underlined.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithRedirectIntoMissingFolder_PointsAtFileName()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("echo hi > missing-sample-folder/out.txt\necho $?\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ $ 1\n$ ");
+		_ = run.Error.Should().StartWith("Error: sharpie::shell::redirect_failed\n\n  × Can't open `missing-sample-folder/out.txt` for writing\n   ╭─[1:11]\n 1 │ echo hi > missing-sample-folder/out.txt\n   ·           ──────────────┬──────────────\n");
+	}
+
+	/// <summary>
+	/// Checks that a missing program in the middle of a pipeline is reported at its own place in the line.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithMissingProgramInPipeline_PointsAtThatStage()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("ls | nosuchsample | wc\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Error.Should().StartWith("Error: sharpie::shell::command_not_found\n\n  × Command `nosuchsample` not found\n   ╭─[1:6]\n 1 │ ls | nosuchsample | wc\n   ·      ──────┬─────\n");
+	}
+
+	/// <summary>
+	/// Checks that a file on <c>PATH</c> that can't run is never suggested, even when its name is closer.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithCloserFileThatCantRun_SuggestsTheProgram()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		_ = ShellEnvironment.CreateFile(folder, "sampletool", executable: true, "#!/bin/sh\n");
+		_ = ShellEnvironment.CreateFile(folder, "samplexyolz", executable: false);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync("samplexyol\nexit\n", environment: new Dictionary<string, string> { ["PATH"] = folder }).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Error.Should().EndWith("  help: did you mean `sampletool`?\n");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
 	}
 }

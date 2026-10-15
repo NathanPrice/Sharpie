@@ -162,6 +162,29 @@ public sealed class PathFinderTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that <see cref="PathFinder.FindFileNames" /> lists every file on <c>PATH</c>, including one that can't
+	/// run, which <see cref="PathFinder.FindExecutableNames" /> leaves out.
+	/// </summary>
+	[Fact]
+	public void FindFileNames_WithMixedFiles_ListsEveryFile()
+	{
+		// Arrange
+		var folder = this.environment.CreateFolder();
+
+		_ = ShellEnvironment.CreateFile(folder, "sampletool", executable: true);
+		_ = ShellEnvironment.CreateFile(folder, "samplenotes", executable: false);
+		ShellEnvironment.SetPath(folder);
+
+		// Act
+		var all = PathFinder.FindFileNames();
+		var executables = PathFinder.FindExecutableNames(string.Empty);
+
+		// Assert
+		_ = all.Should().BeEquivalentTo("sampletool", "samplenotes");
+		_ = executables.Should().Equal(OperatingSystem.IsWindows() ? ["sampletool", "samplenotes"] : ["sampletool"]);
+	}
+
+	/// <summary>
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();

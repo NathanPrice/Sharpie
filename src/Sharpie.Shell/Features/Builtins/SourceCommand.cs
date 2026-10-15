@@ -46,14 +46,17 @@ internal sealed class SourceCommand(string name, Func<string, int> runLine) : IC
 
 		if (args is [])
 		{
-			Console.Error.WriteLine($"{this.Name}: filename argument required");
+			new ShellError("sharpie::source::missing_file", $"`{this.Name}` needs a file to run").Write();
 
 			return 1;
 		}
 
 		if (this.depth >= MaxDepth)
 		{
-			Console.Error.WriteLine($"{this.Name}: {args[0]}: files nested more than {MaxDepth} deep");
+			new ShellError("sharpie::source::too_deep", $"`{args[0]}` is nested more than {MaxDepth} files deep")
+			{
+				Help = "a file that runs itself, directly or through another file, never ends",
+			}.Write();
 
 			return 1;
 		}
@@ -66,7 +69,7 @@ internal sealed class SourceCommand(string name, Func<string, int> runLine) : IC
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
 		{
-			Console.Error.WriteLine($"{this.Name}: {args[0]}: {exception.Message}");
+			new ShellError("sharpie::source::unreadable", $"Can't read `{args[0]}`: {exception.Message}").Write();
 
 			return 1;
 		}

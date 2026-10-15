@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Builtins;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
 
@@ -51,7 +52,7 @@ public sealed class ExitCommandTests : IDisposable
 
 		// Assert
 		_ = code.Should().Be(2);
-		_ = this.environment.Error.Should().Be($"exit: {argument}: numeric argument required{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::exit::not_a_number", $"`{argument}` isn't a number") { Help = "exit takes a whole number as its status" }.Render(color: false));
 	}
 
 	/// <summary>

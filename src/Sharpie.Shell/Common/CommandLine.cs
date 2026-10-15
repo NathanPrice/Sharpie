@@ -11,7 +11,9 @@ namespace Sharpie.Shell.Common;
 /// <param name="IsOperator">
 /// <see langword="true" /> for an operator. A quoted or escaped one, like <c>'|'</c>, is a plain word.
 /// </param>
-internal readonly record struct Word(string Text, bool IsOperator);
+/// <param name="Start">Where the word starts in the typed text, quotes included, for an error to point at.</param>
+/// <param name="End">Where the word ends in the typed text, one past its last character.</param>
+internal readonly record struct Word(string Text, bool IsOperator, int Start = 0, int End = 0);
 
 /// <summary>
 /// Breaks a typed command line into words the way a POSIX shell does.
@@ -141,14 +143,15 @@ internal static class CommandLine
 							else if (quote is null && OperatorAt(line, index) is { } typed)
 							{
 								var stream = hasWord && IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
+								var start = stream.Length > 0 ? wordStart : index;
 
-								EndWord();
-								words.Add(new Word(stream + typed, IsOperator: true));
+								EndWord(index);
+								words.Add(new Word(stream + typed, IsOperator: true, start, index + typed.Length));
 								index += typed.Length - 1;
 							}
 							else if (quote is null && character is ' ' or '\t')
 							{
-								EndWord();
+								EndWord(index);
 							}
 							else
 							{
@@ -168,7 +171,7 @@ internal static class CommandLine
 			_ = word.Append('\\');
 		}
 
-		EndWord();
+		EndWord(line.Length);
 
 		return [.. words];
 
@@ -183,12 +186,12 @@ internal static class CommandLine
 			return text;
 		}
 
-		// Adds the word read so far, if there is one.
-		void EndWord()
+		// Adds the word read so far, if there is one, ending at end.
+		void EndWord(int end)
 		{
 			if (hasWord)
 			{
-				words.Add(new Word(TakeWord(), IsOperator: false));
+				words.Add(new Word(TakeWord(), IsOperator: false, wordStart, end));
 			}
 		}
 	}
@@ -321,21 +324,21 @@ internal static class CommandLine
 	/// </summary>
 	/// <param name="words">The words from <see cref="Split" />.</param>
 	/// <returns>
-	/// The words left for the command, plus the file name for each stream. A path is <see langword="null" /> when
-	/// that stream isn't redirected. <c>AppendOutput</c> and <c>AppendError</c> are <see langword="true" /> when that
+	/// The words left for the command, plus the file name word for each stream, kept whole so an error can point at
+	/// it. A path is <see langword="null" /> when that stream isn't redirected. <c>AppendOutput</c> and <c>AppendError</c> are <see langword="true" /> when that
 	/// stream should go on the end of its file instead of replacing it. An operator with no file name after it, or
 	/// another operator in its place, stays in the words. If the same stream is redirected twice, the last operator
 	/// and file name win.
 	/// </returns>
-	public static (Word[] Words, string? OutputPath, bool AppendOutput, string? ErrorPath, bool AppendError)
+	public static (Word[] Words, Word? OutputPath, bool AppendOutput, Word? ErrorPath, bool AppendError)
 		SplitRedirect(Word[] words)
 	{
 		_ = words.ArgumentNotNull();
 
 		var remaining = new List<Word>();
-		string? outputPath = null;
+		Word? outputPath = null;
 		var appendOutput = false;
-		string? errorPath = null;
+		Word? errorPath = null;
 		var appendError = false;
 
 		for (var index = 0; index < words.Length; index++)
@@ -345,22 +348,22 @@ internal static class CommandLine
 			switch (hasPath)
 			{
 				case true when words[index] is { IsOperator: true, Text: ">" or "1>" }:
-					outputPath = words[++index].Text;
+					outputPath = words[++index];
 					appendOutput = false;
 
 					break;
 				case true when words[index] is { IsOperator: true, Text: ">>" or "1>>" }:
-					outputPath = words[++index].Text;
+					outputPath = words[++index];
 					appendOutput = true;
 
 					break;
 				case true when words[index] is { IsOperator: true, Text: "2>" }:
-					errorPath = words[++index].Text;
+					errorPath = words[++index];
 					appendError = false;
 
 					break;
 				case true when words[index] is { IsOperator: true, Text: "2>>" }:
-					errorPath = words[++index].Text;
+					errorPath = words[++index];
 					appendError = true;
 
 					break;

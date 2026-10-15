@@ -227,7 +227,7 @@ public sealed class JobsCommandTests : IDisposable
 		var job = JobsCommand.Find("fg", []);
 
 		// Assert
-		_ = this.environment.Output.Should().Be("fg: no job control\n");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::fg::no_job_control", "Job control is off in this shell").Render(color: false));
 		_ = job.Should().BeNull();
 	}
 
@@ -242,8 +242,8 @@ public sealed class JobsCommandTests : IDisposable
 	[InlineData("", 2, "")]
 	[InlineData("%1", 1, "")]
 	[InlineData("2", 2, "")]
-	[InlineData("3", 0, "fg: 3: no such job\n")]
-	[InlineData("x", 0, "fg: x: no such job\n")]
+	[InlineData("3", 0, "Error: sharpie::fg::no_such_job\n\n  × No job `3`\n  help: jobs lists the running and stopped jobs\n")]
+	[InlineData("x", 0, "Error: sharpie::fg::no_such_job\n\n  × No job `x`\n  help: jobs lists the running and stopped jobs\n")]
 	public void Find_WithJobControl_PicksJob(string args, int number, string message)
 	{
 		// Arrange
@@ -255,7 +255,7 @@ public sealed class JobsCommandTests : IDisposable
 		var job = JobsCommand.Find("fg", args.Split(' ', StringSplitOptions.RemoveEmptyEntries));
 
 		// Assert
-		_ = this.environment.Output.Should().Be(message);
+		_ = this.environment.Error.Should().Be(message);
 		_ = (job?.Number ?? 0).Should().Be(number);
 	}
 
@@ -272,7 +272,7 @@ public sealed class JobsCommandTests : IDisposable
 		var job = JobsCommand.Find("fg", []);
 
 		// Assert
-		_ = this.environment.Output.Should().Be("fg: current: no such job\n");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::fg::no_such_job", "There is no current job").Render(color: false));
 		_ = job.Should().BeNull();
 	}
 

@@ -156,7 +156,33 @@ public sealed class CommandListTests : IDisposable
 		// Assert
 		_ = ran.Should().BeEmpty();
 		_ = status.Should().Be(CommandList.UnsupportedStatus);
-		_ = this.environment.Error.Should().Be($"sharpie: $(...) and `...` aren't supported{Environment.NewLine}");
+		_ = this.environment.Error.Should().Contain("sharpie::parser::command_substitution");
+	}
+
+	/// <summary>
+	/// Checks that refused command substitution is reported with the whole line, the <c>$(</c> or backquote
+	/// underlined, and a hint.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="start">Where the substitution starts.</param>
+	/// <param name="end">Where its opening ends.</param>
+	[Theory]
+	[InlineData("echo a; echo $(date)", 13, 15)]
+	[InlineData("echo `date`", 5, 6)]
+	public void Run_WithCommandSubstitution_PointsAtIt(string line, int start, int end)
+	{
+		// Act
+		_ = CommandList.Run(line, 0, _ => 0);
+
+		// Assert
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::command_substitution", "Command substitution isn't supported")
+		{
+			Source = line,
+			Start = start,
+			End = end,
+			Label = "runs a command for its output",
+			Help = "run the inner command on its own line, or quote it to pass it as text",
+		}.Render(color: false));
 	}
 
 	/// <summary>

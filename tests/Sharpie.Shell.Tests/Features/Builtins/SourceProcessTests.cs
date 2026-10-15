@@ -58,7 +58,8 @@ public sealed class SourceProcessTests
 			var run = await ShellProcess.RunAsync("samplegreet\nexit\n", environment: new Dictionary<string, string> { ["HOME"] = home }).ConfigureAwait(true);
 
 			// Assert
-			_ = run.Output.Should().Be("$ samplegreet: command not found\n$ ");
+			_ = run.Output.Should().Be("$ $ ");
+			_ = run.Error.Should().Contain("Command `samplegreet` not found");
 		}
 		finally
 		{

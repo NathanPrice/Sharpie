@@ -35,7 +35,7 @@ internal class CompleteCommand : ICommand
 
 				return 0;
 			case ["-p", var command, ..]:
-				Console.WriteLine($"{this.Name}: {command}: no completion specification");
+				new ShellError("sharpie::complete::not_found", $"No completion is set for `{command}`").Write();
 
 				return 1;
 			default:

@@ -42,7 +42,7 @@ internal class ExitCommand(DeclareCommand declare) : ICommand
 			return code & 0xFF;
 		}
 
-		Console.Error.WriteLine($"exit: {args[0]}: numeric argument required");
+		new ShellError("sharpie::exit::not_a_number", $"`{args[0]}` isn't a number") { Help = "exit takes a whole number as its status" }.Write();
 
 		return 2;
 	}

@@ -65,7 +65,7 @@ internal partial class DeclareCommand : ICommand
 				}
 				else
 				{
-					Console.Error.WriteLine($"{this.Name}: {name}: not found");
+					new ShellError("sharpie::declare::not_found", $"No variable named `{name}`").Write();
 					status = 1;
 				}
 			}
@@ -80,7 +80,7 @@ internal partial class DeclareCommand : ICommand
 
 			if (!IsIdentifier(parts[0]))
 			{
-				Console.Error.WriteLine($"{this.Name}: `{arg}': not a valid identifier");
+				new ShellError("sharpie::declare::invalid_identifier", $"`{arg}` isn't a valid variable name") { Help = IdentifierHelp }.Write();
 				status = 1;
 
 				continue;
@@ -94,6 +94,11 @@ internal partial class DeclareCommand : ICommand
 
 		return status;
 	}
+
+	/// <summary>
+	/// The hint shown when a variable name breaks the rule <see cref="IsIdentifier" /> checks.
+	/// </summary>
+	internal const string IdentifierHelp = "a name starts with a letter or _ and holds only letters, digits and _";
 
 	/// <summary>
 	/// Checks whether <paramref name="name" /> is a valid shell variable name.

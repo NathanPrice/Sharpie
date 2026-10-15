@@ -99,7 +99,7 @@ internal static partial class ExternalProgram
 		}
 		catch (Win32Exception exception)
 		{
-			Console.WriteLine($@"{commandName}: {exception.Message}");
+			new ShellError("sharpie::shell::cannot_start", $"Can't start `{commandName}`: {exception.Message}").Write();
 
 			return CannotRun;
 		}
@@ -172,7 +172,7 @@ internal static partial class ExternalProgram
 		}
 		catch (Win32Exception exception)
 		{
-			Console.WriteLine($@"{stages[processes.Count][0]}: {exception.Message}");
+			new ShellError("sharpie::shell::cannot_start", $"Can't start `{stages[processes.Count][0]}`: {exception.Message}").Write();
 
 			return CannotRun;
 		}

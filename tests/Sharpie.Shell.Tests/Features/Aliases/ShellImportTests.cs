@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Aliases;
+using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Tests.Features.Aliases;
 
@@ -181,7 +182,7 @@ public sealed class ShellImportTests : IDisposable
 		// Assert
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().BeNull();
 		_ = this.aliases.Aliases.Should().BeEmpty();
-		_ = this.environment.Error.Should().Be($"sharpie: couldn't read settings from {shell}{Environment.NewLine}");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::import::failed", $"Couldn't read settings from `{shell}`").Render(color: false));
 	}
 
 	/// <summary>
