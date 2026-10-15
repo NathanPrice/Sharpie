@@ -5,6 +5,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- The shell's program takes the name Sharpie; both programs are installed in the same folder. -->
+    <AssemblyName>SharpieTerminal</AssemblyName>
+    <RootNamespace>Sharpie</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

@@ -72,14 +72,15 @@ dotnet run --project src/Sharpie
 
 ### Install
 
-Publish the window to a folder of your choice. The shell, `Sharpie.Shell`, is built and copied next to it.
+Publish the window to a folder of your choice. The window is the `SharpieTerminal` executable. The shell,
+`Sharpie`, is built and copied next to it.
 
 ```sh
 dotnet publish src/Sharpie -c Release -o ~/.local/opt/Sharpie
 ```
 
-To make Sharpie your login shell, add the full path of `Sharpie.Shell` to `/etc/shells` and run `chsh -s` with that
-path. To make the window your desktop's default terminal, point the desktop at the `Sharpie` executable. It accepts
+To make Sharpie your login shell, add the full path of `Sharpie` to `/etc/shells` and run `chsh -s` with that path.
+To make the window your desktop's default terminal, point the desktop at the `SharpieTerminal` executable. It accepts
 xterm's `-e program args`, which is how KDE, GNOME and `xdg-terminal-exec` start terminal apps, and it opens in the
 folder it was started from.
 
@@ -101,8 +102,8 @@ select text with the mouse while a program like `vim` is using it.
 
 ## Shell options
 
-`Sharpie.Shell` reads its arguments the way POSIX `sh` and bash do. Single-letter options can be combined, so `-lc`
-is the same as `-l -c`.
+The shell, `Sharpie`, reads its arguments the way POSIX `sh` and bash do. Single-letter options can be combined, so
+`-lc` is the same as `-l -c`.
 
 | Option | Effect |
 | --- | --- |
@@ -113,7 +114,7 @@ is the same as `-l -c`.
 | `--norc` | Skip `~/.sharpierc` |
 
 ```sh
-Sharpie.Shell -c 'cd /tmp && pwd'
+Sharpie -c 'cd /tmp && pwd'
 ```
 
 An unknown option prints an error and exits with status 2.
@@ -132,7 +133,7 @@ HISTFILE=$HOME/.sharpie_history
 . $HOME/.sharpie_aliases
 ```
 
-A line ending in `\` continues on the next one. `Sharpie.Shell --norc` skips the file, and `. file` or `source file`
+A line ending in `\` continues on the next one. `Sharpie --norc` skips the file, and `. file` or `source file`
 runs another one at any time.
 
 ### History

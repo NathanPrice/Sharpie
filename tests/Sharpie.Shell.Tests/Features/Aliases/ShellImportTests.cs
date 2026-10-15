@@ -16,7 +16,7 @@ public sealed class ShellImportTests : IDisposable
 	/// <summary>
 	/// The built shell, which the fake login shells run to print their environment.
 	/// </summary>
-	private static readonly string ShellPath = Path.Combine(AppContext.BaseDirectory, "Sharpie.Shell");
+	private static readonly string ShellPath = Path.Combine(AppContext.BaseDirectory, "Sharpie");
 
 	private static readonly string[] Builtins = ["echo", "cd"];
 
@@ -267,7 +267,7 @@ public sealed class ShellImportTests : IDisposable
 	{
 		// Arrange
 		var folder = Directory.CreateDirectory(Path.Combine(this.environment.CreateFolder(), "it's")).FullName;
-		var self = Path.Combine(folder, "Sharpie.Shell");
+		var self = Path.Combine(folder, "Sharpie");
 		_ = File.CreateSymbolicLink(self, ShellPath);
 		var shell = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "fake-shell", executable: true,
 			$"#!/bin/sh\nexport {SampleVariable}=imported\neval \"$4\"\n");

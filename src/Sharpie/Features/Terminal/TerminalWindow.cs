@@ -38,7 +38,7 @@ internal sealed class TerminalWindow : Window, IDisposable
 		// first prompt below it and no wrapping.
 		this.Width = 1300;
 		this.Height = 840;
-		this.Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Sharpie/Assets/icon.png")));
+		this.Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://SharpieTerminal/Assets/icon.png")));
 
 		// The window draws its own title bar and frame, because KDE's frame stays light whatever the window looks like.
 		// Avalonia can draw one itself, but on X11 (and XWayland, which Avalonia uses on Wayland) that's behind a flag

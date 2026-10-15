@@ -20,7 +20,7 @@ internal static class ShellProcess
 	/// The shell's launcher, which the build copies into this test's output folder because the shell is an Exe
 	/// project reference.
 	/// </summary>
-	private static readonly string ShellPath = Path.Combine(AppContext.BaseDirectory, "Sharpie.Shell");
+	private static readonly string ShellPath = Path.Combine(AppContext.BaseDirectory, "Sharpie");
 
 	/// <summary>
 	/// How long <see cref="RunAsync" /> waits for the shell to exit once its output has closed.
@@ -34,7 +34,7 @@ internal static class ShellProcess
 	/// <param name="environment">Variables to set or replace in the shell's environment, or <see langword="null" /> for none.</param>
 	/// <param name="arguments">The shell's arguments, or <see langword="null" /> for none.</param>
 	/// <param name="programName">
-	/// The shell's <c>argv[0]</c>, such as <c>-Sharpie.Shell</c> for a login shell, or <see langword="null" /> for its
+	/// The shell's <c>argv[0]</c>, such as <c>-Sharpie</c> for a login shell, or <see langword="null" /> for its
 	/// path.
 	/// </param>
 	/// <returns>

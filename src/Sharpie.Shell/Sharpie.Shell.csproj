@@ -5,6 +5,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- fastfetch and similar tools show the shell under its file name, so the shell gets the plain name and the
+         window is SharpieTerminal. RootNamespace keeps the resource names under Sharpie.Shell. -->
+    <AssemblyName>Sharpie</AssemblyName>
+    <RootNamespace>Sharpie.Shell</RootNamespace>
     <!-- The source generator behind [LibraryImport] in NativeMethods emits unsafe marshalling code. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -12,7 +16,7 @@
   <!-- The window, the tests and the benchmarks call internal helpers like PromptHeader, CommandLine, PathFinder and
        ExternalProgram directly. -->
   <ItemGroup>
-    <InternalsVisibleTo Include="Sharpie" />
+    <InternalsVisibleTo Include="SharpieTerminal" />
     <InternalsVisibleTo Include="Sharpie.Tests" />
     <InternalsVisibleTo Include="Sharpie.Benchmarks" />
     <InternalsVisibleTo Include="Sharpie.Shell.Tests" />

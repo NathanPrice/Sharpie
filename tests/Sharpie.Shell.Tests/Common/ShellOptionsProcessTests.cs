@@ -172,10 +172,10 @@ public sealed class ShellOptionsProcessTests : IDisposable
 	/// <param name="option">An option before <c>-c</c>, or an empty string for none.</param>
 	/// <param name="expected">What the shell should print.</param>
 	[Theory]
-	[InlineData("-Sharpie.Shell", "", "from-profile\n")]
+	[InlineData("-Sharpie", "", "from-profile\n")]
 	[InlineData(null, "-l", "from-profile\n")]
 	[InlineData(null, "--login", "from-profile\n")]
-	[InlineData("Sharpie.Shell", "", "\n")]
+	[InlineData("Sharpie", "", "\n")]
 	public async Task Shell_AsLoginShell_ReadsProfile(string? programName, string option, string expected)
 	{
 		// Arrange

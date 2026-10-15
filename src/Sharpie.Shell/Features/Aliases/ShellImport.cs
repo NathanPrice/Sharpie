@@ -21,7 +21,7 @@ namespace Sharpie.Shell.Features.Aliases;
 internal static class ShellImport
 {
 	/// <summary>
-	/// The argument that makes <c>Sharpie.Shell</c> print its environment and exit, which the imported shell runs to
+	/// The argument that makes <c>Sharpie</c> print its environment and exit, which the imported shell runs to
 	/// report what its startup files exported.
 	/// </summary>
 	/// <remarks>
@@ -64,7 +64,7 @@ internal static class ShellImport
 	/// every alias it has.
 	/// </summary>
 	/// <param name="shell">The user's shell from <c>$SHELL</c>, or <see langword="null" /> when it's unset.</param>
-	/// <param name="self">The full path of this <c>Sharpie.Shell</c> program.</param>
+	/// <param name="self">The full path of this <c>Sharpie</c> program.</param>
 	/// <param name="aliases">The <c>alias</c> builtin the aliases are added to.</param>
 	/// <param name="builtins">The builtin command names, which an imported alias may start with.</param>
 	/// <param name="timeout">How long to wait for the answer, or <see langword="null" /> for five seconds.</param>
@@ -102,7 +102,7 @@ internal static class ShellImport
 	/// <summary>
 	/// Sets the variables that <c>/etc/profile</c> and <c>~/.profile</c> export, for a login shell.
 	/// </summary>
-	/// <param name="self">The full path of this <c>Sharpie.Shell</c> program.</param>
+	/// <param name="self">The full path of this <c>Sharpie</c> program.</param>
 	/// <param name="aliases">The <c>alias</c> builtin, given any alias the profile defines.</param>
 	/// <param name="builtins">The builtin command names, which an imported alias may start with.</param>
 	/// <param name="timeout">How long to wait for the answer, or <see langword="null" /> for five seconds.</param>
@@ -138,7 +138,7 @@ internal static class ShellImport
 	/// <param name="shell">The shell as the error message names it.</param>
 	/// <param name="shellPath">The shell's full path, or <see langword="null" /> when it isn't on <c>PATH</c>.</param>
 	/// <param name="flags">The options it starts with, before <c>-c</c>.</param>
-	/// <param name="self">The full path of this <c>Sharpie.Shell</c> program.</param>
+	/// <param name="self">The full path of this <c>Sharpie</c> program.</param>
 	/// <param name="aliases">The <c>alias</c> builtin the aliases are added to.</param>
 	/// <param name="builtins">The builtin command names, which an imported alias may start with.</param>
 	/// <param name="timeout">How long to wait for the answer, or <see langword="null" /> for five seconds.</param>

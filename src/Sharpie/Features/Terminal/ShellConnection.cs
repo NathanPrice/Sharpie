@@ -64,7 +64,7 @@ internal sealed class ShellConnection : IDisposable
 	{
 		_ = onOutput.ArgumentNotNull();
 
-		var fileName = OperatingSystem.IsWindows() ? "Sharpie.Shell.exe" : "Sharpie.Shell";
+		var fileName = OperatingSystem.IsWindows() ? "Sharpie.exe" : "Sharpie";
 		var environment = Environment.GetEnvironmentVariables().Cast<DictionaryEntry>()
 			.ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value ?? string.Empty);
 

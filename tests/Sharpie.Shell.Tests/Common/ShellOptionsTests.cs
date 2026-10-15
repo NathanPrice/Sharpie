@@ -19,24 +19,24 @@ public sealed class ShellOptionsTests
 	/// <param name="command">The expected <c>-c</c> command.</param>
 	/// <param name="scriptFile">The expected script file.</param>
 	[Theory]
-	[InlineData("Sharpie.Shell", new string[0], false, false, false, null, null)]
-	[InlineData("-Sharpie.Shell", new string[0], true, false, false, null, null)]
+	[InlineData("Sharpie", new string[0], false, false, false, null, null)]
+	[InlineData("-Sharpie", new string[0], true, false, false, null, null)]
 	[InlineData(null, new string[0], false, false, false, null, null)]
-	[InlineData("Sharpie.Shell", new[] { "-c", "echo hi" }, false, false, false, "echo hi", null)]
-	[InlineData("-Sharpie.Shell", new[] { "-c", "echo hi" }, true, false, false, "echo hi", null)]
-	[InlineData("Sharpie.Shell", new[] { "-lc", "ls" }, true, false, false, "ls", null)]
-	[InlineData("Sharpie.Shell", new[] { "-lic", "ls" }, true, true, false, "ls", null)]
-	[InlineData("Sharpie.Shell", new[] { "-c", "-l", "ls" }, true, false, false, "ls", null)]
-	[InlineData("Sharpie.Shell", new[] { "-c", "ls", "name", "one" }, false, false, false, "ls", null)]
-	[InlineData("Sharpie.Shell", new[] { "-i" }, false, true, false, null, null)]
-	[InlineData("Sharpie.Shell", new[] { "--login" }, true, false, false, null, null)]
-	[InlineData("Sharpie.Shell", new[] { "--norc" }, false, false, true, null, null)]
-	[InlineData("Sharpie.Shell", new[] { "--norc", "-i", "-c", "x" }, false, true, true, "x", null)]
-	[InlineData("Sharpie.Shell", new[] { "script.sh" }, false, false, false, null, "script.sh")]
-	[InlineData("Sharpie.Shell", new[] { "script.sh", "-c" }, false, false, false, null, "script.sh")]
-	[InlineData("Sharpie.Shell", new[] { "--", "-c" }, false, false, false, null, "-c")]
-	[InlineData("Sharpie.Shell", new[] { "-", "-x" }, false, false, false, null, "-x")]
-	[InlineData("Sharpie.Shell", new[] { "-c", "--", "-x" }, false, false, false, "-x", null)]
+	[InlineData("Sharpie", new[] { "-c", "echo hi" }, false, false, false, "echo hi", null)]
+	[InlineData("-Sharpie", new[] { "-c", "echo hi" }, true, false, false, "echo hi", null)]
+	[InlineData("Sharpie", new[] { "-lc", "ls" }, true, false, false, "ls", null)]
+	[InlineData("Sharpie", new[] { "-lic", "ls" }, true, true, false, "ls", null)]
+	[InlineData("Sharpie", new[] { "-c", "-l", "ls" }, true, false, false, "ls", null)]
+	[InlineData("Sharpie", new[] { "-c", "ls", "name", "one" }, false, false, false, "ls", null)]
+	[InlineData("Sharpie", new[] { "-i" }, false, true, false, null, null)]
+	[InlineData("Sharpie", new[] { "--login" }, true, false, false, null, null)]
+	[InlineData("Sharpie", new[] { "--norc" }, false, false, true, null, null)]
+	[InlineData("Sharpie", new[] { "--norc", "-i", "-c", "x" }, false, true, true, "x", null)]
+	[InlineData("Sharpie", new[] { "script.sh" }, false, false, false, null, "script.sh")]
+	[InlineData("Sharpie", new[] { "script.sh", "-c" }, false, false, false, null, "script.sh")]
+	[InlineData("Sharpie", new[] { "--", "-c" }, false, false, false, null, "-c")]
+	[InlineData("Sharpie", new[] { "-", "-x" }, false, false, false, null, "-x")]
+	[InlineData("Sharpie", new[] { "-c", "--", "-x" }, false, false, false, "-x", null)]
 	public void Parse_WithArguments_ReadsOptions(string? programName, string[] args, bool login, bool interactive, bool noRc, string? command, string? scriptFile)
 	{
 		// Act
@@ -61,7 +61,7 @@ public sealed class ShellOptionsTests
 	public void Parse_WithBadArguments_ReturnsNullAndReason(string[] args, string expected)
 	{
 		// Act
-		var options = ShellOptions.Parse("Sharpie.Shell", args, out var error);
+		var options = ShellOptions.Parse("Sharpie", args, out var error);
 
 		// Assert
 		_ = options.Should().BeNull();

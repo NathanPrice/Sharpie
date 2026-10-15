@@ -43,7 +43,7 @@ internal sealed class App : Application
 		this.Styles.Add(new FluentTheme());
 
 		// AvaloniaEdit's TextEditor has no look of its own until its theme is added.
-		this.Styles.Add(new StyleInclude(new Uri("avares://Sharpie"))
+		this.Styles.Add(new StyleInclude(new Uri("avares://SharpieTerminal"))
 		{
 			Source = new Uri("avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml"),
 		});
