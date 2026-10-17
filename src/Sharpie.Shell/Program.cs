@@ -237,6 +237,9 @@ internal static class Program
 		// Runs for both the exit builtin, which calls Environment.Exit, and Main returning when input closes.
 		AppDomain.CurrentDomain.ProcessExit += (_, _) => history.WriteHistFile();
 
+		// exec replaces the process, so no exit handler runs. bash saves its history there too.
+		((ExecCommand)commands["exec"]).BeforeReplace = history.WriteHistFile;
+
 		// Closing the window sends SIGHUP, and the runtime ends the process on it without raising ProcessExit. bash also
 		// saves its history on hangup.
 		using var hangup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, _ => history.WriteHistFile());
@@ -511,7 +514,7 @@ internal static class Program
 			return 1;
 		}
 
-		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(aliases.Expand(split, variables));
+		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(CommandCommand.Unwrap(aliases.Expand(split, variables)));
 
 		// A trailing & runs an external program in the background. Builtins still run in the foreground.
 		var background = words is [.., { IsOperator: true, Text: "&" }];
@@ -572,7 +575,9 @@ internal static class Program
 
 		return errorFailed ? 1
 			: stages.Length > 1 ? RunPipeline(stages)
-			: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltin(command, arguments, assignments[0], output, error)
+			// exec keeps the redirect files past its own run, which RunBuiltin would undo.
+			: commands.TryGetValue(names[0].Text, out var command) ? command is ExecCommand exec ? exec.Run(arguments, assignments[0], output, error, settings.Interactive)
+				: RunBuiltin(command, arguments, assignments[0], output, error)
 			: RunProgram(names[0], arguments, assignments[0], output, error, background);
 
 		// Opens the redirect file at path, or gives null when path is null. The file is created if missing, then

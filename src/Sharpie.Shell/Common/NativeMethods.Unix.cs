@@ -112,6 +112,100 @@ internal static unsafe partial class NativeMethods
 	internal static int Continued => OperatingSystem.IsMacOS() ? 0x10 : 8;
 
 	/// <summary>
+	/// Gets sigprocmask's <c>SIG_SETMASK</c>, which replaces the blocked signals with the given set.
+	/// </summary>
+	/// <value>
+	/// The value for the current OS.
+	/// </value>
+	internal static int SignalMaskReplace => OperatingSystem.IsMacOS() ? 3 : 2;
+
+	/// <summary>
+	/// Gets ioctl's <c>FIOCLEX</c> request, which marks a descriptor to close when the process runs another program.
+	/// </summary>
+	/// <value>
+	/// The value for the current OS.
+	/// </value>
+	internal static nuint CloseOnExec => OperatingSystem.IsMacOS() ? 0x20006601u : 0x5451u;
+
+	/// <summary>
+	/// Replaces this process with the program at <paramref name="path" />, keeping its id, open descriptors and
+	/// ignored signals.
+	/// </summary>
+	/// <param name="path">The program's full path.</param>
+	/// <param name="argv">The null-terminated argument list, starting with the program name.</param>
+	/// <param name="envp">The null-terminated environment list.</param>
+	/// <returns>
+	/// Only returns when the program couldn't be started: -1, with the reason in the last error.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "execve", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int Execute(string path, byte** argv, byte** envp);
+
+	/// <summary>
+	/// Copies an open descriptor to the lowest free number.
+	/// </summary>
+	/// <param name="fd">The descriptor to copy.</param>
+	/// <returns>
+	/// The new descriptor, or -1 on error.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "dup")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int Duplicate(int fd);
+
+	/// <summary>
+	/// Copies <paramref name="fd" /> onto <paramref name="newFd" />, closing what <paramref name="newFd" /> was first.
+	/// The copy stays open when the process runs another program.
+	/// </summary>
+	/// <param name="fd">The open descriptor to copy.</param>
+	/// <param name="newFd">The descriptor number it gets.</param>
+	/// <returns>
+	/// <paramref name="newFd" />, or -1 on error.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "dup2")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int DuplicateTo(int fd, int newFd);
+
+	/// <summary>
+	/// Closes an open descriptor.
+	/// </summary>
+	/// <param name="fd">The descriptor.</param>
+	/// <returns>
+	/// 0, or -1 on error.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "close")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int Close(int fd);
+
+	/// <summary>
+	/// Sends a device request with no argument, such as <see cref="CloseOnExec" />.
+	/// </summary>
+	/// <param name="fd">The descriptor.</param>
+	/// <param name="request">The request.</param>
+	/// <returns>
+	/// 0, or -1 on error.
+	/// </returns>
+	/// <remarks>
+	/// ioctl takes a variable argument list, which .NET can't pass. A request that reads no argument is safe to call
+	/// this way on every platform, which is why <see cref="CloseOnExec" /> is used rather than fcntl.
+	/// </remarks>
+	[LibraryImport("libc", EntryPoint = "ioctl")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int Control(int fd, nuint request);
+
+	/// <summary>
+	/// Changes which signals the calling thread blocks.
+	/// </summary>
+	/// <param name="how">What to do with <paramref name="signals" />, like <see cref="SignalMaskReplace" />.</param>
+	/// <param name="signals">The new set, or null to only read the current one.</param>
+	/// <param name="old">Receives the set from before, or null.</param>
+	/// <returns>
+	/// 0, or -1 on error.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "sigprocmask")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int SetSignalMask(int how, void* signals, void* old);
+
+	/// <summary>
 	/// Starts a program, as <c>fork</c> then <c>exec</c> would, with file actions and attributes applied in the child.
 	/// </summary>
 	/// <param name="pid">Receives the new process id.</param>

@@ -13,19 +13,34 @@ namespace Sharpie.Shell.Features.Builtins;
 /// <param name="aliases">The aliases, keyed by name, as a live view that later definitions show up in.</param>
 internal class TypeCommand(IReadOnlyDictionary<string, ICommand> builtins, IReadOnlyDictionary<string, string> aliases) : ICommand
 {
-	/// <inheritdoc />
 	private readonly IReadOnlyDictionary<string, ICommand> builtins = builtins.ArgumentNotNull();
 	private readonly IReadOnlyDictionary<string, string> aliases = aliases.ArgumentNotNull();
 
+	/// <summary>
+	/// What a command name stands for.
+	/// </summary>
+	internal enum Kind
+	{
+		/// <summary>An alias, whose value replaces the name.</summary>
+		Alias,
+
+		/// <summary>A builtin the shell runs itself.</summary>
+		Builtin,
+
+		/// <summary>A program on <c>PATH</c>.</summary>
+		Program,
+
+		/// <summary>None of the others.</summary>
+		Missing,
+	}
+
+	/// <inheritdoc />
 	public string Name => "type";
+
 	/// <inheritdoc />
 	public string Description => "Shows how a command would be interpreted";
 
 	/// <inheritdoc />
-	/// <remarks>
-	/// Aliases are checked first, then builtins, then <c>PATH</c>, because that is the order the shell's main loop
-	/// dispatches in, so the answer matches what would actually run.
-	/// </remarks>
 	public int Run(string[] arguments)
 	{
 		_ = arguments.ArgumentNotNull();
@@ -34,25 +49,39 @@ internal class TypeCommand(IReadOnlyDictionary<string, ICommand> builtins, IRead
 
 		foreach (var commandName in arguments)
 		{
-			if (this.aliases.TryGetValue(commandName, out var value))
+			var (kind, value) = this.Resolve(commandName);
+
+			Console.WriteLine(kind switch
 			{
-				Console.WriteLine($@"{commandName} is an alias for {value}");
-			}
-			else if (this.builtins.ContainsKey(commandName))
+				Kind.Alias => $"{commandName} is an alias for {value}",
+				Kind.Builtin => $"{commandName} is a shell builtin",
+				Kind.Program => $"{commandName} is {value}",
+				Kind.Missing or _ => $"{commandName}: not found",
+			});
+
+			if (kind == Kind.Missing)
 			{
-				Console.WriteLine($@"{commandName} is a shell builtin");
-			}
-			else if (PathFinder.FindExecutable(commandName) is { } fullPath)
-			{
-				Console.WriteLine($@"{commandName} is {fullPath}");
-			}
-			else
-			{
-				Console.WriteLine($@"{commandName}: not found");
 				status = 1;
 			}
 		}
 
 		return status;
 	}
+
+	/// <summary>
+	/// Works out what <paramref name="commandName" /> would run, for <c>type</c> and <c>command -v</c>.
+	/// </summary>
+	/// <param name="commandName">The name as typed.</param>
+	/// <returns>
+	/// The kind, with the alias's value, the builtin's name, the program's full path, or the name itself when missing.
+	/// </returns>
+	/// <remarks>
+	/// Aliases are checked first, then builtins, then <c>PATH</c>, because that is the order the shell's main loop
+	/// dispatches in, so the answer matches what would actually run.
+	/// </remarks>
+	internal (Kind Kind, string Value) Resolve(string commandName) =>
+		this.aliases.TryGetValue(commandName, out var value) ? (Kind.Alias, value)
+		: this.builtins.ContainsKey(commandName) ? (Kind.Builtin, commandName)
+		: PathFinder.FindExecutable(commandName) is { } fullPath ? (Kind.Program, fullPath)
+		: (Kind.Missing, commandName);
 }

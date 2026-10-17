@@ -50,20 +50,11 @@ internal static unsafe class PosixSpawn
 	/// </remarks>
 	public static int Start(string path, IReadOnlyList<string> arguments, int processGroup, int input = -1, int output = -1, int error = -1, bool newSession = false, IReadOnlyList<string>? assignments = null)
 	{
-		var environment = Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value);
-
-		foreach (var assignment in assignments ?? [])
-		{
-			var parts = assignment.Split('=', 2);
-
-			environment[parts[0]] = parts[1];
-		}
-
 		var fileActions = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
 		var attributes = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
 		var signals = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
 		var argv = ToCStrings(arguments);
-		var envp = ToCStrings([.. environment.Select(entry => $"{entry.Key}={entry.Value}")]);
+		var envp = ToEnvironment(assignments);
 
 		try
 		{
@@ -126,6 +117,30 @@ internal static unsafe class PosixSpawn
 	}
 
 	/// <summary>
+	/// Builds a program's <c>envp</c>: the shell's environment with <paramref name="assignments" /> written over it.
+	/// </summary>
+	/// <param name="assignments">
+	/// <c>NAME=VALUE</c> words only this program gets, or <see langword="null" /> for none. A later one wins over an
+	/// earlier one with the same name, and an empty value stays present and empty.
+	/// </param>
+	/// <returns>
+	/// The list, which <see cref="FreeCStrings" /> releases.
+	/// </returns>
+	internal static byte** ToEnvironment(IReadOnlyList<string>? assignments)
+	{
+		var environment = Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value);
+
+		foreach (var assignment in assignments ?? [])
+		{
+			var parts = assignment.Split('=', 2);
+
+			environment[parts[0]] = parts[1];
+		}
+
+		return ToCStrings([.. environment.Select(entry => $"{entry.Key}={entry.Value}")]);
+	}
+
+	/// <summary>
 	/// Copies <paramref name="values" /> into native memory as a null-terminated list of UTF-8 C strings, the shape
 	/// <c>argv</c> and <c>envp</c> take.
 	/// </summary>
@@ -133,7 +148,7 @@ internal static unsafe class PosixSpawn
 	/// <returns>
 	/// The list, which <see cref="FreeCStrings" /> releases.
 	/// </returns>
-	private static byte** ToCStrings(IReadOnlyList<string> values)
+	internal static byte** ToCStrings(IReadOnlyList<string> values)
 	{
 		var list = (byte**)NativeMemory.AllocZeroed((nuint)(values.Count + 1), (nuint)sizeof(byte*));
 
@@ -153,7 +168,7 @@ internal static unsafe class PosixSpawn
 	/// Releases a list made by <see cref="ToCStrings" />.
 	/// </summary>
 	/// <param name="list">The list.</param>
-	private static void FreeCStrings(byte** list)
+	internal static void FreeCStrings(byte** list)
 	{
 		for (var entry = list; *entry is not null; entry++)
 		{

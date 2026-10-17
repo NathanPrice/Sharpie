@@ -119,6 +119,12 @@ internal static unsafe class JobControl
 	}
 
 	/// <summary>
+	/// Puts back the terminal modes the shell started with, for a program that is about to take over the shell's
+	/// process. Does nothing when job control is off.
+	/// </summary>
+	public static void RestoreModes() => SetModes(shellModes);
+
+	/// <summary>
 	/// Reads the terminal's current modes.
 	/// </summary>
 	/// <returns>

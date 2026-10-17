@@ -165,7 +165,7 @@ internal sealed partial class AliasCommand : ICommand
 	/// <returns>
 	/// <c>alias NAME='VALUE'</c>, with each <c>'</c> in the value written as <c>'\''</c>.
 	/// </returns>
-	private static string Format(string name, string value) => $"alias {name}='{value.Replace("'", @"'\''", StringComparison.Ordinal)}'";
+	internal static string Format(string name, string value) => $"alias {name}='{value.Replace("'", @"'\''", StringComparison.Ordinal)}'";
 
 	/// <summary>
 	/// Matches a valid alias name.

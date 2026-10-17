@@ -148,7 +148,7 @@ internal static partial class ExternalProgram
 	/// <returns>
 	/// The assigned <c>PATH</c>, or <see langword="null" /> when none of the words sets it.
 	/// </returns>
-	private static string? AssignedPath(IReadOnlyList<string> assignments) =>
+	internal static string? AssignedPath(IReadOnlyList<string> assignments) =>
 		assignments.LastOrDefault(assignment => assignment.StartsWith("PATH=", StringComparison.Ordinal))?["PATH=".Length..];
 
 	/// <summary>

@@ -35,6 +35,9 @@ internal static class BuiltinCommands
 		var alias = new AliasCommand();
 		var declare = new DeclareCommand();
 
+		// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
+		var type = new TypeCommand(commands, alias.Aliases);
+
 		return
 		[
 			alias,
@@ -61,9 +64,9 @@ internal static class BuiltinCommands
 			new StatusCommand("false", 1, "Does nothing and fails"),
 			new UnaliasCommand(alias),
 			new DmanCommand(),
-
-			// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
-			new TypeCommand(commands, alias.Aliases)
+			new CommandCommand(type),
+			new ExecCommand(),
+			type
 		];
 	}
 }
