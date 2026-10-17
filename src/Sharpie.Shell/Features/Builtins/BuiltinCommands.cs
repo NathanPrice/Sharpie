@@ -55,6 +55,11 @@ internal static class BuiltinCommands
 			new ShiftCommand(declare),
 			new SourceCommand(".", declare, runLine),
 			new SourceCommand("source", declare, runLine),
+			new EvalCommand(runLine),
+			new StatusCommand(":", 0, "Does nothing and succeeds"),
+			new StatusCommand("true", 0, "Does nothing and succeeds"),
+			new StatusCommand("false", 1, "Does nothing and fails"),
+			new UnaliasCommand(alias),
 			new DmanCommand(),
 
 			// Gets the live dictionary before it's filled, so type can see every builtin, itself included.

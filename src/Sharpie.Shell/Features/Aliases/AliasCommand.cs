@@ -96,6 +96,20 @@ internal sealed partial class AliasCommand : ICommand
 	}
 
 	/// <summary>
+	/// Removes an alias.
+	/// </summary>
+	/// <param name="name">The alias name.</param>
+	/// <returns>
+	/// <see langword="true" /> when the alias existed and was removed, or <see langword="false" /> when there was none.
+	/// </returns>
+	public bool Remove(string name) => this.aliases.Remove(name.ArgumentNotNull());
+
+	/// <summary>
+	/// Removes every alias.
+	/// </summary>
+	public void Clear() => this.aliases.Clear();
+
+	/// <summary>
 	/// Replaces each command name in <paramref name="words" /> that is an alias with the words of its value.
 	/// </summary>
 	/// <param name="words">The words from <see cref="CommandLine.Split" />.</param>

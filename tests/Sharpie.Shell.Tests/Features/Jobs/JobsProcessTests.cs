@@ -71,13 +71,14 @@ public sealed class JobsProcessTests
 	public async Task Shell_WithFailedBackgroundJob_ReportsExitCodeBeforeNextPrompt()
 	{
 		// Act
-		// The foreground sleep gives false time to exit before the shell checks for finished jobs.
-		var run = await ShellProcess.RunAsync("false &\nsleep 1\nexit\n").ConfigureAwait(true);
+		// false is a builtin, which runs in the foreground, so a cat of a missing file is the failing program. The
+		// foreground sleep gives it time to exit before the shell checks for finished jobs.
+		var run = await ShellProcess.RunAsync("cat sample-missing-file &\nsleep 1\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		// The Exit line lands before the sleep prompt or the exit prompt, depending on whether false had already
+		// The Exit line lands before the sleep prompt or the exit prompt, depending on whether cat had already
 		// exited when the shell first checked.
-		_ = run.Output.Should().MatchRegex(@"^\$ \[1\] \d+\n(\[1\]\+  Exit 1 +false\n\$ \$ |\$ \[1\]\+  Exit 1 +false\n\$ )$");
+		_ = run.Output.Should().MatchRegex(@"^\$ \[1\] \d+\n(\[1\]\+  Exit 1 +cat sample-missing-file\n\$ \$ |\$ \[1\]\+  Exit 1 +cat sample-missing-file\n\$ )$");
 		_ = run.Exited.Should().BeTrue();
 	}
 }
