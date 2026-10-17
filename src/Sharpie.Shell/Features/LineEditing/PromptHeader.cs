@@ -90,19 +90,31 @@ internal static class PromptHeader
 	/// </returns>
 	internal static (string Parent, string Name) SplitForDisplay(string directory)
 	{
-		var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-		if (home.Length > 0 &&
-			(directory == home || directory.StartsWith(home + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
-		{
-			directory = "~" + directory[home.Length..];
-		}
+		directory = ShortenHome(directory);
 
 		var lastSeparator = directory.LastIndexOf(Path.DirectorySeparatorChar);
 
 		return lastSeparator < 0 || lastSeparator == directory.Length - 1
 			? (string.Empty, directory)
 			: (directory[..(lastSeparator + 1)], directory[(lastSeparator + 1)..]);
+	}
+
+	/// <summary>
+	/// Replaces the home folder at the start of <paramref name="directory" /> with <c>~</c>.
+	/// </summary>
+	/// <param name="directory">A full path.</param>
+	/// <returns>
+	/// <c>~</c> for the home folder itself, <c>~</c> followed by the rest of the path for a folder under it, and
+	/// <paramref name="directory" /> unchanged otherwise.
+	/// </returns>
+	internal static string ShortenHome(string directory)
+	{
+		var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+		return home.Length > 0 &&
+			(directory == home || directory.StartsWith(home + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+				? "~" + directory[home.Length..]
+				: directory;
 	}
 
 	/// <summary>

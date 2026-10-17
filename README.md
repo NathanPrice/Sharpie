@@ -48,9 +48,9 @@ and mouse reporting all work.
   keyword docs as man pages.
 - **Encrypted history.** History is saved encrypted, with the key kept in the operating system's secret store.
 
-**Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `disown`, `dman`, `echo`, `eval`,
-`exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `pwd`, `read`, `set`, `shift`, `source` / `.`,
-`true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`.
+**Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `dirs`, `disown`, `dman`, `echo`,
+`eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `popd`, `pushd`, `pwd`, `read`, `set`,
+`shift`, `source` / `.`, `true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`.
 
 ## Getting started
 

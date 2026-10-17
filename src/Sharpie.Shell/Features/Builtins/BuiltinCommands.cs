@@ -93,9 +93,15 @@ internal static class BuiltinCommands
 	/// Creates the builtins that show or change the current folder.
 	/// </summary>
 	/// <returns>
-	/// <c>pwd</c> and <c>cd</c>.
+	/// <c>pwd</c>, <c>cd</c>, and the folder stack builtins, which change folder through the same <c>cd</c>.
 	/// </returns>
-	private static ICommand[] CreateFolderCommands() => [new PwdCommand(), new CdCommand()];
+	private static ICommand[] CreateFolderCommands()
+	{
+		var cd = new CdCommand();
+		var dirs = new DirsCommand();
+
+		return [new PwdCommand(), cd, dirs, new PushdCommand(dirs, cd), new PopdCommand(dirs, cd)];
+	}
 
 	/// <summary>
 	/// Creates the builtins that list and control jobs.
