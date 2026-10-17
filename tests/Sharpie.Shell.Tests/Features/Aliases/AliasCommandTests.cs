@@ -160,6 +160,50 @@ public sealed class AliasCommandTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a <c>$(...)</c> in an alias value runs through the substitute when the alias is used.
+	/// </summary>
+	[Fact]
+	public void Expand_WithSubstitutionInValue_RunsIt()
+	{
+		// Arrange
+		this.sut.Define("top", "cd $(sampletool --root)");
+		var lists = new List<string>();
+
+		// Act
+		var words = this.sut.Expand(CommandLine.Split("top"), new Dictionary<string, string>(), list =>
+		{
+			lists.Add(list);
+
+			return "/repo\n";
+		});
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal("cd", "/repo");
+		_ = lists.Should().Equal("sampletool --root");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="AliasCommand.Restore" /> leaves exactly the saved aliases, dropping later ones and
+	/// putting back changed ones.
+	/// </summary>
+	[Fact]
+	public void Restore_WithSavedAliases_ReplacesAll()
+	{
+		// Arrange
+		this.sut.Define("kept", "echo old");
+		var saved = this.sut.Aliases.ToDictionary();
+
+		this.sut.Define("kept", "echo new");
+		this.sut.Define("added", "echo added");
+
+		// Act
+		this.sut.Restore(saved);
+
+		// Assert
+		_ = this.sut.Aliases.Should().Equal(new Dictionary<string, string> { ["kept"] = "echo old" });
+	}
+
+	/// <summary>
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();

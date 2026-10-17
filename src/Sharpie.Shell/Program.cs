@@ -1,3 +1,4 @@
+using System.Collections;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -70,6 +71,17 @@ internal static class Program
 	internal const string RcFileName = ".sharpierc";
 
 	/// <summary>
+	/// Where commands with no <c>&gt;</c> of their own write: <see langword="null" /> for the terminal, or the stream
+	/// of the command substitution or builtin being run.
+	/// </summary>
+	private static Stream? standardOutput;
+
+	/// <summary>
+	/// How many command substitutions are running, one inside another, so <c>exit</c> ends only the innermost.
+	/// </summary>
+	private static int substitutionDepth;
+
+	/// <summary>
 	/// Creates one instance of every builtin command, as <see cref="BuiltinCommands.Create" /> describes, whose lines
 	/// run through <see cref="RunLine" />.
 	/// </summary>
@@ -82,7 +94,7 @@ internal static class Program
 	/// <paramref name="commands" /> holds them.
 	/// </remarks>
 	internal static ICommand[] CreateBuiltins(Dictionary<string, ICommand> commands) =>
-		BuiltinCommands.Create(commands, line => RunLine(commands, (AliasCommand)commands["alias"], (DeclareCommand)commands["declare"], line));
+		BuiltinCommands.Create(commands, line => RunLine(commands, (AliasCommand)commands["alias"], (DeclareCommand)commands["declare"], line), () => substitutionDepth > 0);
 
 	/// <summary>
 	/// Registers the builtins, then runs the <c>-c</c> command or the script file, or else reads and runs one command
@@ -140,6 +152,7 @@ internal static class Program
 		{
 			context.Cancel = true;
 			ExternalProgram.CountInterrupt();
+			ExternalProgram.StopWaiting();
 
 			if (!terminal)
 			{
@@ -438,6 +451,10 @@ internal static class Program
 	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and the last status.</param>
 	/// <param name="line">The line the user entered.</param>
+	/// <param name="output">
+	/// Where the line's commands write when they have no <c>&gt;</c> of their own, or <see langword="null" /> to keep
+	/// <see cref="standardOutput" />.
+	/// </param>
 	/// <returns>
 	/// The last command's status.
 	/// </returns>
@@ -447,33 +464,159 @@ internal static class Program
 	/// through <see cref="Environment.Exit" />, so the history is still saved. A failure anywhere inside a command
 	/// that <c>&amp;&amp;</c> or <c>||</c> tests doesn't, so <c>eval false || echo ok</c> prints ok, as in bash.
 	/// </remarks>
-	private static int RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line)
+	private static int RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line, Stream? output = null)
 	{
 		var settings = ((SetCommand)commands["set"]).Settings;
+		var outer = standardOutput;
 
-		return declare.Status = CommandList.Run(
-			line,
-			declare.Status,
-			(command, tested) =>
-			{
-				settings.TestDepth += tested ? 1 : 0;
+		standardOutput = output ?? standardOutput;
 
-				try
+		try
+		{
+			return declare.Status = CommandList.Run(
+				line,
+				declare.Status,
+				(command, tested) =>
 				{
-					return declare.Status = RunCommand(commands, aliases, declare, settings, command);
-				}
-				finally
+					settings.TestDepth += tested ? 1 : 0;
+
+					try
+					{
+						return declare.Status = RunCommand(commands, aliases, declare, settings, command);
+					}
+					finally
+					{
+						settings.TestDepth -= tested ? 1 : 0;
+					}
+				},
+				status =>
 				{
-					settings.TestDepth -= tested ? 1 : 0;
-				}
-			},
-			status =>
+					// Inside a command substitution set -e ends only the substitution, as it would bash's subshell.
+					if (settings.ErrExit && settings.TestDepth == 0 && substitutionDepth > 0)
+					{
+						throw new ExitCommand.SubshellExit(status);
+					}
+
+					if (settings.ErrExit && settings.TestDepth == 0)
+					{
+						Environment.Exit(status);
+					}
+				});
+		}
+		finally
+		{
+			standardOutput = outer;
+		}
+	}
+
+	/// <summary>
+	/// Runs the command list of a <c>$(...)</c> or backquotes with its output captured, then puts back the folder,
+	/// the shell variables and positional parameters, the environment, the aliases, the <c>set</c> options, the
+	/// <c>pushd</c> stack and the umask, as bash's subshell would leave them.
+	/// </summary>
+	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="aliases">The <c>alias</c> builtin.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and the last status.</param>
+	/// <param name="settings">The <c>set</c> options. <c>set -e</c> starts off inside, as bash doesn't pass it on.</param>
+	/// <param name="list">The text inside the substitution.</param>
+	/// <returns>
+	/// What the list wrote to standard output, decoded as UTF-8, and its status. An <c>exit</c> inside ends only the
+	/// list, with its own status.
+	/// </returns>
+	/// <remarks>
+	/// The list runs inside the shell's own process rather than a forked one, which .NET can't do safely, so whatever
+	/// it changes is undone here instead. shortcut: <c>ulimit</c> limits aren't put back, and a lowered hard limit
+	/// can't be; save and restore them here if a substitution that changes one is ever needed.
+	/// </remarks>
+	private static (string Output, int Status) Substitute(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, string list)
+	{
+		var folder = Directory.GetCurrentDirectory();
+		var variables = declare.Variables.ToDictionary();
+		var aliasValues = aliases.Aliases.ToDictionary();
+		var environment = Environment.GetEnvironmentVariables();
+		var options = ShellSettings.Options.Where(option => settings.IsOn(option.Name)).Select(option => option.Name).ToHashSet();
+		var stack = ((DirsCommand)commands["dirs"]).Stack;
+		var folders = stack.ToArray();
+
+		// Read by setting it, the only way POSIX offers, and put straight back.
+		var mask = OperatingSystem.IsWindows() ? 0 : NativeMethods.SetFileMask(0);
+
+		if (!OperatingSystem.IsWindows())
+		{
+			_ = NativeMethods.SetFileMask(mask);
+		}
+
+		_ = settings.Set("errexit", false);
+
+		using var buffer = new MemoryStream();
+
+		// Background programs the list starts copy into it from other threads.
+		var output = Stream.Synchronized(buffer);
+		int status;
+
+		substitutionDepth++;
+
+		try
+		{
+			status = RunLine(commands, aliases, declare, list, output);
+		}
+		catch (ExitCommand.SubshellExit exit)
+		{
+			status = exit.Status;
+		}
+		finally
+		{
+			try
 			{
-				if (settings.ErrExit && settings.TestDepth == 0)
+				Directory.SetCurrentDirectory(folder);
+			}
+			// The list removed the folder or its access, and the shell stays where the list left it.
+			catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+			{
+				Log.Debug(exception, "Can't go back to {Folder} after a command substitution", folder);
+			}
+
+			declare.Restore(variables);
+			aliases.Restore(aliasValues);
+			stack.Clear();
+			stack.AddRange(folders);
+
+			foreach (var (name, _) in ShellSettings.Options)
+			{
+				_ = settings.Set(name, options.Contains(name));
+			}
+
+			if (!OperatingSystem.IsWindows())
+			{
+				_ = NativeMethods.SetFileMask(mask);
+			}
+
+			foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+			{
+				if (!environment.Contains(entry.Key))
 				{
-					Environment.Exit(status);
+					Environment.SetEnvironmentVariable((string)entry.Key, null);
 				}
-			});
+			}
+
+			// Only the changed ones, so a variable the list didn't touch is never written again, an empty one included.
+			foreach (DictionaryEntry entry in environment)
+			{
+				if (Environment.GetEnvironmentVariable((string)entry.Key) != (string?)entry.Value)
+				{
+					Environment.SetEnvironmentVariable((string)entry.Key, (string?)entry.Value);
+				}
+			}
+
+			substitutionDepth--;
+		}
+
+		ExternalProgram.WaitForDetached(output);
+
+		// The rest of the command sees the substitution's status as $?, as in bash.
+		declare.Status = status;
+
+		return (Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length), status);
 	}
 
 	/// <summary>
@@ -491,22 +634,33 @@ internal static class Program
 	/// <returns>
 	/// The command's status: <see cref="ExternalProgram.NotFound" /> when it isn't found, 1 when a redirect file
 	/// can't be opened or a variable isn't set under <c>set -u</c>, and <see cref="CommandList.UnsupportedStatus" />
-	/// when it holds an operator the shell can't run.
+	/// when it holds an operator the shell can't run. A line of only <c>NAME=VALUE</c> words, or of words that all
+	/// expand to nothing, gives the last command substitution's status, as in bash, so
+	/// <c>out=$(cmd) || echo failed</c> works.
 	/// </returns>
 	/// <remarks>
 	/// Under <c>set -u</c> a shell that isn't interactive exits with 127 at the first unset variable, as bash does.
 	/// </remarks>
 	private static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, string line)
 	{
+		var substituted = 0;
+
+		string Substitution(string list)
+		{
+			(var text, substituted) = Substitute(commands, aliases, declare, settings, list);
+
+			return text;
+		}
+
 		Word? unset = null;
-		var split = CommandLine.Split(line, declare.Variables, settings.NoUnset ? name => unset ??= name : null);
+		var split = CommandLine.Split(line, declare.Variables, settings.NoUnset ? name => unset ??= name : null, Substitution);
 
 		if (unset is { } missing)
 		{
 			return ReportUnset(line, missing, settings.Interactive);
 		}
 
-		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(CommandCommand.Unwrap(aliases.Expand(split, declare.Variables)));
+		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(CommandCommand.Unwrap(aliases.Expand(split, declare.Variables, Substitution)));
 
 		// A trailing & runs the command in the background.
 		var background = words is [.., { IsOperator: true, Text: "&" }];
@@ -516,14 +670,15 @@ internal static class Program
 			words = words[..^1];
 		}
 
+		// As in bash, a command that expands to nothing, like $(true), gives its last substitution's status.
 		if (words.Length == 0)
 		{
-			return 0;
+			return substituted;
 		}
 
 		if (background && NeedsShellCopy(words, commands))
 		{
-			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), ["-c", line.EndsWith('&') ? line[..^1] : line], [], null, null, background: true);
+			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), ["-c", line.EndsWith('&') ? line[..^1] : line], [], standardOutput, null, background: true);
 		}
 
 		// Redirects aren't applied to a pipeline.
@@ -542,7 +697,7 @@ internal static class Program
 		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
 		if (stages is [var only] && Array.TrueForAll(only, DeclareCommand.IsAssignment))
 		{
-			return declare.Run(only);
+			return AssignmentStatus(declare.Run(only), substituted);
 		}
 
 		// NAME=VALUE words in front of a command go into that command's environment only, as in POSIX. The last word
@@ -570,7 +725,7 @@ internal static class Program
 		return errorFailed ? 1
 			: stages.Length > 1 ? RunPipeline(stages)
 			: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltinOrExec(command, declare, settings, arguments, assignments[0], output, error)
-			: RunProgram(names[0], arguments, assignments[0], output, error, background);
+			: RunProgram(names[0], arguments, assignments[0], OutputOf(output), error, background);
 
 		// Opens the redirect file at path, or gives null when path is null. The file is created if missing, then
 		// emptied, or positioned at its end when append is true. Sets failed after reporting the reason when the file
@@ -606,7 +761,7 @@ internal static class Program
 			}
 		}
 
-		// Runs the stages as a pipeline. A two-stage pipeline, left | right, may have a builtin on either side. No
+		// Runs the stages as a pipeline, the last one writing to standardOutput. A two-stage pipeline, left | right, may have a builtin on either side. No
 		// builtin reads standard input, so nothing has to run side by side once one is involved: a builtin on the
 		// left writes everything into a buffer that becomes the right program's input, and a builtin on the right
 		// ignores the left side's output, which is thrown away. Builtins run in the shell itself, not a subshell as
@@ -624,7 +779,7 @@ internal static class Program
 
 			if (leftBuiltin is null && rightBuiltin is null)
 			{
-				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], null), assignments, settings.PipeFail);
+				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], null), assignments, settings.PipeFail, standardOutput);
 			}
 
 			if (rightBuiltin is not null)
@@ -633,7 +788,7 @@ internal static class Program
 					? RunBuiltin(leftBuiltin, declare, left[1..], assignments[0], Stream.Null, null)
 					: RunProgram(names[0], left[1..], assignments[0], Stream.Null, null, background: false);
 
-				return ExternalProgram.PipelineStatus([leftStatus, RunBuiltin(rightBuiltin, declare, right[1..], assignments[^1], null, null)], settings.PipeFail);
+				return ExternalProgram.PipelineStatus([leftStatus, RunBuiltin(rightBuiltin, declare, right[1..], assignments[^1], standardOutput, null)], settings.PipeFail);
 			}
 
 			using var buffer = new MemoryStream();
@@ -642,13 +797,13 @@ internal static class Program
 
 			buffer.Position = 0;
 
-			return ExternalProgram.PipelineStatus([builtinStatus, RunProgram(names[^1], right[1..], assignments[^1], null, null, background: false, buffer)], settings.PipeFail);
+			return ExternalProgram.PipelineStatus([builtinStatus, RunProgram(names[^1], right[1..], assignments[^1], standardOutput, null, background: false, buffer)], settings.PipeFail);
 		}
 
 		// Runs a program on PATH with its NAME=VALUE words in its environment, or reports that it isn't there.
 		int RunProgram(Word name, string[] arguments, string[] assignments, Stream? output, Stream? error, bool background, Stream? input = null)
 		{
-			if (ExternalProgram.Run(name.Text, arguments, output, error, background, input, assignments) is { } status)
+			if (ExternalProgram.Run(name.Text, arguments, output, error, background, input, assignments, listJob: substitutionDepth == 0) is { } status)
 			{
 				return status;
 			}
@@ -677,6 +832,10 @@ internal static class Program
 	/// runs, as bash does. That way <c>PATH=/opt/bin type tool</c> searches <c>/opt/bin</c>. They are shell variables
 	/// for the run too, as POSIX says. The shell reads its own variables before the environment, so otherwise an
 	/// earlier <c>IFS=:</c> would win over the <c>IFS=</c> in <c>IFS= read -r line</c>.
+	/// <para>
+	/// <see cref="standardOutput" /> becomes <paramref name="output" /> too, so the programs that <c>. file</c> runs
+	/// write where the builtin does.
+	/// </para>
 	/// </remarks>
 	private static int RunBuiltin(ICommand command, DeclareCommand declare, string[] arguments, string[] assignments, Stream? output, Stream? error)
 	{
@@ -687,6 +846,7 @@ internal static class Program
 		var terminalOut = Console.Out;
 		var terminalError = Console.Error;
 		var terminalColor = ShellError.UseColor;
+		var outer = standardOutput;
 
 		using var outWriter = output is null ? null : new StreamWriter(output, leaveOpen: true);
 		using var errorWriter = error is null ? null : new StreamWriter(error, leaveOpen: true);
@@ -696,6 +856,7 @@ internal static class Program
 
 		// A report written into a 2> file shouldn't carry color codes.
 		ShellError.UseColor &= error is null;
+		standardOutput = output ?? standardOutput;
 
 		try
 		{
@@ -716,8 +877,28 @@ internal static class Program
 			Console.SetOut(terminalOut);
 			Console.SetError(terminalError);
 			ShellError.UseColor = terminalColor;
+			standardOutput = outer;
 		}
 	}
+
+	/// <summary>
+	/// Gets where a command writes.
+	/// </summary>
+	/// <param name="redirect">The command's own <c>&gt;</c> file, or <see langword="null" />.</param>
+	/// <returns>
+	/// <paramref name="redirect" />, or else <see cref="standardOutput" />.
+	/// </returns>
+	private static Stream? OutputOf(FileStream? redirect) => redirect ?? standardOutput;
+
+	/// <summary>
+	/// Gives the status of a line of only <c>NAME=VALUE</c> words.
+	/// </summary>
+	/// <param name="status">What <c>declare</c> gave for the words.</param>
+	/// <param name="substituted">The last command substitution's status, or 0 when there was none.</param>
+	/// <returns>
+	/// <paramref name="status" /> when it failed, or else <paramref name="substituted" />, as in bash.
+	/// </returns>
+	private static int AssignmentStatus(int status, int substituted) => status != 0 ? status : substituted;
 
 	/// <summary>
 	/// Reports a variable that <c>set -u</c> finds unset, pointing at where it was typed.
@@ -741,6 +922,12 @@ internal static class Program
 			Label = "set -u makes this an error",
 			Help = "set it first, or turn the check off with set +u",
 		}.Write();
+
+		// A substitution is a subshell in bash, which isn't interactive, so the error ends it, with 1 as bash's does.
+		if (substitutionDepth > 0)
+		{
+			throw new ExitCommand.SubshellExit(1);
+		}
 
 		if (!interactive)
 		{
@@ -782,12 +969,13 @@ internal static class Program
 	/// The builtin's status.
 	/// </returns>
 	/// <remarks>
-	/// <c>exec</c> keeps the redirect files past its own run, which <see cref="RunBuiltin" /> would undo.
+	/// <c>exec</c> keeps the redirect files past its own run, which <see cref="RunBuiltin" /> would undo. Inside a
+	/// command substitution it can't replace the shell, so it runs the program and ends the substitution instead.
 	/// </remarks>
 	private static int RunBuiltinOrExec(ICommand command, DeclareCommand declare, ShellSettings settings, string[] arguments, string[] assignments, FileStream? output, FileStream? error) =>
-		command is ExecCommand exec
-			? exec.Run(arguments, assignments, output, error, settings.Interactive)
-			: RunBuiltin(command, declare, arguments, assignments, output, error);
+		command is not ExecCommand exec ? RunBuiltin(command, declare, arguments, assignments, OutputOf(output), error)
+		: substitutionDepth > 0 ? ExecCommand.RunInSubstitution(arguments, assignments, OutputOf(output), error)
+		: exec.Run(arguments, assignments, output, error, settings.Interactive);
 
 	/// <summary>
 	/// Prints each stage of a command to standard error before it runs, when <c>set -x</c> is on.

@@ -51,6 +51,10 @@ internal static class CommandLine
 	/// <c>set -u</c>, or <see langword="null" /> to let it expand to nothing. <c>$@</c>, <c>$*</c>, <c>$?</c> and
 	/// <c>$#</c> are always set.
 	/// </param>
+	/// <param name="substitute">
+	/// Runs the command list inside a <c>$(...)</c> or backquotes and gives back its output, or
+	/// <see langword="null" /> to keep each substitution as typed and run nothing.
+	/// </param>
 	/// <returns>
 	/// The command name followed by its arguments, with the quote characters removed, and each operator as its own
 	/// <see cref="Word" />. Quoted and unquoted text that touch with no space between join into one word. An empty
@@ -101,8 +105,18 @@ internal static class CommandLine
 	/// unquoted <c>$NAME</c> count too, as in bash. A quoted or escaped wildcard only matches itself, and a pattern that
 	/// matches nothing stays as typed, which is bash's default.
 	/// </para>
+	/// <para>
+	/// Outside single quotes, <c>$(list)</c> and <c>`list`</c> are replaced by what <paramref name="substitute" />
+	/// gives for the list, with NUL characters and trailing newlines removed. Inside backquotes a backslash before
+	/// <c>`</c>, <c>\</c> or <c>$</c> is dropped, and before <c>"</c> too inside double quotes, as in bash. Inside double
+	/// quotes the output stays one word, so <c>"$(true)"</c> is an empty argument. In a <c>NAME=value</c> word it isn't
+	/// split either, so <c>A=$(cmd)</c> keeps its spaces. Anywhere else a space, tab or newline in the output ends the
+	/// word, as with bash's default <c>IFS</c>, and wildcards in it match file names, so <c>kill $(pgrep x)</c> passes
+	/// each id as its own argument and an empty output adds none. <c>$((</c> is arithmetic, not a substitution, and
+	/// stays as typed.
+	/// </para>
 	/// </remarks>
-	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null, Action<Word>? unset = null)
+	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null, Action<Word>? unset = null, Func<string, string>? substitute = null)
 	{
 		_ = line.ArgumentNotNull();
 
@@ -124,6 +138,9 @@ internal static class CommandLine
 		// The word again for Glob.Expand, with each quoted or escaped wildcard behind a backslash so it matches only
 		// itself.
 		var pattern = new StringBuilder();
+
+		// Just past the last $NAME or substitution, so a # right after one that added nothing isn't a comment.
+		var afterExpansion = -1;
 
 		for (var index = 0; index < line.Length; index++)
 		{
@@ -154,8 +171,14 @@ internal static class CommandLine
 						hasWord = true;
 
 						break;
+					case null or '"' when SubstitutionEnd(line, index) is var close and >= 0:
+						Substitute(index, close);
+						index = close;
+
+						break;
 					case null or '"' when TryExpand(line, index, variables, quote is not null, unset, out var parts, out var end):
 						AppendParts(parts, quoted: quote is not null, end);
+						afterExpansion = end + 1;
 						index = end;
 
 						break;
@@ -165,8 +188,7 @@ internal static class CommandLine
 						index = tildeEnd;
 
 						break;
-					// POSIX starts a comment only at the start of a word, so the # in a#b and \#x is kept.
-					case null when character == '#' && !hasWord:
+					case null when StartsComment(character, hasWord, index, afterExpansion):
 						index = line.Length;
 
 						break;
@@ -228,6 +250,16 @@ internal static class CommandLine
 			return text;
 		}
 
+		// Adds the output of the substitution that runs from start to close, or the text as typed with no substitute,
+		// split into words the way a $@ expansion is.
+		void Substitute(int start, int close)
+		{
+			var (fields, quoted) = SubstitutionFields(line, start, close, quote, word.ToString(), words, substitute);
+
+			AppendParts(fields, quoted, close);
+			afterExpansion = close + 1;
+		}
+
 		// Adds text to the word and to its pattern.
 		void Append(ReadOnlySpan<char> text, bool quoted)
 		{
@@ -268,6 +300,130 @@ internal static class CommandLine
 	}
 
 	/// <summary>
+	/// Finds where the command substitution that starts at <paramref name="index" /> ends.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="index">The position of a <c>$(</c> or a backquote, outside single quotes and not escaped.</param>
+	/// <returns>
+	/// The position of the closing <c>)</c> or backquote, or -1 when there is none, nothing starts a substitution at
+	/// <paramref name="index" />, or it's a <c>$((</c>, which is arithmetic.
+	/// </returns>
+	/// <remarks>
+	/// Inside <c>$(...)</c>, parentheses outside quotes are counted, and quoted or escaped text is skipped, so the
+	/// <c>)</c> in <c>$(echo ")")</c> doesn't end it. A <c>#</c> at the start of a word begins a comment that runs to
+	/// the end of its line, so the <c>)</c> in <c>$(echo a # )</c> doesn't end it either, as in bash. A nested
+	/// substitution inside double quotes or backquotes ends where its own call says. Inside backquotes the next
+	/// backquote that isn't escaped ends it.
+	/// </remarks>
+	internal static int SubstitutionEnd(string line, int index)
+	{
+		_ = line.ArgumentNotNull();
+
+		if (!IsSubstitutionStart(line, index))
+		{
+			return -1;
+		}
+
+		if (line[index] == '`')
+		{
+			for (var end = index + 1; end < line.Length; end++)
+			{
+				if (line[end] == '\\')
+				{
+					end++;
+				}
+				else if (line[end] == '`')
+				{
+					return end;
+				}
+			}
+
+			return -1;
+		}
+
+		// shortcut: a case pattern's unmatched ) inside $(...) ends it early. Track case...esac if case is ever added.
+		// The $( itself is the first parenthesis, and a word, or a comment, can start right after it.
+		var depth = 1;
+		char? quote = null;
+
+		// True after a blank or an operator character outside quotes, where a word, or a comment, can start.
+		var wordStart = true;
+
+		for (var end = index + 2; end < line.Length; end++)
+		{
+			var character = line[end];
+
+			if (quote == '\'')
+			{
+				quote = character == '\'' ? null : quote;
+			}
+			else if (character == '\\')
+			{
+				end++;
+			}
+			else if (quote == '"')
+			{
+				quote = character == '"' ? null : quote;
+
+				if (IsSubstitutionStart(line, end))
+				{
+					end = SubstitutionEnd(line, end);
+
+					// Everything after a nested substitution that never closes is inside it, so this one can't close
+					// either. Scanning on would also go over the same text again at every level of nesting.
+					if (end < 0)
+					{
+						return -1;
+					}
+				}
+			}
+			else
+			{
+				switch (character)
+				{
+					case '#' when wordStart:
+						end = line.IndexOf('\n', end) is var newline and >= 0 ? newline - 1 : line.Length;
+
+						break;
+					case '\'' or '"':
+						quote = character;
+
+						break;
+					case '`' when SubstitutionEnd(line, end) is var nested and >= 0:
+						end = nested;
+
+						break;
+					case '`':
+						return -1;
+					case '(':
+						depth++;
+
+						break;
+					case ')' when --depth == 0:
+						return end;
+					default:
+						break;
+				}
+			}
+
+			wordStart = quote is null && (character is ' ' or '\t' or '\n' || OperatorStarts.Contains(character));
+		}
+
+		return -1;
+	}
+
+	/// <summary>
+	/// Checks whether a command substitution starts at <paramref name="index" />.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="index">The position to look at.</param>
+	/// <returns>
+	/// <see langword="true" /> for a backquote or a <c>$(</c>, but not for <c>$((</c>, which is arithmetic.
+	/// </returns>
+	private static bool IsSubstitutionStart(string line, int index) =>
+		line[index] == '`' || (line.AsSpan(index).StartsWith("$(", StringComparison.Ordinal) && !line.AsSpan(index).StartsWith("$((", StringComparison.Ordinal));
+
+	/// <summary>
 	/// Checks whether an escaping backslash stays in the word along with the character after it.
 	/// </summary>
 	/// <param name="quote">The quote character that's open, or <see langword="null" /> outside quotes.</param>
@@ -277,6 +433,99 @@ internal static class CommandLine
 	/// a newline, the only ones bash escapes there.
 	/// </returns>
 	private static bool KeepsBackslash(char? quote, char character) => quote == '"' && character is not ('"' or '\\' or '$' or '`' or '\n');
+
+	/// <summary>
+	/// Runs the substitution from <paramref name="start" /> to <paramref name="close" /> and cuts its output into the
+	/// words it adds.
+	/// </summary>
+	/// <param name="line">The command line being split.</param>
+	/// <param name="start">The position of the <c>$(</c> or backquote.</param>
+	/// <param name="close">The position of the closing <c>)</c> or backquote.</param>
+	/// <param name="quote">The quote the substitution is inside, or <see langword="null" />.</param>
+	/// <param name="word">The word read so far.</param>
+	/// <param name="words">The words before it, which tell whether it's an assignment, as <see cref="IsAssignmentWord" /> describes.</param>
+	/// <param name="substitute">Runs the command list, or <see langword="null" /> to run nothing.</param>
+	/// <returns>
+	/// The substitution as typed when <paramref name="substitute" /> is <see langword="null" />. Otherwise its output
+	/// with NUL characters and trailing newlines removed. Outside quotes and assignments it's split on spaces, tabs and
+	/// newlines into fields, where an empty field marks blanks with nothing between them. <c>Quoted</c> tells whether
+	/// wildcards in the fields only match themselves.
+	/// </returns>
+	private static (string[] Fields, bool Quoted) SubstitutionFields(string line, int start, int close, char? quote, string word, List<Word> words, Func<string, string>? substitute)
+	{
+		if (substitute is null)
+		{
+			return ([line[start..(close + 1)]], true);
+		}
+
+		var inner = line[start] == '`' ? Unescape(line[(start + 1)..close], inDoubleQuotes: quote == '"') : line[(start + 2)..close];
+
+		// argv can't hold NUL, and bash drops it with a warning.
+		var output = substitute(inner).Replace("\0", string.Empty, StringComparison.Ordinal).TrimEnd('\n');
+
+		var split = quote is null && !IsAssignmentWord(word, words);
+
+		return (split ? output.Split([' ', '\t', '\n']) : [output], quote is not null);
+	}
+
+	/// <summary>
+	/// Checks whether <paramref name="word" /> is a <c>NAME=value</c> that bash reads as an assignment, whose
+	/// substitutions aren't split.
+	/// </summary>
+	/// <param name="word">The word read so far.</param>
+	/// <param name="words">The words before it.</param>
+	/// <returns>
+	/// <see langword="true" /> when the word is shaped like an assignment and comes before the command's name, or is
+	/// an argument of <c>export</c> or <c>declare</c>. So <c>export A=$(cmd)</c> keeps its spaces, and
+	/// <c>printf A=$(cmd)</c> is split.
+	/// </returns>
+	private static bool IsAssignmentWord(string word, List<Word> words)
+	{
+		var name = words.Skip(words.FindLastIndex(typed => typed.IsOperator) + 1).FirstOrDefault(typed => !DeclareCommand.IsAssignment(typed.Text));
+
+		return DeclareCommand.IsAssignment(word) && name.Text is null or "export" or "declare";
+	}
+
+	/// <summary>
+	/// Checks whether the unquoted <paramref name="character" /> at <paramref name="index" /> starts a comment.
+	/// </summary>
+	/// <param name="character">The character.</param>
+	/// <param name="hasWord"><see langword="true" /> when a word is being read.</param>
+	/// <param name="index">Its position.</param>
+	/// <param name="afterExpansion">The position just past the last <c>$NAME</c> or substitution.</param>
+	/// <returns>
+	/// <see langword="true" /> for a <c>#</c> at the start of a word. POSIX starts a comment only there, so the
+	/// <c>#</c> in <c>a#b</c>, <c>\#x</c> and <c>$(true)#x</c> is kept.
+	/// </returns>
+	private static bool StartsComment(char character, bool hasWord, int index, int afterExpansion) =>
+		character == '#' && !hasWord && index != afterExpansion;
+
+	/// <summary>
+	/// Removes the backslashes that only escape a character inside backquotes, the way bash reads the command there.
+	/// </summary>
+	/// <param name="text">The text between the backquotes.</param>
+	/// <param name="inDoubleQuotes"><see langword="true" /> when the backquotes are inside double quotes.</param>
+	/// <returns>
+	/// The command, with each backslash before <c>`</c>, <c>\</c> or <c>$</c> dropped, and before <c>"</c> too when
+	/// <paramref name="inDoubleQuotes" />. Any other backslash stays.
+	/// </returns>
+	private static string Unescape(string text, bool inDoubleQuotes)
+	{
+		var command = new StringBuilder(text.Length);
+
+		for (var index = 0; index < text.Length; index++)
+		{
+			// SubstitutionEnd never ends on an escaped backquote, so a backslash always has a character after it.
+			if (text[index] == '\\' && (text[index + 1] is '`' or '\\' or '$' || (inDoubleQuotes && text[index + 1] == '"')))
+			{
+				index++;
+			}
+
+			_ = command.Append(text[index]);
+		}
+
+		return command.ToString();
+	}
 
 	/// <summary>
 	/// Adds <paramref name="text" /> to <paramref name="pattern" />, behind backslashes when it was quoted, so a quoted
@@ -716,8 +965,9 @@ internal static class CommandLine
 	/// <param name="line">The line the user entered.</param>
 	/// <returns>
 	/// The words, starting with <c>man</c> or <c>dman</c>, or <see langword="null" /> when the line is anything else,
-	/// including either command with no page, with a redirect, pipe or other operator, or with other commands after
-	/// <c>;</c>, <c>&amp;&amp;</c> or <c>||</c>. The shell runs those itself, and the page prints as text.
+	/// including either command with no page, with a redirect, pipe, other operator or command substitution, or with
+	/// other commands after <c>;</c>, <c>&amp;&amp;</c> or <c>||</c>. The shell runs those itself, and the page prints
+	/// as text.
 	/// </returns>
 	public static string[]? PagedCommand(string line)
 	{
@@ -726,9 +976,16 @@ internal static class CommandLine
 			return null;
 		}
 
-		var (words, outputPath, _, errorPath, _) = SplitRedirect(Split(line));
+		// Only notes the substitution, so nothing runs before the shell runs the line itself.
+		var substituted = false;
+		var (words, outputPath, _, errorPath, _) = SplitRedirect(Split(line, substitute: _ =>
+		{
+			substituted = true;
 
-		return words is [{ IsOperator: false, Text: "man" or "dman" }, _, ..] && outputPath is null && errorPath is null
+			return string.Empty;
+		}));
+
+		return !substituted && words is [{ IsOperator: false, Text: "man" or "dman" }, _, ..] && outputPath is null && errorPath is null
 			&& !Array.Exists(words, word => word.IsOperator)
 			? [.. words.Select(word => word.Text)]
 			: null;

@@ -280,6 +280,125 @@ public sealed partial class ExternalProgramTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a pipeline given an output stream writes its last program's output there instead of the terminal.
+	/// </summary>
+	[Fact]
+	public void RunPipeline_WithOutput_CapturesLastStage()
+	{
+		// Arrange
+		// The fake programs are shell scripts.
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		_ = ShellEnvironment.CreateFile(this.folder, "twolines", executable: true, "#!/bin/sh\n/usr/bin/printf 'a\\nb\\n'\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "count", executable: true, "#!/bin/sh\nexec /usr/bin/wc -l\n");
+		using var output = new MemoryStream();
+
+		// Act
+		var result = ExternalProgram.RunPipeline([["twolines"], ["count"]], _ => { }, output: output);
+
+		// Assert
+		_ = result.Should().Be(0);
+		_ = System.Text.Encoding.UTF8.GetString(output.ToArray()).Trim().Should().Be("2");
+	}
+
+	/// <summary>
+	/// Checks that an unlisted background program, as in a command substitution, isn't added to the jobs or
+	/// announced, and that its output reaches the stream once <see cref="ExternalProgram.WaitForDetached" /> returns.
+	/// </summary>
+	[Fact]
+	public void Run_DetachedInBackground_CopiesOutputWithoutJob()
+	{
+		// Arrange
+		// The fake program is a shell script.
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		_ = ShellEnvironment.CreateFile(this.folder, "late", executable: true, "#!/bin/sh\n/usr/bin/sleep 0.2\necho late\n");
+		using var output = new MemoryStream();
+		var jobs = ExternalProgram.Jobs.Count;
+
+		// Act
+		var status = ExternalProgram.Run("late", [], output, background: true, listJob: false);
+		var before = output.Length;
+
+		ExternalProgram.WaitForDetached(output);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = before.Should().Be(0);
+		_ = System.Text.Encoding.UTF8.GetString(output.ToArray()).Should().Be("late\n");
+		_ = ExternalProgram.Jobs.Should().HaveCount(jobs);
+		_ = this.environment.Output.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that waiting on one substitution's stream leaves the background programs of another to its own wait.
+	/// </summary>
+	[Fact]
+	public void WaitForDetached_WithTwoStreams_WaitsForEachOwn()
+	{
+		// Arrange
+		// The fake programs are shell scripts.
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		_ = ShellEnvironment.CreateFile(this.folder, "quick", executable: true, "#!/bin/sh\necho quick\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "late", executable: true, "#!/bin/sh\n/usr/bin/sleep 0.3\necho late\n");
+		using var first = new MemoryStream();
+		using var second = new MemoryStream();
+
+		_ = ExternalProgram.Run("quick", [], first, background: true, listJob: false);
+		_ = ExternalProgram.Run("late", [], second, background: true, listJob: false);
+
+		// Act
+		ExternalProgram.WaitForDetached(first);
+		ExternalProgram.WaitForDetached(second);
+
+		// Assert
+		_ = System.Text.Encoding.UTF8.GetString(first.ToArray()).Should().Be("quick\n");
+		_ = System.Text.Encoding.UTF8.GetString(second.ToArray()).Should().Be("late\n");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="ExternalProgram.StopWaiting" /> ends a wait on a background program that's still
+	/// writing.
+	/// </summary>
+	[Fact]
+	public void WaitForDetached_WhenStopped_ReturnsEarly()
+	{
+		// Arrange
+		// The fake program is a shell script.
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		_ = ShellEnvironment.CreateFile(this.folder, "slow", executable: true, "#!/bin/sh\nexec /usr/bin/sleep 3\n");
+		using var output = new MemoryStream();
+
+		_ = ExternalProgram.Run("slow", [], output, background: true, listJob: false);
+		using var stop = Task.Run(async () =>
+		{
+			await Task.Delay(300).ConfigureAwait(false);
+			ExternalProgram.StopWaiting();
+		});
+		var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+		// Act
+		ExternalProgram.WaitForDetached(output);
+
+		// Assert
+		_ = stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(2));
+	}
+
+	/// <summary>
 	/// Checks that a pipeline whose later program can't start returns <see cref="ExternalProgram.CannotRun" />.
 	/// </summary>
 	[Fact]

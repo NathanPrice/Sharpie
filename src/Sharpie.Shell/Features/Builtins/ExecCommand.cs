@@ -80,10 +80,7 @@ internal sealed class ExecCommand : ICommand
 
 		if (PathFinder.FindExecutable(arguments[0], ExternalProgram.AssignedPath(assignments)) is not { } path)
 		{
-			new ShellError("sharpie::exec::not_found", $"Command `{arguments[0]}` not found")
-			{
-				Help = "not a program on PATH",
-			}.Write();
+			ReportNotFound(arguments[0]);
 
 			return Failed(ExternalProgram.NotFound, interactive);
 		}
@@ -102,6 +99,55 @@ internal sealed class ExecCommand : ICommand
 
 		return Failed(ExternalProgram.CannotRun, interactive);
 	}
+
+	/// <summary>
+	/// Runs <c>exec</c> inside a command substitution, which bash runs in a subshell that the program replaces, so
+	/// the program's output is the substitution's and its status ends the substitution.
+	/// </summary>
+	/// <param name="arguments">The program and its arguments.</param>
+	/// <param name="assignments">The <c>NAME=VALUE</c> words typed in front of <c>exec</c>.</param>
+	/// <param name="output">Where the program writes: the <c>&gt;</c> file or the substitution's stream.</param>
+	/// <param name="error">The open <c>2&gt;</c> file, or <see langword="null" /> for the terminal.</param>
+	/// <returns>
+	/// 1 after an error when there's no program, since the redirect-only form would move the whole shell's output.
+	/// </returns>
+	/// <exception cref="ExitCommand.SubshellExit">The program ran or wasn't found, which ends the substitution.</exception>
+	/// <remarks>
+	/// shortcut: <c>exec &gt; file</c> with no program is refused here. Make the file the substitution's output for
+	/// the rest of its list if that's ever needed.
+	/// </remarks>
+	public static int RunInSubstitution(string[] arguments, string[] assignments, Stream? output, FileStream? error)
+	{
+		_ = arguments.ArgumentNotNull();
+
+		if (arguments is [])
+		{
+			new ShellError("sharpie::exec::in_substitution", "`exec` can't redirect the shell inside `$(...)`")
+			{
+				Help = "put the redirect on each command instead",
+			}.Write();
+
+			return 1;
+		}
+
+		if (ExternalProgram.Run(arguments[0], arguments[1..], output, error, assignments: assignments) is not { } status)
+		{
+			ReportNotFound(arguments[0]);
+			status = ExternalProgram.NotFound;
+		}
+
+		throw new ExitCommand.SubshellExit(status);
+	}
+
+	/// <summary>
+	/// Reports that <c>exec</c>'s program isn't on <c>PATH</c>.
+	/// </summary>
+	/// <param name="name">The program name as typed.</param>
+	private static void ReportNotFound(string name) =>
+		new ShellError("sharpie::exec::not_found", $"Command `{name}` not found")
+		{
+			Help = "not a program on PATH",
+		}.Write();
 
 	/// <summary>
 	/// Gives <paramref name="status" /> back, or ends the shell with it when it isn't interactive.

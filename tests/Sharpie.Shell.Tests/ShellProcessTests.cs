@@ -130,6 +130,30 @@ public sealed class ShellProcessTests
 	}
 
 	/// <summary>
+	/// Checks that SIGINT stops a command substitution waiting on a background program's output, and the shell goes
+	/// on with the next command.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WhenInterruptedDuringSubstitutionWait_StopsWaitingAndKeepsRunning()
+	{
+		// Act
+		using var shell = ShellProcess.Start();
+
+		await shell.StandardInput.WriteAsync("X=$(sleep 10 2> /dev/null &)\necho done\nexit\n").ConfigureAwait(true);
+
+		// Gives the shell time to start waiting before the signal arrives.
+		await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(true);
+		ExternalProgram.SendInterrupt(shell.Id);
+
+		var output = shell.StandardOutput.ReadToEndAsync();
+		var exited = await ShellProcess.ExitsWithinAsync(shell, TimeSpan.FromSeconds(5)).ConfigureAwait(true);
+
+		// Assert
+		_ = exited.Should().BeTrue();
+		_ = (await output.ConfigureAwait(true)).Should().Contain("done");
+	}
+
+	/// <summary>
 	/// Checks that the shell ends with code 0 when standard input closes without an <c>exit</c> command.
 	/// </summary>
 	[Fact]

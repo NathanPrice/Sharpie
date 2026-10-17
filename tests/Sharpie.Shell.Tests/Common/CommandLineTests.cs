@@ -218,6 +218,7 @@ public sealed class CommandLineTests
 	/// <param name="expected">The words the line should produce.</param>
 	[Theory]
 	[InlineData("# a whole comment", new string[0])]
+	[InlineData(" #x", new string[0])]
 	[InlineData("   #indented comment", new string[0])]
 	[InlineData("echo hi # trailing words", new[] { "echo", "hi" })]
 	[InlineData("echo hi\t#tab before", new[] { "echo", "hi" })]
@@ -581,6 +582,9 @@ public sealed class CommandLineTests
 	[InlineData("man ls < x", null)]
 	[InlineData("man '|'", new[] { "man", "|" })]
 	[InlineData("man `ls`", null)]
+	[InlineData("man $(echo ls)", null)]
+	[InlineData("man \"$(echo ls)\"", null)]
+	[InlineData("man '$(x)'", new[] { "man", "$(x)" })]
 	[InlineData("man ls\nls", null)]
 	public void PagedCommand_Line_ReturnsWordsForReader(string line, string[]? expected)
 	{
@@ -894,5 +898,212 @@ public sealed class CommandLineTests
 		{
 			Directory.Delete(folder, recursive: true);
 		}
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.SubstitutionEnd" /> finds the <c>)</c> or backquote that closes a
+	/// substitution past nesting, quotes and escapes, and gives -1 for one that never closes or for <c>$((</c>.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="index">Where the substitution starts.</param>
+	/// <param name="expected">Where it closes, or -1.</param>
+	[Theory]
+	[InlineData("$(a)", 0, 3)]
+	[InlineData("x $(a (b) c) d", 2, 11)]
+	[InlineData("$(echo ')')", 0, 10)]
+	[InlineData("$(echo \")\")", 0, 10)]
+	[InlineData("$(echo \\))", 0, 9)]
+	[InlineData("$(echo \"$(echo ')')\")", 0, 20)]
+	[InlineData("$(echo `echo )`)", 0, 15)]
+	[InlineData("$(echo $((1 + 2)))", 0, 17)]
+	[InlineData("`a \\` b`", 0, 7)]
+	[InlineData("a `b` `c`", 2, 4)]
+	[InlineData("$(echo", 0, -1)]
+	[InlineData("$(echo `x)", 0, -1)]
+	[InlineData("`echo", 0, -1)]
+	[InlineData("`a \\`", 0, -1)]
+	[InlineData("$((1+2))", 0, -1)]
+	[InlineData("$x", 0, -1)]
+	[InlineData("$(echo a # )\n)", 0, 13)]
+	[InlineData("$(echo a # )", 0, -1)]
+	[InlineData("$(#c\necho)", 0, 9)]
+	[InlineData("$(#)\necho)", 0, 9)]
+	[InlineData("$(echo a#b)", 0, 10)]
+	[InlineData("$(echo a\\ #b)", 0, 12)]
+	[InlineData("$(echo '#' \\#)", 0, 13)]
+	[InlineData("$(echo \"$(a\")", 0, -1)]
+	[InlineData("$(echo \"`a\")", 0, -1)]
+	[InlineData("$(echo \"$((1+2))\")", 0, 17)]
+	public void SubstitutionEnd_WithLine_FindsClose(string line, int index, int expected)
+	{
+		// Act
+		var close = CommandLine.SubstitutionEnd(line, index);
+
+		// Assert
+		_ = close.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that unclosed substitutions nested in double quotes are found unclosed without scanning the line again
+	/// at every level.
+	/// </summary>
+	[Fact]
+	public void SubstitutionEnd_WithDeeplyNestedUnclosed_IsQuick()
+	{
+		// Arrange
+		var line = string.Concat(Enumerable.Repeat("\"$(", 40));
+		var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+		// Act
+		var close = CommandLine.SubstitutionEnd(line, 1);
+
+		// Assert
+		_ = close.Should().Be(-1);
+		_ = stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1));
+	}
+
+	/// <summary>
+	/// Checks that the command list inside <c>$(...)</c> or backquotes reaches the substitute, with the backslashes
+	/// that only escape inside backquotes removed.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="expected">The list the substitute should get.</param>
+	[Theory]
+	[InlineData("echo $(list one)", "list one")]
+	[InlineData("echo `list one`", "list one")]
+	[InlineData("echo \"$(a \"b c\")\"", "a \"b c\"")]
+	[InlineData("echo $(echo $(inner))", "echo $(inner)")]
+	[InlineData("echo `a \\` \\\\ \\$ \\\" \\x`", "a ` \\ $ \\\" \\x")]
+	[InlineData("echo \"`a \\\" \\x`\"", "a \" \\x")]
+	public void Split_WithSubstitution_RunsInnerList(string line, string expected)
+	{
+		// Arrange
+		var lists = new List<string>();
+
+		// Act
+		_ = CommandLine.Split(line, new Dictionary<string, string>(), substitute: list =>
+		{
+			lists.Add(list);
+
+			return string.Empty;
+		});
+
+		// Assert
+		_ = lists.Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that a substitution's output is split on spaces, tabs and newlines outside quotes, kept whole inside
+	/// double quotes and in a <c>NAME=value</c> word, and loses its trailing newlines and NUL characters.
+	/// </summary>
+	/// <param name="line">The line, whose substitutions all give <paramref name="output" />.</param>
+	/// <param name="output">What the substitution prints.</param>
+	/// <param name="expected">The words.</param>
+	[Theory]
+	[InlineData("echo $(x)", "a b", new[] { "echo", "a", "b" })]
+	[InlineData("echo $(x)", "a\tb\nc\n", new[] { "echo", "a", "b", "c" })]
+	[InlineData("echo `x`", "a b", new[] { "echo", "a", "b" })]
+	[InlineData("echo $(x)", "", new[] { "echo" })]
+	[InlineData("echo $(x) y", " \n", new[] { "echo", "y" })]
+	[InlineData("echo \"$(x)\"", "", new[] { "echo", "" })]
+	[InlineData("echo \"$(x)\"", "a  b\n\n", new[] { "echo", "a  b" })]
+	[InlineData("echo \"<$(x)>\"", "a\nb\n", new[] { "echo", "<a\nb>" })]
+	[InlineData("echo p$(x)q", "a b", new[] { "echo", "pa", "bq" })]
+	[InlineData("echo p$(x)q", " a ", new[] { "echo", "p", "a", "q" })]
+	[InlineData("echo $(x)", "a\0b", new[] { "echo", "ab" })]
+	[InlineData("A=$(x)", "a  b", new[] { "A=a  b" })]
+	[InlineData("export A=$(x) B", "a b", new[] { "export", "A=a b", "B" })]
+	[InlineData("declare A=$(x)", "a b", new[] { "declare", "A=a b" })]
+	[InlineData("A=$(x) B=$(x) cmd", "a b", new[] { "A=a b", "B=a b", "cmd" })]
+	[InlineData("printf A=$(x)", "a b", new[] { "printf", "A=a", "b" })]
+	[InlineData("export A | B=$(x)", "a b", new[] { "export", "A", "|", "B=a b" })]
+	[InlineData("echo $(x)#y $(x) #z", "", new[] { "echo", "#y" })]
+	[InlineData("echo $UNSET_SAMPLE#y", "", new[] { "echo", "#y" })]
+	[InlineData("echo '$(x)' \"\\$(x)\"", "no", new[] { "echo", "$(x)", "$(x)" })]
+	public void Split_WithSubstitution_SplitsOutputOutsideQuotes(string line, string output, string[] expected)
+	{
+		// Act
+		var words = CommandLine.Split(line, new Dictionary<string, string>(), substitute: _ => output);
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that each field of a split output points at the whole substitution.
+	/// </summary>
+	[Fact]
+	public void Split_WithSplitSubstitution_PointsEachFieldAtIt()
+	{
+		// Act
+		var words = CommandLine.Split("echo $(x)", new Dictionary<string, string>(), substitute: _ => "a b");
+
+		// Assert
+		_ = words[1..].Should().Equal(new Word("a", IsOperator: false, 5, 9), new Word("b", IsOperator: false, 5, 9));
+	}
+
+	/// <summary>
+	/// Checks that a wildcard in an unquoted substitution's output matches file names, and one in a quoted
+	/// substitution's output only matches itself.
+	/// </summary>
+	[Fact]
+	public void Split_WithWildcardInSubstitution_MatchesUnquotedOnly()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		File.WriteAllText(Path.Combine(folder, "a.tmp"), string.Empty);
+		File.WriteAllText(Path.Combine(folder, "b.tmp"), string.Empty);
+
+		try
+		{
+			// Act
+			var words = CommandLine.Split("ls $(x) \"$(x)\"", new Dictionary<string, string>(), substitute: _ => $"{folder}/*.tmp");
+
+			// Assert
+			_ = words.Select(word => word.Text).Should().Equal("ls", $"{folder}/a.tmp", $"{folder}/b.tmp", $"{folder}/*.tmp");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that with no substitute a wildcard typed inside a substitution only matches itself.
+	/// </summary>
+	[Fact]
+	public void Split_WithWildcardInUnrunSubstitution_MatchesNoFile()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		File.WriteAllText(Path.Combine(folder, "$(yes)"), string.Empty);
+
+		try
+		{
+			// Act
+			var words = CommandLine.Split($"ls {folder}/$(y*)", new Dictionary<string, string>());
+
+			// Assert
+			_ = words.Select(word => word.Text).Should().Equal("ls", $"{folder}/$(y*)");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that with no substitute a substitution stays in its word as typed, wildcards included, and nothing runs.
+	/// </summary>
+	[Fact]
+	public void Split_WithSubstitutionAndNoSubstitute_KeepsItAsTyped()
+	{
+		// Act
+		var words = CommandLine.Split("echo a$(b *; c)d `e f`", new Dictionary<string, string>());
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal("echo", "a$(b *; c)d", "`e f`");
 	}
 }

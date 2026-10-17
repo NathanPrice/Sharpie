@@ -66,17 +66,66 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that command substitution outside single quotes is refused rather than passed on as text.
+	/// Checks that a command substitution stays in its command whole, so the operators, quotes and <c>#</c> inside it
+	/// neither cut nor end the command around it.
 	/// </summary>
-	/// <param name="line">A line with command substitution in it.</param>
+	/// <param name="line">The line to split.</param>
+	/// <param name="expected">The operator and command pairs, flattened.</param>
 	[Theory]
-	[InlineData("echo $(date)")]
-	[InlineData("echo \"$(date)\"")]
-	[InlineData("echo `date`")]
-	[InlineData("echo \"`date`\"")]
+	[InlineData("echo $(a; b && c | d e#f)", new[] { ";", "echo $(a; b && c | d e#f)" })]
+	[InlineData("echo `a; b || c`; d", new[] { ";", "echo `a; b || c`", ";", "d" })]
+	[InlineData("echo \"$(a; \"b;c\")\"; d", new[] { ";", "echo \"$(a; \"b;c\")\"", ";", "d" })]
+	[InlineData("echo $(a ')') && b", new[] { ";", "echo $(a ')')", "&&", "b" })]
+	[InlineData("echo $(a)#b # c", new[] { ";", "echo $(a)#b" })]
+	[InlineData("echo $(a # ;)\n); b", new[] { ";", "echo $(a # ;)\n)", ";", "b" })]
+	public void Split_WithCommandSubstitution_KeepsItInItsCommand(string line, string[] expected)
+	{
+		// Act
+		var commands = CommandList.Split(line);
+
+		// Assert
+		_ = commands.Should().NotBeNull();
+		_ = commands!.SelectMany(command => new[] { command.Operator, command.Command }).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandList.Unfinished" /> names the quote or substitution a line leaves open, and
+	/// nothing for a complete line, arithmetic, or a quote inside a comment.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="expected">What's left open, or <c>'\0'</c> for nothing.</param>
+	[Theory]
+	[InlineData("echo 'a", '\'')]
+	[InlineData("echo \"a", '"')]
+	[InlineData("echo \"'a\" 'b", '\'')]
+	[InlineData("echo $(a", '(')]
+	[InlineData("echo \"$(a", '(')]
+	[InlineData("echo `a", '`')]
+	[InlineData("echo a", '\0')]
+	[InlineData("echo $((1", '\0')]
+	[InlineData("# don't", '\0')]
+	[InlineData("echo a # it's", '\0')]
+	[InlineData("echo $(a 'b) c')", '\0')]
+	public void Unfinished_WithLine_NamesWhatIsOpen(string line, char expected)
+	{
+		// Act
+		var open = CommandList.Unfinished(line);
+
+		// Assert
+		_ = open.Should().Be(expected == '\0' ? null : expected);
+	}
+
+	/// <summary>
+	/// Checks that a substitution that never closes, and arithmetic expansion, are refused.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	[Theory]
+	[InlineData("echo $(date")]
+	[InlineData("echo \"$(date\"")]
+	[InlineData("echo `date")]
 	[InlineData("echo $((1 + 1))")]
-	[InlineData("a; b $(c)")]
-	public void Split_WithCommandSubstitution_ReturnsNull(string line)
+	[InlineData("a; b $(c")]
+	public void Split_WithUnclosedSubstitutionOrArithmetic_ReturnsNull(string line)
 	{
 		// Act
 		var commands = CommandList.Split(line);
@@ -145,17 +194,17 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a line with command substitution runs nothing, prints why, and gives
+	/// Checks that a line with an unclosed substitution runs nothing, prints why, and gives
 	/// <see cref="CommandList.UnsupportedStatus" />.
 	/// </summary>
 	[Fact]
-	public void Run_WithCommandSubstitution_RunsNothingAndReports()
+	public void Run_WithUnclosedSubstitution_RunsNothingAndReports()
 	{
 		// Arrange
 		var ran = new List<string>();
 
 		// Act
-		var status = CommandList.Run("echo a; echo $(date)", 0, command =>
+		var status = CommandList.Run("echo a; echo $(date", 0, command =>
 		{
 			ran.Add(command);
 
@@ -165,32 +214,55 @@ public sealed class CommandListTests : IDisposable
 		// Assert
 		_ = ran.Should().BeEmpty();
 		_ = status.Should().Be(CommandList.UnsupportedStatus);
-		_ = this.environment.Error.Should().Contain("sharpie::parser::command_substitution");
+		_ = this.environment.Error.Should().Contain("sharpie::parser::unclosed_substitution");
 	}
 
 	/// <summary>
-	/// Checks that refused command substitution is reported with the whole line, the <c>$(</c> or backquote
-	/// underlined, and a hint.
+	/// Checks that an unclosed <c>$(</c> or backquote is reported with the whole line, its opening underlined, and how
+	/// to close it.
 	/// </summary>
 	/// <param name="line">The line.</param>
 	/// <param name="start">Where the substitution starts.</param>
 	/// <param name="end">Where its opening ends.</param>
+	/// <param name="summary">The report's summary.</param>
+	/// <param name="help">The report's hint.</param>
 	[Theory]
-	[InlineData("echo a; echo $(date)", 13, 15)]
-	[InlineData("echo `date`", 5, 6)]
-	public void Run_WithCommandSubstitution_PointsAtIt(string line, int start, int end)
+	[InlineData("echo a; echo $(date", 13, 15, "`$(` is never closed", "add the missing `)`")]
+	[InlineData("echo `date", 5, 6, "The backquote is never closed", "add the closing backquote")]
+	public void Run_WithUnclosedSubstitution_PointsAtIt(string line, int start, int end, string summary, string help)
 	{
 		// Act
 		_ = CommandList.Run(line, 0, _ => 0);
 
 		// Assert
-		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::command_substitution", "Command substitution isn't supported")
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::unclosed_substitution", summary)
 		{
 			Source = line,
 			Start = start,
 			End = end,
 			Label = "runs a command for its output",
-			Help = "run the inner command on its own line, or quote it to pass it as text",
+			Help = help,
+		}.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that arithmetic expansion is refused with its own report, pointing at the <c>$((</c>.
+	/// </summary>
+	[Fact]
+	public void Run_WithArithmetic_PointsAtIt()
+	{
+		// Act
+		var status = CommandList.Run("echo $((1+2))", 0, _ => 0);
+
+		// Assert
+		_ = status.Should().Be(CommandList.UnsupportedStatus);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::arithmetic", "Arithmetic expansion isn't supported")
+		{
+			Source = "echo $((1+2))",
+			Start = 5,
+			End = 8,
+			Label = "works out a number",
+			Help = "run a program such as expr for the number, or quote it to pass it as text",
 		}.Render(color: false));
 	}
 

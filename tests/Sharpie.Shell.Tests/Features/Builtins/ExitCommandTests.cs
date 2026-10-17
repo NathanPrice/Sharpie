@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
 
@@ -53,6 +54,22 @@ public sealed class ExitCommandTests : IDisposable
 		// Assert
 		_ = code.Should().Be(2);
 		_ = this.environment.Error.Should().Be(new ShellError("sharpie::exit::not_a_number", $"`{argument}` isn't a number") { Help = "exit takes a whole number as its status" }.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that inside a command substitution <c>exit</c> ends only the substitution, with its status.
+	/// </summary>
+	[Fact]
+	public void Run_InSubshell_ThrowsSubshellExitWithCode()
+	{
+		// Arrange
+		var sut = new ExitCommand(new DeclareCommand(), () => true);
+
+		// Act
+		var act = () => sut.Run(["259"]);
+
+		// Assert
+		_ = act.Should().Throw<ExitCommand.SubshellExit>().Which.Status.Should().Be(3);
 	}
 
 	/// <summary>

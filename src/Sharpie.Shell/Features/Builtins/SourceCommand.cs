@@ -41,7 +41,8 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 
 	/// <inheritdoc />
 	/// <remarks>
-	/// The status is the last line's, 0 for a file with no commands, or 1 when the file can't be run.
+	/// The status is the last line's, 0 for a file with no commands, or 1 when the file can't be run. A quote still
+	/// open at the end of the file is reported with status 2, and that last command doesn't run, as in bash.
 	/// </remarks>
 	public int Run(string[] args)
 	{
@@ -92,6 +93,16 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 
 			foreach (var line in JoinContinuedLines(lines))
 			{
+				if (CommandList.Unfinished(line) is var quote and ('\'' or '"'))
+				{
+					new ShellError("sharpie::source::unclosed_quote", $"`{quote}` is never closed in `{args[0]}`")
+					{
+						Help = $"add the closing {quote}",
+					}.Write();
+
+					return CommandList.UnsupportedStatus;
+				}
+
 				status = runLine(line);
 			}
 
@@ -135,15 +146,18 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 	}
 
 	/// <summary>
-	/// Joins each line that ends in an unescaped backslash to the line after it, as POSIX does.
+	/// Joins each line that ends in an unescaped backslash to the line after it, and each line that leaves a quote,
+	/// <c>$(</c> or backquote open to the lines that close it, as POSIX does.
 	/// </summary>
 	/// <param name="lines">The lines of the file.</param>
 	/// <returns>
-	/// The command lines, with each joining backslash removed.
+	/// The command lines, with each joining backslash and its line break removed. Lines joined for an open quote or
+	/// substitution keep the line break between them, so <c>X=$(</c> on one line and <c>pwd)</c> on the next run as
+	/// one command.
 	/// </returns>
 	/// <remarks>
 	/// The backslash counts when there's an odd number of them at the end, so <c>\\</c>, an escaped backslash, doesn't
-	/// join. A backslash inside single quotes joins too, where POSIX would keep it.
+	/// join. Inside single quotes a backslash is only itself, so the line break stays.
 	/// </remarks>
 	internal static IEnumerable<string> JoinContinuedLines(IEnumerable<string> lines)
 	{
@@ -154,11 +168,16 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 		foreach (var line in lines)
 		{
 			var joined = pending + line;
+			var open = CommandList.Unfinished(joined);
 
 			// The run of backslashes the line ends with.
-			if (joined[joined.TrimEnd('\\').Length..].Length % 2 == 1)
+			if (open != '\'' && joined[joined.TrimEnd('\\').Length..].Length % 2 == 1)
 			{
 				pending = joined[..^1];
+			}
+			else if (open is not null)
+			{
+				pending = joined + "\n";
 			}
 			else
 			{
@@ -168,9 +187,10 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 			}
 		}
 
-		if (pending.Length > 0)
+		// Whatever is still open at the end of the file, which Run reports.
+		if (pending.TrimEnd('\n') is { Length: > 0 } rest)
 		{
-			yield return pending;
+			yield return rest;
 		}
 	}
 }

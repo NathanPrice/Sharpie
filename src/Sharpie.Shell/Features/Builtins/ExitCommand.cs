@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
@@ -9,7 +10,10 @@ namespace Sharpie.Shell.Features.Builtins;
 /// Ends the shell process with the status given, or the last command's status when none is.
 /// </summary>
 /// <param name="declare">The <c>declare</c> builtin, which holds the last command's status.</param>
-internal class ExitCommand(DeclareCommand declare) : ICommand
+/// <param name="inSubshell">
+/// Tells whether a command substitution is running, where <c>exit</c> ends only that, as in bash's subshell.
+/// </param>
+internal class ExitCommand(DeclareCommand declare, Func<bool>? inSubshell = null) : ICommand
 {
 	/// <inheritdoc />
 	public string Name => "exit";
@@ -47,12 +51,36 @@ internal class ExitCommand(DeclareCommand declare) : ICommand
 		return 2;
 	}
 
-	// Stryker disable once Block,Statement : ending the process would end the test run, so the shell's process tests check it.
 	/// <inheritdoc />
+	/// <exception cref="SubshellExit">A command substitution is running, which ends with the status.</exception>
 	public int Run(string[] args)
 	{
-		Environment.Exit(Code(args, declare.Status));
+		var code = Code(args, declare.Status);
+
+		if (inSubshell?.Invoke() == true)
+		{
+			throw new SubshellExit(code);
+		}
+
+		// Stryker disable once Statement : ending the process would end the test run, so the shell's process tests check it.
+		Environment.Exit(code);
 
 		return 0;
+	}
+
+	/// <summary>
+	/// Ends the command substitution that ran <c>exit</c>, the way a subshell's process would end in bash.
+	/// </summary>
+	/// <param name="status">The status the substitution ends with.</param>
+	[SuppressMessage("Design", "CA1032:Implement standard exception constructors", Justification = "Only exit throws it, and always with a status.")]
+	internal sealed class SubshellExit(int status) : Exception
+	{
+		/// <summary>
+		/// Gets the status the substitution ends with.
+		/// </summary>
+		/// <value>
+		/// The status <c>exit</c> worked out, already cut to eight bits.
+		/// </value>
+		public int Status => status;
 	}
 }

@@ -570,4 +570,268 @@ public sealed class CommandLineProcessTests
 			Directory.Delete(folder, recursive: true);
 		}
 	}
+
+	/// <summary>
+	/// Checks that <c>$(...)</c> and backquotes pass a command list's output as arguments, split outside quotes and
+	/// with trailing newlines cut, whether the list runs a builtin, a program or a pipeline.
+	/// </summary>
+	/// <param name="command">The <c>-c</c> command.</param>
+	/// <param name="expected">What it prints.</param>
+	[Theory]
+	[InlineData("echo $(echo hi)", "hi\n")]
+	[InlineData("echo `echo hi`", "hi\n")]
+	[InlineData("echo $(echo $(echo deep))", "deep\n")]
+	[InlineData("printf '%s|' $(echo a b)", "a|b|")]
+	[InlineData("echo \"$(printf 'a\\n\\n')\"x", "ax\n")]
+	[InlineData("echo $(printf 'a\\nb\\n' | wc -l)", "2\n")]
+	[InlineData("cd $(dirname /tmp/x) && pwd", "/tmp\n")]
+	[InlineData("A=$(false); echo $?", "1\n")]
+	[InlineData("A=$(exit 3); echo $? ok", "3 ok\n")]
+	[InlineData("out=$(false) || echo failed", "failed\n")]
+	[InlineData("false; echo $(exit 3) $?", "3\n")]
+	[InlineData("echo $(true)#x", "#x\n")]
+	[InlineData("echo $(echo a # )\n)", "a\n")]
+	[InlineData("X=$(sh -c 'sleep 0.2; echo late' &); echo \"[$X]\"; jobs", "[late]\n")]
+	[InlineData("X=$(echo hi &); echo \"[$X]\"", "[hi]\n")]
+	[InlineData("set -e; X=$(false; echo hi); echo \"[$X]\"", "[hi]\n")]
+	[InlineData("X=$(set -e; false; echo no); echo \"[$X] $?\"", "[] 1\n")]
+	[InlineData("set -e; X=$(false); echo unreachable", "")]
+	[InlineData("X=$(exec echo hi; echo no); echo \"[$X] $?\"", "[hi] 0\n")]
+	[InlineData("X=$(set -u); echo $SHARPIE_SAMPLE_UNSET ok", "ok\n")]
+	[InlineData("set -- p; X=$(set -- a b; shift); echo \"$# $1\"", "1 p\n")]
+	[InlineData("umask; X=$(umask 077); umask", null)]
+	[InlineData("dirs; X=$(pushd / > /dev/null); dirs", null)]
+	public async Task Shell_WithCommandSubstitution_PassesOutput(string command, string? expected)
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", command]).ConfigureAwait(true);
+
+		// Assert
+		// With no expected output, the two lines printed before and after the substitution must match.
+		_ = run.Output.Should().Be(expected ?? string.Concat(Enumerable.Repeat(run.Output.Split('\n')[0] + "\n", 2)));
+		_ = run.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that under <c>set -u</c> an unset variable ends only the substitution, with 1 as in bash, and that
+	/// <c>exec</c> with only a redirect is refused there rather than moving the whole shell's output.
+	/// </summary>
+	/// <param name="command">The <c>-c</c> command.</param>
+	/// <param name="expected">What it prints.</param>
+	/// <param name="code">The error the substitution reports.</param>
+	[Theory]
+	[InlineData("set -u; X=$(echo $SHARPIE_SAMPLE_UNSET; echo after); echo \"[$X] $?\"", "[] 1\n", "sharpie::shell::unset_variable")]
+	[InlineData("X=$(exec > /dev/null; echo a); echo \"[$X] $?\"", "[a] 0\n", "sharpie::exec::in_substitution")]
+	public async Task Shell_WithErrorInSubstitution_EndsOnlyIt(string command, string expected, string code)
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", command]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be(expected);
+		_ = run.Error.Should().Contain(code);
+	}
+
+	/// <summary>
+	/// Checks that a builtin's output inside a substitution is captured too, not printed.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithBuiltinInSubstitution_CapturesIt()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, folder, arguments: ["-c", "echo [$(pwd)]"]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be($"[{folder}]\n");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that the folder, variables, environment and aliases a substitution changes are put back after it, as
+	/// a subshell's would be.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithStateChangedInSubstitution_PutsItBack()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, folder, arguments: ["-c", "X=$(cd /; B=1; export C=2; alias q=x; pwd); pwd; echo \"$X[$B][$C]\"; type q"]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be($"{folder}\n/[][]\nq: not found\n");
+			_ = run.ExitCode.Should().Be(1);
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that an exported variable a substitution changes gets its value back, and one with an empty value it
+	/// doesn't touch is still there.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithExportedVariables_KeepsThemAfterSubstitution()
+	{
+		// Arrange
+		var environment = new Dictionary<string, string> { ["SHARPIE_SAMPLE_EMPTY"] = string.Empty, ["SHARPIE_SAMPLE_SET"] = "old" };
+
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, environment: environment, arguments: ["-c", "X=$(export SHARPIE_SAMPLE_SET=new); env | grep SHARPIE_SAMPLE_ | sort"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("SHARPIE_SAMPLE_EMPTY=\nSHARPIE_SAMPLE_SET=old\n");
+	}
+
+	/// <summary>
+	/// Checks that a program run by <c>. file</c> inside a substitution writes into the substitution, not the terminal.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithSourcedProgramInSubstitution_CapturesIt()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		await File.WriteAllTextAsync(Path.Combine(folder, "file"), "printf hi\n").ConfigureAwait(true);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, folder, arguments: ["-c", "X=$(. ./file); echo \"[$X]\""]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("[hi]\n");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a program run by <c>. file</c> writes into the file that <c>&gt;</c> sends the builtin's output to.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithSourcedProgramRedirected_WritesFile()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		await File.WriteAllTextAsync(Path.Combine(folder, "file"), "printf hi\n").ConfigureAwait(true);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, folder, arguments: ["-c", ". ./file > out"]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().BeEmpty();
+			_ = (await File.ReadAllTextAsync(Path.Combine(folder, "out")).ConfigureAwait(true)).Should().Be("hi");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a background program inside a substitution that sends its output to a file isn't waited for.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithBackgroundToFileInSubstitution_DoesNotWait()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, folder, arguments: ["-c", "X=$(sleep 5 > out 2> err &); echo done"]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("done\n");
+			_ = stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(4));
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a background program a substitution started is collected once it ends, not left as a zombie.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithFinishedBackgroundInSubstitution_LeavesNoZombie()
+	{
+		// Arrange
+		// ps --ppid is the Linux ps.
+		if (!OperatingSystem.IsLinux())
+		{
+			return;
+		}
+
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "X=$(true &); sleep 0.5; sh -c 'ps -o stat= --ppid $PPID'"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().NotContain("Z");
+		_ = run.Output.Should().NotBeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that a sourced file's substitution and quote can each span several lines.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithMultiLineSubstitutionInFile_RunsIt()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		await File.WriteAllTextAsync(Path.Combine(folder, "file"), "X=$(echo a\necho b)\necho \"[$X]\" 'c\nd'\n").ConfigureAwait(true);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, folder, arguments: ["-c", ". ./file"]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("[a\nb] c\nd\n");
+			_ = run.Error.Should().BeEmpty();
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a substitution running a missing command reports it on standard error and gives 127.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithMissingCommandInSubstitution_ReportsNotFound()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "$(sampletool)"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().BeEmpty();
+		_ = run.Error.Should().Contain("sharpie::shell::command_not_found").And.Contain("sampletool");
+		_ = run.ExitCode.Should().Be(127);
+	}
 }

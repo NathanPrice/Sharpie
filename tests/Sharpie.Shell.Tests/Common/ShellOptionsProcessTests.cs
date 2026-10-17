@@ -71,17 +71,17 @@ public sealed class ShellOptionsProcessTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that command substitution in <c>-c</c> runs nothing, says why, and exits with 2.
+	/// Checks that an unclosed substitution in <c>-c</c> runs nothing, says why, and exits with 2.
 	/// </summary>
 	[Fact]
-	public async Task Shell_WithCommandSubstitution_RunsNothingAndExitsTwo()
+	public async Task Shell_WithUnclosedSubstitution_RunsNothingAndExitsTwo()
 	{
 		// Act
-		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "echo before; echo $(date)"]).ConfigureAwait(true);
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "echo before; echo $(date"]).ConfigureAwait(true);
 
 		// Assert
 		_ = run.Output.Should().BeEmpty();
-		_ = run.Error.Should().Contain("sharpie::parser::command_substitution");
+		_ = run.Error.Should().Contain("sharpie::parser::unclosed_substitution");
 		_ = run.ExitCode.Should().Be(CommandList.UnsupportedStatus);
 	}
 

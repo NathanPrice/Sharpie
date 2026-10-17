@@ -21,18 +21,23 @@ internal static partial class ExternalProgram
 	/// <param name="background"><see langword="true" /> to return without waiting; otherwise, <see langword="false" />.</param>
 	/// <param name="input">What the program reads, or <see langword="null" /> for the terminal.</param>
 	/// <param name="assignments">The <c>NAME=VALUE</c> words only this program gets in its environment.</param>
+	/// <param name="listJob"><see langword="false" /> for a background program in a command substitution.</param>
 	/// <returns>
 	/// The status as <see cref="Run" /> gives it.
 	/// </returns>
 	[SupportedOSPlatform("windows")]
-	private static int RunWithProcess(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input, IReadOnlyList<string> assignments)
+	private static int RunWithProcess(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input, IReadOnlyList<string> assignments, bool listJob)
 	{
+		// An unlisted background program's output is copied into the substitution's stream, which outlives this call
+		// until WaitForDetached. A file doesn't, so a background program's file output still goes to the terminal.
+		var detached = background && !listJob && output is not (null or FileStream);
+
 		var startInfo = CreateStartInfo(commandName, fullPath, arguments, assignments);
 
 		// A background job's output goes to the terminal even when redirected. Nobody would read its pipe once
 		// Run returns, so a chatty program would block when the pipe fills, and the caller closes the file
 		// anyway. Redirecting it would need a copy that owns the file and outlives this call.
-		startInfo.RedirectStandardOutput = output is not null && !background;
+		startInfo.RedirectStandardOutput = output is not null && (!background || detached);
 		startInfo.RedirectStandardError = error is not null && !background;
 		startInfo.RedirectStandardInput = input is not null;
 
@@ -42,15 +47,25 @@ internal static partial class ExternalProgram
 
 			// Returns before s_runningId is set, so Ctrl+C only reaches the foreground program. The Process object is
 			// kept rather than disposed so jobs can ask it whether the program has exited.
+			if (detached)
+			{
+				Detached.Add((output!, process is null ? Task.CompletedTask : process.StandardOutput.BaseStream.CopyToAsync(output!)));
+
+				return 0;
+			}
+
+			// An unlisted one whose output goes to a file or the terminal is neither listed nor waited for.
 			if (background)
 			{
-				// Rebuilt from the split words, so quotes the user typed don't show up in jobs. Pass the raw line
-				// instead if the listing ever has to match the input exactly.
-				var job = new Job(0, process?.Id ?? 0, string.Join(' ', [.. assignments, commandName, .. arguments]), process);
+				if (listJob)
+				{
+					// Rebuilt from the split words, so quotes the user typed don't show up in jobs. Pass the raw line
+					// instead if the listing ever has to match the input exactly.
+					var job = new Job(0, process?.Id ?? 0, string.Join(' ', [.. assignments, commandName, .. arguments]), process);
 
-				AddJob(job);
-
-				Console.WriteLine($@"[{job.Number}] {job.ProcessId}");
+					AddJob(job);
+					Console.WriteLine($@"[{job.Number}] {job.ProcessId}");
+				}
 
 				return 0;
 			}
@@ -120,6 +135,7 @@ internal static partial class ExternalProgram
 	/// <see langword="true" /> for <c>set -o pipefail</c>. An earlier program killed because the last one exited
 	/// counts as failed.
 	/// </param>
+	/// <param name="output">Where the last program writes, or <see langword="null" /> for the terminal.</param>
 	/// <returns>
 	/// The status as <see cref="RunPipeline" /> gives it.
 	/// </returns>
@@ -139,7 +155,7 @@ internal static partial class ExternalProgram
 	/// </para>
 	/// </remarks>
 	[SupportedOSPlatform("windows")]
-	private static int RunPipelineWithProcesses(string[][] stages, string[] paths, string[][] assignments, bool pipeFail)
+	private static int RunPipelineWithProcesses(string[][] stages, string[] paths, string[][] assignments, bool pipeFail, Stream? output)
 	{
 		var processes = new List<Process>();
 
@@ -149,9 +165,9 @@ internal static partial class ExternalProgram
 			{
 				var startInfo = CreateStartInfo(stages[index][0], paths[index], stages[index][1..], assignments[index]);
 
-				// The first program reads the terminal and the last one writes to it.
+				// The first program reads the terminal and the last one writes to the terminal or output.
 				startInfo.RedirectStandardInput = index > 0;
-				startInfo.RedirectStandardOutput = index < stages.Length - 1;
+				startInfo.RedirectStandardOutput = index < stages.Length - 1 || output is not null;
 				processes.Add(Process.Start(startInfo)!);
 			}
 
@@ -159,6 +175,9 @@ internal static partial class ExternalProgram
 			sRunningId = processes[^1].Id;
 
 			var relays = processes.Zip(processes.Skip(1), (from, to) => Task.Run(() => Relay(from, to))).ToArray();
+
+			// Copied as raw bytes, alongside the waits, so a program filling the pipe can't block.
+			var outputCopy = output is null ? Task.CompletedTask : processes[^1].StandardOutput.BaseStream.CopyToAsync(output);
 
 			processes[^1].WaitForExit();
 
@@ -173,6 +192,7 @@ internal static partial class ExternalProgram
 			}
 
 			Task.WaitAll(relays);
+			outputCopy.Wait();
 
 			return PipelineStatus([.. processes.Select(process => process.ExitCode)], pipeFail);
 		}

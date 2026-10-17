@@ -27,13 +27,14 @@ internal static class BuiltinCommands
 	/// Runs one command line the way the shell runs a typed one and gives its status, for the builtins that run lines
 	/// of their own, like <c>.</c>.
 	/// </param>
+	/// <param name="inSubshell">Tells whether a command substitution is running, where <c>exit</c> ends only that.</param>
 	/// <returns>
 	/// The builtins, not yet added to <paramref name="commands" />.
 	/// </returns>
 	/// <remarks>
 	/// Built in groups, since the build also caps how many types one method may use.
 	/// </remarks>
-	internal static ICommand[] Create(Dictionary<string, ICommand> commands, Func<string, int> runLine)
+	internal static ICommand[] Create(Dictionary<string, ICommand> commands, Func<string, int> runLine, Func<bool>? inSubshell = null)
 	{
 		var alias = new AliasCommand();
 		var declare = new DeclareCommand();
@@ -55,7 +56,7 @@ internal static class BuiltinCommands
 			new DmanCommand(),
 			new UmaskCommand(NativeMethods.SetFileMask),
 			new UlimitCommand(),
-			.. CreateVariableCommands(declare, runLine),
+			.. CreateVariableCommands(declare, runLine, inSubshell),
 			.. CreateFolderCommands(declare),
 			.. CreateJobCommands(),
 			new CommandCommand(type),
@@ -69,13 +70,14 @@ internal static class BuiltinCommands
 	/// </summary>
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
 	/// <param name="runLine">Runs one command line the way the shell runs a typed one and gives its status.</param>
+	/// <param name="inSubshell">Tells whether a command substitution is running, for <c>exit</c>.</param>
 	/// <returns>
 	/// <c>declare</c> and the builtins built around it.
 	/// </returns>
-	private static ICommand[] CreateVariableCommands(DeclareCommand declare, Func<string, int> runLine) =>
+	private static ICommand[] CreateVariableCommands(DeclareCommand declare, Func<string, int> runLine, Func<bool>? inSubshell) =>
 		[
 			declare,
-			new ExitCommand(declare),
+			new ExitCommand(declare, inSubshell),
 			new ExportCommand(declare),
 			new UnsetCommand(declare),
 			new SetCommand(declare, new ShellSettings()),

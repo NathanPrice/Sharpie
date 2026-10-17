@@ -24,19 +24,22 @@ internal static partial class ExternalProgram
 	/// <param name="background"><see langword="true" /> to return without waiting; otherwise, <see langword="false" />.</param>
 	/// <param name="input">What the program reads, or <see langword="null" /> for the terminal.</param>
 	/// <param name="assignments">The <c>NAME=VALUE</c> words only this program gets in its environment.</param>
+	/// <param name="listJob"><see langword="false" /> for a background program in a command substitution.</param>
 	/// <returns>
 	/// The status as <see cref="Run" /> gives it.
 	/// </returns>
 	/// <remarks>
 	/// A file is handed to the program as is. Any other stream goes through a pipe the shell copies, except for a
-	/// background job, whose output then goes to the terminal: nobody would read the pipe once this returns.
+	/// listed background job, whose output then goes to the terminal: nobody would read the pipe once this returns.
+	/// An unlisted one's copies go on in <see cref="Detached" />, and another thread collects its exit.
 	/// </remarks>
-	private static int RunWithSpawn(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input, IReadOnlyList<string> assignments)
+	private static int RunWithSpawn(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input, IReadOnlyList<string> assignments, bool listJob)
 	{
 		using var plumbing = new Plumbing();
 
-		var outputFile = plumbing.Writer(output, copy: !background);
-		var errorFile = plumbing.Writer(error, copy: !background);
+		var detached = background && !listJob;
+		var outputFile = plumbing.Writer(output, copy: !background || detached);
+		var errorFile = plumbing.Writer(error, copy: !background || detached);
 		var inputFile = plumbing.Reader(input);
 
 		// Rebuilt from the split words, so quotes the user typed don't show up in jobs. Pass the raw line instead if
@@ -60,6 +63,22 @@ internal static partial class ExternalProgram
 		var job = new Job(0, pid, command);
 
 		job.Add(pid);
+
+		if (detached)
+		{
+			Detached.Add((output ?? Stream.Null, plumbing.Detach()));
+
+			// Collected on its own thread, since the shell never waits on it and it would stay a zombie otherwise.
+			// The shell's own waits only take a foreground job's group or given ids, so they can't take this one.
+			_ = Task.Run(() =>
+			{
+				while (NativeMethods.WaitPid(pid, out _, 0) < 0 && Marshal.GetLastPInvokeError() == NativeMethods.Interrupted)
+				{
+				}
+			});
+
+			return 0;
+		}
 
 		if (background)
 		{
@@ -87,17 +106,22 @@ internal static partial class ExternalProgram
 	/// <param name="paths">Where each program was found, in the same order.</param>
 	/// <param name="assignments">Each stage's <c>NAME=VALUE</c> words, in the same order.</param>
 	/// <param name="pipeFail"><see langword="true" /> for <c>set -o pipefail</c>.</param>
+	/// <param name="output">Where the last program writes, or <see langword="null" /> for the terminal.</param>
 	/// <returns>
 	/// The status as <see cref="RunPipeline" /> gives it.
 	/// </returns>
 	/// <remarks>
-	/// Neighboring programs share a real pipe and the shell copies nothing. With job control they all join the first
+	/// Neighboring programs share a real pipe and the shell copies nothing, except into an <paramref name="output" />
+	/// that isn't a file. With job control they all join the first
 	/// program's process group, so Ctrl+C and Ctrl+Z reach the whole pipeline. When a later program exits early, as
 	/// <c>head</c> does in <c>yes | head -n 3</c>, the earlier one gets SIGPIPE on its next write and ends, as in any
 	/// shell.
 	/// </remarks>
-	private static int RunPipelineWithSpawn(string[][] stages, string[] paths, string[][] assignments, bool pipeFail)
+	private static int RunPipelineWithSpawn(string[][] stages, string[] paths, string[][] assignments, bool pipeFail, Stream? output)
 	{
+		using var plumbing = new Plumbing();
+
+		var lastOutput = plumbing.Writer(output, copy: true);
 		var pipes = new AnonymousPipeServerStream[stages.Length - 1];
 		Job? job = null;
 		var failed = false;
@@ -111,14 +135,14 @@ internal static partial class ExternalProgram
 
 			for (var index = 0; index < stages.Length; index++)
 			{
-				// The first program reads the terminal and the last one writes to it.
+				// The first program reads the terminal and the last one writes to the terminal or output.
 				var input = index > 0 ? (int)pipes[index - 1].SafePipeHandle.DangerousGetHandle() : -1;
-				var output = index < pipes.Length ? (int)pipes[index].ClientSafePipeHandle.DangerousGetHandle() : -1;
+				var stageOutput = index < pipes.Length ? (int)pipes[index].ClientSafePipeHandle.DangerousGetHandle() : lastOutput;
 				var group = !JobControl.Enabled ? -1 : job?.ProcessId ?? 0;
 
 				try
 				{
-					var pid = PosixSpawn.Start(paths[index], stages[index], group, input, output, assignments: assignments[index]);
+					var pid = PosixSpawn.Start(paths[index], stages[index], group, input, stageOutput, assignments: assignments[index]);
 
 					job ??= new Job(0, pid, string.Join(" | ", stages.Select((stage, stageIndex) => string.Join(' ', [.. assignments[stageIndex], .. stage]))));
 					job.Add(pid);
@@ -151,9 +175,17 @@ internal static partial class ExternalProgram
 			}
 		}
 
+		plumbing.Started();
+
 		if (job is not null)
 		{
 			WaitInForeground(job);
+		}
+
+		// A stopped job may never finish, so its copy is dropped with the pipe.
+		if (job?.State != JobState.Stopped)
+		{
+			plumbing.Finish();
 		}
 
 		// The killed programs' statuses would otherwise stand in for the one that never ran.
@@ -305,6 +337,36 @@ internal static partial class ExternalProgram
 		/// Waits until every copy is done, after the program has exited.
 		/// </summary>
 		public void Finish() => Task.WaitAll(this.copies);
+
+		/// <summary>
+		/// Hands the copies and pipes to a task, for a program the shell doesn't wait on, after <see cref="Started" />.
+		/// </summary>
+		/// <returns>
+		/// A task that ends once every copy is done, after closing the pipes. Disposing this object no longer
+		/// closes them.
+		/// </returns>
+		public Task Detach()
+		{
+			var pipes = this.pipes.ToArray();
+			var copies = this.copies.ToArray();
+
+			this.pipes.Clear();
+
+			return Task.Run(() =>
+			{
+				try
+				{
+					Task.WaitAll(copies);
+				}
+				finally
+				{
+					foreach (var pipe in pipes)
+					{
+						pipe.Dispose();
+					}
+				}
+			});
+		}
 
 		/// <inheritdoc />
 		public void Dispose()

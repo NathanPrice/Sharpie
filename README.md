@@ -42,6 +42,9 @@ and mouse reporting all work.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
 - **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines,
   redirects and command lists joined by `;`, `&&` and `||`.
+- **Expansions.** `$NAME`, `~`, wildcards like `*.tmp`, and command substitution with `$(...)` or backquotes, so
+  `cd $(git rev-parse --show-toplevel)` and `export GPG_TTY=$(tty)` work. A substitution runs in the shell itself, and
+  the folder, variables and aliases it changes are put back afterwards, as a subshell would leave them.
 - **Your existing setup.** The window copies the exported variables and aliases from your own `$SHELL`, so a `PATH`
   set in `~/.zshrc` works here too. After that it runs `~/.sharpierc`.
 - **Built-in pagers.** `man` pages open in a reader inside the window, and `dman` shows .NET API docs and C# or VB
@@ -164,8 +167,8 @@ offline use. Inside the window the page opens in the built-in reader, in another
 > [!WARNING]
 > Some of the POSIX shell language is still missing:
 >
-> - **Command substitution.** A line that uses `$(...)` or backticks is refused with status 2 rather than run with
->   the wrong arguments.
+> - **Arithmetic expansion, `$((...))`.** A line that uses it is refused with status 2 rather than run with the
+>   wrong arguments.
 > - **Builtins in pipelines of three or more stages.** Those stages only run programs found on `PATH`.
 > - **Redirects on a pipeline.** `>` and `2>` work on single commands only.
 

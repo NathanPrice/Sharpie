@@ -42,8 +42,8 @@ internal static class CommandList
 	/// <param name="line">The line, which may hold several lines when it came from <c>-c</c>.</param>
 	/// <returns>
 	/// Each command's text as typed, quotes kept, with the operator before it, which is <see cref="Sequence" /> for the
-	/// first. Blank commands and comments are dropped. <see langword="null" /> when the line uses command substitution,
-	/// <c>$(...)</c> or backquotes, outside single quotes.
+	/// first. Blank commands and comments are dropped. <see langword="null" /> when a <c>$(</c> or backquote outside
+	/// single quotes is never closed, or the line uses arithmetic expansion, <c>$((...))</c>.
 	/// </returns>
 	/// <remarks>
 	/// Quotes and backslashes work as in <see cref="CommandLine.Split" />, so a quoted or escaped <c>;</c> stays in its
@@ -52,28 +52,49 @@ internal static class CommandList
 	/// it ends an and-or list, as in <c>a &amp;&amp; b &amp;</c>, the whole list becomes that one command, which bash
 	/// also runs in the background as a whole.
 	/// An operator at the end of a line carries over a newline, so <c>a &amp;&amp;</c> on one line and <c>b</c> on the
-	/// next run as <c>a &amp;&amp; b</c>, as POSIX allows. Command substitution is refused, not passed on as text, so
-	/// a command meant to get the output of another never runs with the wrong arguments.
+	/// next run as <c>a &amp;&amp; b</c>, as POSIX allows. A command substitution, <c>$(...)</c> or backquotes, stays
+	/// in its command whole, so a <c>;</c>, quote or <c>#</c> inside it neither cuts nor ends the command around it.
+	/// The refusals are reported rather than passed on as text, so a command meant to get the output of another
+	/// never runs with the wrong arguments.
 	/// </remarks>
-	public static IReadOnlyList<(string Operator, string Command)>? Split(string line) => SplitOrRefuse(line, out _);
+	public static IReadOnlyList<(string Operator, string Command)>? Split(string line) => SplitOrRefuse(line, out _, out _);
+
+	/// <summary>
+	/// Finds what <paramref name="line" /> leaves open at its end, which the next line of a file goes on with, as
+	/// POSIX reads a script.
+	/// </summary>
+	/// <param name="line">The line, or several joined by newlines.</param>
+	/// <returns>
+	/// The quote that's still open, <c>(</c> for a <c>$(</c> or <c>`</c> for a backquote that's never closed, or
+	/// <see langword="null" /> when nothing is. Arithmetic expansion gives <see langword="null" />, since it's refused
+	/// however it ends. A quote inside a comment doesn't count, so <c># don't</c> is complete.
+	/// </returns>
+	internal static char? Unfinished(string line) =>
+		SplitOrRefuse(line, out var refused, out var quote) is not null ? quote
+		: line.AsSpan(refused).StartsWith("$((", StringComparison.Ordinal) ? null
+		: line[refused] == '`' ? '`' : '(';
 
 	/// <summary>
 	/// Cuts <paramref name="line" /> into its commands, as <see cref="Split" /> describes.
 	/// </summary>
 	/// <param name="line">The line.</param>
 	/// <param name="refused">
-	/// When this method returns <see langword="null" />, contains where the <c>$(</c> or backquote starts; otherwise,
-	/// -1.
+	/// When this method returns <see langword="null" />, contains where the unclosed <c>$(</c> or backquote, or the
+	/// <c>$((</c>, starts; otherwise, -1.
+	/// </param>
+	/// <param name="openQuote">
+	/// When this method returns the commands, contains the quote the line ends inside, or <see langword="null" />.
 	/// </param>
 	/// <returns>
-	/// The commands, or <see langword="null" /> when the line uses command substitution.
+	/// The commands, or <see langword="null" /> when the line is refused.
 	/// </returns>
-	private static List<(string Operator, string Command)>? SplitOrRefuse(string line, out int refused)
+	private static List<(string Operator, string Command)>? SplitOrRefuse(string line, out int refused, out char? openQuote)
 	{
 		_ = line.ArgumentNotNull();
 
 		// Stryker disable once Unary : refused is only read when the line is refused, and every refusal sets it.
 		refused = -1;
+		openQuote = null;
 
 		var commands = new List<(string Operator, string Command)>();
 		var command = new StringBuilder();
@@ -100,11 +121,20 @@ internal static class CommandList
 				continue;
 			}
 
-			if (character == '`' || (character == '$' && index + 1 < line.Length && line[index + 1] == '('))
+			if (character == '`' || line.AsSpan(index).StartsWith("$(", StringComparison.Ordinal))
 			{
-				refused = index;
+				if (CommandLine.SubstitutionEnd(line, index) is not (var close and >= 0))
+				{
+					refused = index;
 
-				return null;
+					return null;
+				}
+
+				_ = command.Append(line, index, close - index + 1);
+				index = close;
+				wordStart = false;
+
+				continue;
 			}
 
 			if (quote is null && character == '#' && wordStart)
@@ -146,6 +176,7 @@ internal static class CommandList
 		}
 
 		Cut(Sequence);
+		openQuote = quote;
 
 		return commands;
 
@@ -215,7 +246,7 @@ internal static class CommandList
 	/// </param>
 	/// <returns>
 	/// The status of the last command that ran, or <see cref="UnsupportedStatus" /> after printing an error when
-	/// <see cref="Split" /> refuses the line.
+	/// <see cref="Split" /> refuses the line, before any of it runs.
 	/// </returns>
 	/// <remarks>
 	/// POSIX gives <c>&amp;&amp;</c> and <c>||</c> the same precedence, read from the left, so in
@@ -249,16 +280,26 @@ internal static class CommandList
 	{
 		_ = run.ArgumentNotNull();
 
-		if (SplitOrRefuse(line, out var refused) is not { } commands)
+		if (SplitOrRefuse(line, out var refused, out _) is not { } commands)
 		{
-			new ShellError("sharpie::parser::command_substitution", "Command substitution isn't supported")
-			{
-				Source = line,
-				Start = refused,
-				End = refused + (line[refused] == '`' ? 1 : 2),
-				Label = "runs a command for its output",
-				Help = "run the inner command on its own line, or quote it to pass it as text",
-			}.Write();
+			var arithmetic = line.AsSpan(refused).StartsWith("$((", StringComparison.Ordinal);
+			var backquote = line[refused] == '`';
+
+			var report = arithmetic
+				? new ShellError("sharpie::parser::arithmetic", "Arithmetic expansion isn't supported")
+				{
+					End = refused + 3,
+					Label = "works out a number",
+					Help = "run a program such as expr for the number, or quote it to pass it as text",
+				}
+				: new ShellError("sharpie::parser::unclosed_substitution", backquote ? "The backquote is never closed" : "`$(` is never closed")
+				{
+					End = refused + (backquote ? 1 : 2),
+					Label = "runs a command for its output",
+					Help = backquote ? "add the closing backquote" : "add the missing `)`",
+				};
+
+			(report with { Source = line, Start = refused }).Write();
 
 			return UnsupportedStatus;
 		}

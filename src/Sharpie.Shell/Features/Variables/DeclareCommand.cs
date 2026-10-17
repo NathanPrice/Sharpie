@@ -261,6 +261,23 @@ internal partial class DeclareCommand : ICommand
 	}
 
 	/// <summary>
+	/// Replaces every shell variable with the ones in <paramref name="saved" />.
+	/// </summary>
+	/// <param name="saved">A copy of <see cref="Variables" /> taken earlier.</param>
+	/// <remarks>
+	/// The environment is left alone, so a caller that wants it back puts it back itself.
+	/// </remarks>
+	public void Restore(IReadOnlyDictionary<string, string> saved)
+	{
+		this.variables.Clear();
+
+		foreach (var (name, value) in saved.ArgumentNotNull())
+		{
+			this.variables[name] = value;
+		}
+	}
+
+	/// <summary>
 	/// Matches a valid shell variable name.
 	/// </summary>
 	/// <returns>

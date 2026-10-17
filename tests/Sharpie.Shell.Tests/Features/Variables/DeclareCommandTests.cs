@@ -316,4 +316,26 @@ public sealed class DeclareCommandTests : IDisposable
 		_ = during.Should().Be("two");
 		_ = this.sut.Variables["name"].Should().Be("old");
 	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.Restore" /> leaves exactly the saved variables, dropping later ones and
+	/// putting back changed ones.
+	/// </summary>
+	[Fact]
+	public void Restore_WithSavedVariables_ReplacesAll()
+	{
+		// Arrange
+		this.sut.Set("kept", "old");
+		var saved = this.sut.Variables.ToDictionary();
+
+		this.sut.Set("kept", "new");
+		this.sut.Set("added", "x");
+
+		// Act
+		this.sut.Restore(saved);
+
+		// Assert
+		_ = this.sut.Variables.Should().Equal(saved);
+		_ = this.sut.Variables["kept"].Should().Be("old");
+	}
 }

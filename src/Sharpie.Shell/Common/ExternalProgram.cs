@@ -34,6 +34,20 @@ internal static partial class ExternalProgram
 	/// </value>
 	internal static List<Job> Jobs { get; } = [];
 
+	/// <summary>
+	/// Gets the output copies of the background programs that command substitutions started, each with the stream
+	/// it fills.
+	/// </summary>
+	/// <value>
+	/// What <see cref="WaitForDetached" /> waits on. Only the main thread touches it.
+	/// </value>
+	private static List<(Stream Output, Task Copy)> Detached { get; } = [];
+
+	/// <summary>
+	/// Cancels <see cref="WaitForDetached" /> when Ctrl+C is pressed, or <see langword="null" /> when nothing waits.
+	/// </summary>
+	private static volatile CancellationTokenSource? sDetachedWait;
+
 	// The id of the program running now, or 0 between programs, so Ctrl+C knows what to stop. Written by the main
 	// thread and read by the signal handler's thread. Only used without job control, where the terminal can't send the
 	// signal to the program itself.
@@ -78,12 +92,17 @@ internal static partial class ExternalProgram
 	/// <c>NAME=VALUE</c> words that only this program gets in its environment, as in <c>LANG=C sort</c>, or
 	/// <see langword="null" /> for none. An assigned <c>PATH</c> is also where the program is looked for, as in bash.
 	/// </param>
+	/// <param name="listJob">
+	/// <see langword="false" /> for a background program inside a command substitution. Like one in bash's
+	/// subshell, it isn't added to <see cref="Jobs" /> or announced, and its output still goes to
+	/// <paramref name="output" />, which <see cref="WaitForDetached" /> waits for.
+	/// </param>
 	/// <returns>
 	/// The program's exit status, 128 plus the signal number when a signal ended it, 0 for a background job, or 126
 	/// when it was found but couldn't start (that error is printed here). <see langword="null" /> when the program
 	/// isn't on <c>PATH</c>, and nothing was printed.
 	/// </returns>
-	public static int? Run(string commandName, string[] arguments, Stream? output = null, Stream? error = null, bool background = false, Stream? input = null, IReadOnlyList<string>? assignments = null)
+	public static int? Run(string commandName, string[] arguments, Stream? output = null, Stream? error = null, bool background = false, Stream? input = null, IReadOnlyList<string>? assignments = null, bool listJob = true)
 	{
 		_ = commandName.ArgumentNotNull();
 		_ = arguments.ArgumentNotNull();
@@ -94,8 +113,8 @@ internal static partial class ExternalProgram
 
 		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
 		return fullPath is null ? null
-			: OperatingSystem.IsWindows() ? RunWithProcess(commandName, fullPath, arguments, output, error, background, input, assignments)
-			: RunWithSpawn(commandName, fullPath, arguments, output, error, background, input, assignments);
+			: OperatingSystem.IsWindows() ? RunWithProcess(commandName, fullPath, arguments, output, error, background, input, assignments, listJob)
+			: RunWithSpawn(commandName, fullPath, arguments, output, error, background, input, assignments, listJob);
 	}
 
 	/// <summary>
@@ -111,6 +130,9 @@ internal static partial class ExternalProgram
 	/// <param name="pipeFail">
 	/// <see langword="true" /> for <c>set -o pipefail</c>, which gives the status of the last program that failed.
 	/// </param>
+	/// <param name="output">
+	/// Where the last program's standard output goes, or <see langword="null" /> to let it write to the terminal.
+	/// </param>
 	/// <remarks>
 	/// If any program isn't on <c>PATH</c>, <paramref name="notFound" /> is called for it and none of them run. Bash
 	/// would still start the others.
@@ -120,7 +142,7 @@ internal static partial class ExternalProgram
 	/// the rightmost program that didn't give 0. 127 when a program isn't on <c>PATH</c>, or 126 when one couldn't
 	/// start.
 	/// </returns>
-	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null, bool pipeFail = false)
+	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null, bool pipeFail = false, Stream? output = null)
 	{
 		_ = stages.ArgumentNotNull();
 		_ = notFound.ArgumentNotNull();
@@ -143,7 +165,54 @@ internal static partial class ExternalProgram
 		}
 
 		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
-		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments, pipeFail) : RunPipelineWithSpawn(stages, paths!, assignments, pipeFail);
+		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments, pipeFail, output) : RunPipelineWithSpawn(stages, paths!, assignments, pipeFail, output);
+	}
+
+	/// <summary>
+	/// Waits until the background programs that a command substitution started have closed their output, as bash
+	/// waits for the end of the substitution's pipe.
+	/// </summary>
+	/// <param name="output">The substitution's stream.</param>
+	/// <remarks>
+	/// A program that sends its output elsewhere, like <c>server &gt; log &amp;</c>, isn't waited for. Ctrl+C, through
+	/// <see cref="StopWaiting" />, stops the wait and leaves the programs running.
+	/// </remarks>
+	public static void WaitForDetached(Stream output)
+	{
+		var copies = Detached.Where(entry => entry.Output == output).Select(entry => entry.Copy).ToArray();
+
+		_ = Detached.RemoveAll(entry => entry.Output == output);
+
+		using var wait = new CancellationTokenSource();
+
+		sDetachedWait = wait;
+
+		try
+		{
+			Task.WaitAll(copies, wait.Token);
+		}
+		catch (OperationCanceledException)
+		{
+		}
+		finally
+		{
+			sDetachedWait = null;
+		}
+	}
+
+	/// <summary>
+	/// Stops <see cref="WaitForDetached" />, for Ctrl+C. Does nothing when nothing waits.
+	/// </summary>
+	public static void StopWaiting()
+	{
+		try
+		{
+			sDetachedWait?.Cancel();
+		}
+		// The wait ended and disposed it between the read and the cancel, on the main thread.
+		catch (ObjectDisposedException)
+		{
+		}
 	}
 
 	/// <summary>

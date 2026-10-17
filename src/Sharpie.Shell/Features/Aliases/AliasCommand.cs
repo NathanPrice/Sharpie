@@ -114,6 +114,9 @@ internal sealed partial class AliasCommand : ICommand
 	/// </summary>
 	/// <param name="words">The words from <see cref="CommandLine.Split" />.</param>
 	/// <param name="variables">The shell variables that <c>$NAME</c> in an alias value expands from.</param>
+	/// <param name="substitute">
+	/// Runs a <c>$(...)</c> in an alias value and gives its output, as <see cref="CommandLine.Split" /> takes it.
+	/// </param>
 	/// <returns>
 	/// The words with every alias replaced, or the same words when none is used. Words from an alias value take the
 	/// position of the alias word, so an error in them points at what the user typed.
@@ -125,7 +128,7 @@ internal sealed partial class AliasCommand : ICommand
 	/// already split, so a quoted or backslashed name such as <c>\grep</c> is still expanded, where POSIX would run
 	/// the program itself.
 	/// </remarks>
-	public Word[] Expand(Word[] words, IReadOnlyDictionary<string, string>? variables)
+	public Word[] Expand(Word[] words, IReadOnlyDictionary<string, string>? variables, Func<string, string>? substitute = null)
 	{
 		_ = words.ArgumentNotNull();
 
@@ -142,7 +145,7 @@ internal sealed partial class AliasCommand : ICommand
 
 			while (index < result.Count && result[index] is { IsOperator: false, Text: var name } typed && this.aliases.TryGetValue(name, out var value) && used.Add(name))
 			{
-				var expansion = CommandLine.Split(value, variables);
+				var expansion = CommandLine.Split(value, variables, substitute: substitute);
 
 				for (var word = 0; word < expansion.Length; word++)
 				{
@@ -155,6 +158,20 @@ internal sealed partial class AliasCommand : ICommand
 		}
 
 		return [.. result];
+	}
+
+	/// <summary>
+	/// Replaces every alias with the ones in <paramref name="saved" />.
+	/// </summary>
+	/// <param name="saved">A copy of <see cref="Aliases" /> taken earlier.</param>
+	public void Restore(IReadOnlyDictionary<string, string> saved)
+	{
+		this.aliases.Clear();
+
+		foreach (var (name, value) in saved.ArgumentNotNull())
+		{
+			this.aliases[name] = value;
+		}
 	}
 
 	/// <summary>

@@ -274,7 +274,27 @@ public sealed class SourceCommandTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a line ending in an odd number of backslashes joins the next one, and an even number doesn't.
+	/// Checks that a quote still open at the end of the file is reported with status 2 after the lines before it ran,
+	/// and the open command doesn't run.
+	/// </summary>
+	[Fact]
+	public void Run_WithQuoteOpenAtEnd_ReportsItAndGivesTwo()
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.folder, "open.rc", executable: false, "echo before\necho 'open\nstill\n");
+
+		// Act
+		var status = this.sut.Run([path]);
+
+		// Assert
+		_ = status.Should().Be(CommandList.UnsupportedStatus);
+		_ = this.ran.Should().Equal("echo before");
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::source::unclosed_quote", $"`'` is never closed in `{path}`") { Help = "add the closing '" }.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that a line ending in an odd number of backslashes joins the next one, and an even number doesn't, and
+	/// that a line leaving a quote or substitution open joins the lines that close it.
 	/// </summary>
 	/// <param name="lines">The lines of the file.</param>
 	/// <param name="expected">The command lines that should come out.</param>
@@ -286,6 +306,14 @@ public sealed class SourceCommandTests : IDisposable
 	[InlineData(new[] { @"echo a\" }, new[] { "echo a" })]
 	[InlineData(new[] { "one", "two" }, new[] { "one", "two" })]
 	[InlineData(new[] { @"\" }, new string[0])]
+	[InlineData(new[] { "X=$(echo a", "echo b)", "echo c" }, new[] { "X=$(echo a\necho b)", "echo c" })]
+	[InlineData(new[] { "echo `a", "b`" }, new[] { "echo `a\nb`" })]
+	[InlineData(new[] { "echo 'a", "", "b'" }, new[] { "echo 'a\n\nb'" })]
+	[InlineData(new[] { @"echo 'a\", "b'" }, new[] { "echo 'a\\\nb'" })]
+	[InlineData(new[] { "echo \"a\\", "b\"" }, new[] { "echo \"ab\"" })]
+	[InlineData(new[] { @"X=$(echo a \", "b)" }, new[] { "X=$(echo a b)" })]
+	[InlineData(new[] { "# don't", "echo hi" }, new[] { "# don't", "echo hi" })]
+	[InlineData(new[] { "echo 'open", "" }, new[] { "echo 'open" })]
 	public void JoinContinuedLines_WithLines_JoinsOnOddBackslashes(string[] lines, string[] expected)
 	{
 		// Act
