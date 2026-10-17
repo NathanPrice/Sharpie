@@ -51,6 +51,63 @@ public sealed class JobsProcessTests
 	}
 
 	/// <summary>
+	/// Checks that <c>&amp;</c> ends a command like <c>;</c>, so the command after it runs at once on the same line.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithBackgroundThenCommand_RunsBoth()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("sleep 1 & echo next\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().MatchRegex(@"^\$ \[1\] \d+\nnext\n\$ $");
+	}
+
+	/// <summary>
+	/// Checks that a builtin run with <c>&amp;</c> runs in a copy of the shell, so <c>cd</c> doesn't move the shell
+	/// itself.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithBackgroundCd_KeepsFolder()
+	{
+		// Arrange
+		var folder = Path.GetTempPath().TrimEnd('/');
+
+		// Act
+		var run = await ShellProcess.RunAsync("cd / &\nsleep 1\npwd\nexit\n", folder).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().EndWith($"{folder}\n$ ");
+	}
+
+	/// <summary>
+	/// Checks that <c>NAME=VALUE</c> run with <c>&amp;</c> sets the variable in a copy of the shell, not this one.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithBackgroundAssignment_LeavesVariableUnset()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("SAMPLEVAR=1 &\nsleep 1\necho x$SAMPLEVAR\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Contain("x\n").And.NotContain("x1");
+	}
+
+	/// <summary>
+	/// Checks that <c>&amp;</c> after an and-or list runs the whole list in the background, so <c>echo late</c> waits
+	/// for <c>sleep</c> while the shell goes on to <c>echo early</c>.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithBackgroundAndList_RunsWholeListInBackground()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("sleep 1 && echo late & echo early\nsleep 2\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().MatchRegex(@"(?s)early\n.*late\n");
+	}
+
+	/// <summary>
 	/// Checks that <c>jobs</c> is registered with the running shell and prints nothing when no jobs are running.
 	/// </summary>
 	[Fact]

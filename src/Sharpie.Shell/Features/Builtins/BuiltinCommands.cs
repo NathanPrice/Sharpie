@@ -36,6 +36,7 @@ internal static class BuiltinCommands
 	internal static ICommand[] Create(Dictionary<string, ICommand> commands, Func<string, int> runLine)
 	{
 		var alias = new AliasCommand();
+		var declare = new DeclareCommand();
 
 		// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
 		var type = new TypeCommand(commands, alias.Aliases);
@@ -54,8 +55,8 @@ internal static class BuiltinCommands
 			new DmanCommand(),
 			new UmaskCommand(NativeMethods.SetFileMask),
 			new UlimitCommand(),
-			.. CreateVariableCommands(runLine),
-			.. CreateFolderCommands(),
+			.. CreateVariableCommands(declare, runLine),
+			.. CreateFolderCommands(declare),
 			.. CreateJobCommands(),
 			new CommandCommand(type),
 			new ExecCommand(),
@@ -66,15 +67,12 @@ internal static class BuiltinCommands
 	/// <summary>
 	/// Creates the builtins that work on shell variables, and the ones that run lines, which share them.
 	/// </summary>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
 	/// <param name="runLine">Runs one command line the way the shell runs a typed one and gives its status.</param>
 	/// <returns>
 	/// <c>declare</c> and the builtins built around it.
 	/// </returns>
-	private static ICommand[] CreateVariableCommands(Func<string, int> runLine)
-	{
-		var declare = new DeclareCommand();
-
-		return
+	private static ICommand[] CreateVariableCommands(DeclareCommand declare, Func<string, int> runLine) =>
 		[
 			declare,
 			new ExitCommand(declare),
@@ -87,17 +85,17 @@ internal static class BuiltinCommands
 			new SourceCommand("source", declare, runLine),
 			new EvalCommand(runLine)
 		];
-	}
 
 	/// <summary>
 	/// Creates the builtins that show or change the current folder.
 	/// </summary>
+	/// <param name="declare">The <c>declare</c> builtin, where <c>cd</c> keeps <c>PWD</c> and <c>OLDPWD</c>.</param>
 	/// <returns>
 	/// <c>pwd</c>, <c>cd</c>, and the folder stack builtins, which change folder through the same <c>cd</c>.
 	/// </returns>
-	private static ICommand[] CreateFolderCommands()
+	private static ICommand[] CreateFolderCommands(DeclareCommand declare)
 	{
-		var cd = new CdCommand();
+		var cd = new CdCommand(declare);
 		var dirs = new DirsCommand();
 
 		return [new PwdCommand(), cd, dirs, new PushdCommand(dirs, cd), new PopdCommand(dirs, cd)];

@@ -49,8 +49,7 @@ internal sealed class ExportCommand(DeclareCommand declare) : ICommand
 			}
 			else if (parts.Length == 2)
 			{
-				Environment.SetEnvironmentVariable(parts[0], parts[1]);
-				declare.Set(parts[0], parts[1]);
+				declare.Export(parts[0], parts[1]);
 			}
 			else if (declare.Variables.TryGetValue(arg, out var value))
 			{

@@ -434,7 +434,6 @@ public sealed class CommandLineProcessTests
 	[Theory]
 	[InlineData("echo a <x", "<", 7, "Sharpie can't run this operator yet")]
 	[InlineData("echo a 2>&1", "2>&", 7, "Sharpie can't run this operator yet")]
-	[InlineData("echo a & echo b", "&", 7, "Sharpie can't run this operator yet")]
 	[InlineData("echo a >", ">", 7, "needs a file name after it")]
 	[InlineData("echo a |", "|", 7, "needs a command on both sides")]
 	[InlineData("| echo a", "|", 0, "needs a command on both sides")]

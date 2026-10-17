@@ -153,6 +153,10 @@ internal static class Program
 		}
 
 		var declare = (DeclareCommand)commands["declare"];
+
+		// The parent may have passed a PWD from before it changed folders, so $PWD starts out right.
+		declare.Export("PWD", Directory.GetCurrentDirectory());
+
 		var aliases = (AliasCommand)commands["alias"];
 		var interactive = options.IsInteractive(terminal);
 
@@ -427,7 +431,7 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Runs the commands of one line, joined by <c>;</c>, <c>&amp;&amp;</c> and <c>||</c>, as
+	/// Runs the commands of one line, joined by <c>;</c>, <c>&amp;</c>, <c>&amp;&amp;</c> and <c>||</c>, as
 	/// <see cref="CommandList.Run(string, int, Func{string, int}, Action{int})" /> describes.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
@@ -480,8 +484,9 @@ internal static class Program
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables that <c>$NAME</c> expands to.</param>
 	/// <param name="settings">The <c>set</c> options, which <c>-u</c>, <c>-x</c> and pipefail change here.</param>
 	/// <param name="line">
-	/// The command, with no <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> left in it, which error reports show and point
-	/// into.
+	/// The command, with no <c>;</c> left in it, which error reports show and point into. It may end with
+	/// <c>&amp;</c>, and then it may also hold <c>&amp;&amp;</c> or <c>||</c>, for the whole and-or list to run in the
+	/// background.
 	/// </param>
 	/// <returns>
 	/// The command's status: <see cref="ExternalProgram.NotFound" /> when it isn't found, 1 when a redirect file
@@ -496,28 +501,14 @@ internal static class Program
 		Word? unset = null;
 		var split = CommandLine.Split(line, declare.Variables, settings.NoUnset ? name => unset ??= name : null);
 
-		if (unset is { } name)
+		if (unset is { } missing)
 		{
-			new ShellError("sharpie::shell::unset_variable", $"`{name.Text}` isn't set")
-			{
-				Source = line,
-				Start = name.Start,
-				End = name.End,
-				Label = "set -u makes this an error",
-				Help = "set it first, or turn the check off with set +u",
-			}.Write();
-
-			if (!settings.Interactive)
-			{
-				Environment.Exit(127);
-			}
-
-			return 1;
+			return ReportUnset(line, missing, settings.Interactive);
 		}
 
 		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(CommandCommand.Unwrap(aliases.Expand(split, declare.Variables)));
 
-		// A trailing & runs an external program in the background. Builtins still run in the foreground.
+		// A trailing & runs the command in the background.
 		var background = words is [.., { IsOperator: true, Text: "&" }];
 
 		if (background)
@@ -530,7 +521,12 @@ internal static class Program
 			return 0;
 		}
 
-		// Redirects and & aren't applied to a pipeline.
+		if (background && NeedsShellCopy(words, commands))
+		{
+			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), ["-c", line.EndsWith('&') ? line[..^1] : line], [], null, null, background: true);
+		}
+
+		// Redirects aren't applied to a pipeline.
 		var stages = CommandLine.SplitPipeline(words);
 
 		// Operators the shell can't run yet, like < or 2>&1, are refused rather than passed on as arguments.
@@ -541,10 +537,7 @@ internal static class Program
 			return CommandList.UnsupportedStatus;
 		}
 
-		if (settings.XTrace)
-		{
-			Trace(stages);
-		}
+		Trace(settings, stages);
 
 		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
 		if (stages is [var only] && Array.TrueForAll(only, DeclareCommand.IsAssignment))
@@ -576,9 +569,7 @@ internal static class Program
 
 		return errorFailed ? 1
 			: stages.Length > 1 ? RunPipeline(stages)
-			// exec keeps the redirect files past its own run, which RunBuiltin would undo.
-			: commands.TryGetValue(names[0].Text, out var command) ? command is ExecCommand exec ? exec.Run(arguments, assignments[0], output, error, settings.Interactive)
-				: RunBuiltin(command, declare, arguments, assignments[0], output, error)
+			: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltinOrExec(command, declare, settings, arguments, assignments[0], output, error)
 			: RunProgram(names[0], arguments, assignments[0], output, error, background);
 
 		// Opens the redirect file at path, or gives null when path is null. The file is created if missing, then
@@ -729,15 +720,91 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Prints each stage of a command to standard error before it runs, as <c>set -x</c> does.
+	/// Reports a variable that <c>set -u</c> finds unset, pointing at where it was typed.
 	/// </summary>
+	/// <param name="line">The command as typed.</param>
+	/// <param name="name">The variable's name and place in <paramref name="line" />.</param>
+	/// <param name="interactive">
+	/// <see langword="true" /> when the shell reads typed lines and keeps going. Otherwise it exits with 127, as bash
+	/// does.
+	/// </param>
+	/// <returns>
+	/// 1, the command's status.
+	/// </returns>
+	private static int ReportUnset(string line, Word name, bool interactive)
+	{
+		new ShellError("sharpie::shell::unset_variable", $"`{name.Text}` isn't set")
+		{
+			Source = line,
+			Start = name.Start,
+			End = name.End,
+			Label = "set -u makes this an error",
+			Help = "set it first, or turn the check off with set +u",
+		}.Write();
+
+		if (!interactive)
+		{
+			Environment.Exit(127);
+		}
+
+		return 1;
+	}
+
+	/// <summary>
+	/// Checks whether a command that ends in <c>&amp;</c> has to run in a copy of the shell.
+	/// </summary>
+	/// <param name="words">The command's words, without the <c>&amp;</c>.</param>
+	/// <param name="commands">The builtins, by name.</param>
+	/// <returns>
+	/// <see langword="true" /> for anything but one program, like <c>cd</c>, <c>A=1</c>, a pipeline or
+	/// <c>a &amp;&amp; b</c>, so it can't change this shell, as bash runs it in a subshell.
+	/// </returns>
+	/// <remarks>
+	/// shortcut: the copy of the shell gets exported variables and the folder, not aliases or unexported shell
+	/// variables as a bash subshell does. Upgrade by passing those to the child if a background builtin needs them.
+	/// </remarks>
+	private static bool NeedsShellCopy(Word[] words, Dictionary<string, ICommand> commands) =>
+		Array.Exists(words, word => word.IsOperator)
+		|| words.Select(word => word.Text).FirstOrDefault(text => !DeclareCommand.IsAssignment(text)) is not { } name
+		|| commands.ContainsKey(name);
+
+	/// <summary>
+	/// Runs a builtin found for a command, or <c>exec</c> with the command's redirect files.
+	/// </summary>
+	/// <param name="command">The builtin.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
+	/// <param name="settings">The <c>set</c> options, which tell <c>exec</c> whether the shell is interactive.</param>
+	/// <param name="arguments">The words after the builtin's name.</param>
+	/// <param name="assignments">The <c>NAME=VALUE</c> words typed in front of the builtin's name.</param>
+	/// <param name="output">The open <c>&gt;</c> file, or <see langword="null" /> for the terminal.</param>
+	/// <param name="error">The open <c>2&gt;</c> file, or <see langword="null" /> for the terminal.</param>
+	/// <returns>
+	/// The builtin's status.
+	/// </returns>
+	/// <remarks>
+	/// <c>exec</c> keeps the redirect files past its own run, which <see cref="RunBuiltin" /> would undo.
+	/// </remarks>
+	private static int RunBuiltinOrExec(ICommand command, DeclareCommand declare, ShellSettings settings, string[] arguments, string[] assignments, FileStream? output, FileStream? error) =>
+		command is ExecCommand exec
+			? exec.Run(arguments, assignments, output, error, settings.Interactive)
+			: RunBuiltin(command, declare, arguments, assignments, output, error);
+
+	/// <summary>
+	/// Prints each stage of a command to standard error before it runs, when <c>set -x</c> is on.
+	/// </summary>
+	/// <param name="settings">The <c>set</c> options.</param>
 	/// <param name="stages">The stages, each starting with its <c>NAME=VALUE</c> words.</param>
 	/// <remarks>
 	/// Each <c>NAME=VALUE</c> word gets a line of its own, then the command, every line after <c>+ </c>, with the
 	/// words quoted only where needed, the way bash prints them. Redirects aren't shown.
 	/// </remarks>
-	private static void Trace(string[][] stages)
+	private static void Trace(ShellSettings settings, string[][] stages)
 	{
+		if (!settings.XTrace)
+		{
+			return;
+		}
+
 		foreach (var stage in stages)
 		{
 			var count = stage.TakeWhile(DeclareCommand.IsAssignment).Count();

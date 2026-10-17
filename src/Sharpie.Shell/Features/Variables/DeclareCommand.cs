@@ -240,6 +240,17 @@ internal partial class DeclareCommand : ICommand
 	}
 
 	/// <summary>
+	/// Stores the variable <paramref name="name" /> and puts it in the environment, as <c>export NAME=VALUE</c> does.
+	/// </summary>
+	/// <param name="name">A valid variable name.</param>
+	/// <param name="value">The value.</param>
+	public void Export(string name, string value)
+	{
+		Environment.SetEnvironmentVariable(name, value);
+		this.Set(name, value);
+	}
+
+	/// <summary>
 	/// Removes the variable <paramref name="name" /> from the shell and from the environment.
 	/// </summary>
 	/// <param name="name">The variable name. A name that isn't set is ignored.</param>

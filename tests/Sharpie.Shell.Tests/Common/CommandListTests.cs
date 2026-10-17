@@ -42,6 +42,14 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("echo \"it's\"; b", new[] { ";", "echo \"it's\"", ";", "b" })]
 	[InlineData("a;#x\nb", new[] { ";", "a", ";", "b" })]
 	[InlineData("sleep 1 &", new[] { ";", "sleep 1 &" })]
+	[InlineData("a & b", new[] { ";", "a &", ";", "b" })]
+	[InlineData("a&b", new[] { ";", "a&", ";", "b" })]
+	[InlineData("a && b & c", new[] { ";", "a && b &", ";", "c" })]
+	[InlineData("a; b || c &", new[] { ";", "a", ";", "b || c &" })]
+	[InlineData("a &&\nb &", new[] { ";", "a && b &" })]
+	[InlineData("a 2>&1 & b", new[] { ";", "a 2>&1 &", ";", "b" })]
+	[InlineData("a &> f", new[] { ";", "a &> f" })]
+	[InlineData("a |& b", new[] { ";", "a |& b" })]
 	[InlineData("a |", new[] { ";", "a |" })]
 	[InlineData("echo $", new[] { ";", "echo $" })]
 	[InlineData("echo ($HOME) (x)", new[] { ";", "echo ($HOME) (x)" })]
@@ -95,6 +103,7 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("t; f", new[] { "t", "f" }, 1)]
 	[InlineData("f && a && b", new[] { "f" }, 1)]
 	[InlineData("t && f || f && a", new[] { "t", "f", "f" }, 1)]
+	[InlineData("f & a", new[] { "f &", "a" }, 0)]
 	public void Run_WithList_RunsCommandsByStatus(string line, string[] expectedRan, int expectedStatus)
 	{
 		// Arrange

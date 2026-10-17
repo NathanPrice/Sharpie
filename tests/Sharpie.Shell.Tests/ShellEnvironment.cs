@@ -7,8 +7,8 @@ using System.Runtime.Versioning;
 namespace Sharpie.Shell.Tests;
 
 /// <summary>
-/// Gives one test its own console output and error, <c>PATH</c> and <c>HOME</c> values, working directory, and temporary folder,
-/// and puts the originals back when it's disposed.
+/// Gives one test its own console output and error, <c>PATH</c>, <c>HOME</c>, <c>PWD</c>, <c>OLDPWD</c> and
+/// <c>CDPATH</c> values, working directory, and temporary folder, and puts the originals back when it's disposed.
 /// </summary>
 public sealed class ShellEnvironment : IDisposable
 {
@@ -18,6 +18,9 @@ public sealed class ShellEnvironment : IDisposable
 	private readonly TextWriter originalError = Console.Error;
 	private readonly string? originalPath = Environment.GetEnvironmentVariable("PATH");
 	private readonly string? originalHome = Environment.GetEnvironmentVariable("HOME");
+	private readonly string? originalPwd = Environment.GetEnvironmentVariable("PWD");
+	private readonly string? originalOldPwd = Environment.GetEnvironmentVariable("OLDPWD");
+	private readonly string? originalCdPath = Environment.GetEnvironmentVariable("CDPATH");
 	private readonly string originalDirectory = Directory.GetCurrentDirectory();
 	private readonly StringWriter output = new();
 	private readonly StringWriter error = new();
@@ -27,10 +30,16 @@ public sealed class ShellEnvironment : IDisposable
 	/// Initializes a new instance of the <see cref="ShellEnvironment" /> class and redirects <see cref="Console.Out" />
 	/// and <see cref="Console.Error" />.
 	/// </summary>
+	/// <remarks>
+	/// <c>OLDPWD</c> and <c>CDPATH</c> start out cleared, so a value from the shell running the tests can't change where
+	/// <c>cd</c> goes.
+	/// </remarks>
 	public ShellEnvironment()
 	{
 		Console.SetOut(this.output);
 		Console.SetError(this.error);
+		Environment.SetEnvironmentVariable("OLDPWD", null);
+		Environment.SetEnvironmentVariable("CDPATH", null);
 	}
 
 	/// <summary>
@@ -106,8 +115,8 @@ public sealed class ShellEnvironment : IDisposable
 	}
 
 	/// <summary>
-	/// Restores the original console output and error, <c>PATH</c>, <c>HOME</c>, and working directory, then deletes the
-	/// temporary folder.
+	/// Restores the original console output and error, <c>PATH</c>, <c>HOME</c>, <c>PWD</c>, <c>OLDPWD</c>,
+	/// <c>CDPATH</c>, and working directory, then deletes the temporary folder.
 	/// </summary>
 	public void Dispose()
 	{
@@ -117,6 +126,9 @@ public sealed class ShellEnvironment : IDisposable
 		this.error.Dispose();
 		Environment.SetEnvironmentVariable("PATH", this.originalPath);
 		Environment.SetEnvironmentVariable("HOME", this.originalHome);
+		Environment.SetEnvironmentVariable("PWD", this.originalPwd);
+		Environment.SetEnvironmentVariable("OLDPWD", this.originalOldPwd);
+		Environment.SetEnvironmentVariable("CDPATH", this.originalCdPath);
 
 		// Restored before the delete, since a test may have moved into the temporary folder and the next test would
 		// start in a folder that no longer exists.

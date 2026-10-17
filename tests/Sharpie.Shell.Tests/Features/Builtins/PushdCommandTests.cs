@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Builtins;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
 
@@ -22,7 +23,7 @@ public sealed class PushdCommandTests : IDisposable
 	/// </summary>
 	public PushdCommandTests()
 	{
-		this.sut = new PushdCommand(this.dirs, new CdCommand());
+		this.sut = new PushdCommand(this.dirs, new CdCommand(new DeclareCommand()));
 		this.home = this.environment.CreateFolder();
 		this.other = this.environment.CreateFolder();
 		ShellEnvironment.SetHome(this.home);
