@@ -1,12 +1,18 @@
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Features.Builtins;
 
 /// <summary>
 /// Changes the shell's working directory.
 /// </summary>
-internal class CdCommand : ICommand
+/// <param name="declare">The <c>declare</c> builtin, which holds <c>PWD</c>, <c>OLDPWD</c> and <c>CDPATH</c>.</param>
+/// <remarks>
+/// After each change <c>PWD</c> and <c>OLDPWD</c> are set and exported, as bash does, so <c>cd -</c> and the programs
+/// the shell starts see the new and previous folders.
+/// </remarks>
+internal class CdCommand(DeclareCommand declare) : ICommand
 {
 	/// <inheritdoc />
 	public string Name => "cd";
@@ -18,7 +24,8 @@ internal class CdCommand : ICommand
 	{
 		_ = args.ArgumentNotNull();
 
-		var targetPath = ResolvePath(args);
+		var before = Directory.GetCurrentDirectory();
+		var targetPath = this.ResolvePath(args, out var print);
 
 		if (targetPath is null)
 		{
@@ -36,6 +43,16 @@ internal class CdCommand : ICommand
 		{
 			Directory.SetCurrentDirectory(targetPath);
 
+			var after = Directory.GetCurrentDirectory();
+
+			declare.Export("OLDPWD", before);
+			declare.Export("PWD", after);
+
+			if (print)
+			{
+				Console.WriteLine(after);
+			}
+
 			return 0;
 		}
 		catch (UnauthorizedAccessException)
@@ -50,17 +67,25 @@ internal class CdCommand : ICommand
 	/// Turns the arguments to <c>cd</c> into an absolute path for the current OS.
 	/// </summary>
 	/// <param name="args">The words that followed <c>cd</c> on the input line.</param>
+	/// <param name="print">
+	/// Set to <see langword="true" /> when the new folder should be printed after the change: for <c>cd -</c> and for a
+	/// folder found through a non-empty <c>CDPATH</c> entry, as bash does.
+	/// </param>
 	/// <returns>
-	/// The full path to change to, or the user's home folder when <paramref name="args" /> is empty or holds one empty
-	/// word. Returns <see langword="null" /> when the path can't be used or there's more than one word; the reason has
-	/// already been printed.
+	/// The path to change to: <c>OLDPWD</c> for <c>-</c>, the user's home folder when <paramref name="args" /> is empty
+	/// or holds one empty word, or else a full path. Returns <see langword="null" /> when the path can't be used, there's
+	/// more than one word, or <c>-</c> is given before <c>OLDPWD</c> is set; the reason has already been printed.
 	/// </returns>
 	/// <remarks>
 	/// The returned path is not checked for existence. <see cref="Run" /> does that so it can print the
-	/// standard "No such file or directory" message.
+	/// standard "No such file or directory" message. A relative path is looked up in each <c>CDPATH</c> entry in order,
+	/// where an empty entry means the current folder, unless it starts with <c>.</c> or <c>..</c>. When no entry holds
+	/// it, it joins the current folder.
 	/// </remarks>
-	private static string? ResolvePath(string[]? args)
+	private string? ResolvePath(string[]? args, out bool print)
 	{
+		print = false;
+
 		var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
 		// No argument: go home, like Unix "cd"
@@ -88,6 +113,22 @@ internal class CdCommand : ICommand
 			return home;
 		}
 
+		if (input == "-")
+		{
+			var previous = CommandLine.Lookup(declare.Variables, "OLDPWD");
+
+			if (previous.Length == 0)
+			{
+				new ShellError("sharpie::cd::no_oldpwd", "OLDPWD isn't set") { Help = "cd somewhere first" }.Write();
+
+				return null;
+			}
+
+			print = true;
+
+			return previous;
+		}
+
 		if (!OperatingSystem.IsWindows())
 		{
 			// Windows-only path forms have no meaning on Unix
@@ -104,9 +145,26 @@ internal class CdCommand : ICommand
 
 		try
 		{
+			var current = Directory.GetCurrentDirectory();
+
+			if (!Path.IsPathRooted(input) && input.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0] is not ("." or ".."))
+			{
+				foreach (var entry in CommandLine.Lookup(declare.Variables, "CDPATH").Split(Path.PathSeparator))
+				{
+					var candidate = Path.GetFullPath(Path.Combine(current, entry, input));
+
+					if (Directory.Exists(candidate))
+					{
+						print = entry.Length > 0;
+
+						return candidate;
+					}
+				}
+			}
+
 			// Absolute input replaces the current directory; relative input joins it.
 			// GetFullPath normalizes "..", ".", and separators for the current OS.
-			return Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), input));
+			return Path.GetFullPath(Path.Combine(current, input));
 		}
 		catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
 		{

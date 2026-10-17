@@ -89,7 +89,7 @@ internal static class Program
 			new EchoCommand(),
 			new ExitCommand(declare),
 			new PwdCommand(),
-			new CdCommand(),
+			new CdCommand(declare),
 			new ClearCommand(),
 			new CompleteCommand(),
 			new JobsCommand(),
@@ -176,6 +176,10 @@ internal static class Program
 		}
 
 		var declare = (DeclareCommand)commands["declare"];
+
+		// The parent may have passed a PWD from before it changed folders, so $PWD starts out right.
+		declare.Export("PWD", Directory.GetCurrentDirectory());
+
 		var aliases = (AliasCommand)commands["alias"];
 		var interactive = options.IsInteractive(terminal);
 

@@ -87,4 +87,29 @@ public sealed class BuiltinProcessTests
 			Directory.Delete(home, recursive: true);
 		}
 	}
+
+	/// <summary>
+	/// Checks that <c>$PWD</c> names the folder the shell started in, even when the parent passed a stale value.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithStalePwd_ExpandsPwdToStartFolder()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-pwd-").FullName;
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync("echo $PWD\nexit\n", workingDirectory: folder, environment: new Dictionary<string, string> { ["PWD"] = "/stale" })
+				.ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be($"$ {folder}\n$ ");
+			_ = run.Exited.Should().BeTrue();
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
 }
