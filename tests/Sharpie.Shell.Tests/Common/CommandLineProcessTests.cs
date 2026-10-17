@@ -48,6 +48,33 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks that a wildcard reaches a command as the sorted names it matches in the working folder, and that a
+	/// quoted one reaches it as typed.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithWildcard_PassesMatchingNames()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		await File.WriteAllTextAsync(Path.Combine(folder, "b.tmp"), string.Empty).ConfigureAwait(true);
+		await File.WriteAllTextAsync(Path.Combine(folder, "a.tmp"), string.Empty).ConfigureAwait(true);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync("echo *.tmp '*.tmp'\nexit\n", folder).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("$ a.tmp b.tmp *.tmp\n$ ");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that <c>&gt;</c> and <c>1&gt;</c> send a builtin's output to a file, replacing what was there, and
 	/// that only the prompts reach the terminal.
 	/// </summary>

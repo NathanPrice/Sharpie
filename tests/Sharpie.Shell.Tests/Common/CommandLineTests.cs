@@ -6,6 +6,7 @@ namespace Sharpie.Shell.Tests.Common;
 /// <summary>
 /// Tests for <see cref="CommandLine" />.
 /// </summary>
+[Collection(GlobalState.Name)]
 public sealed class CommandLineTests
 {
 	/// <summary>
@@ -674,5 +675,117 @@ public sealed class CommandLineTests
 		// Assert
 		_ = path.Should().Be(new Word("out", IsOperator: false, 5, 8));
 		_ = errorPath.Should().Be(new Word("err", IsOperator: false, 12, 15));
+	}
+
+	/// <summary>
+	/// Checks that with variables given, an unquoted <c>*</c>, <c>?</c> or <c>[...]</c> becomes the sorted file names
+	/// it matches, and that quoted or escaped wildcards, patterns that match nothing, <c>NAME=value</c> words in front
+	/// of a command and a redirect to more than one file all stay as typed.
+	/// </summary>
+	/// <param name="line">The command line, with <c>{0}</c> for a folder holding <c>a.tmp</c>, <c>b.tmp</c> and <c>c.txt</c>.</param>
+	/// <param name="expected">The words it should give, with <c>{0}</c> for the same folder.</param>
+	[Theory]
+	[InlineData("rm {0}/*.tmp", new[] { "rm", "{0}/a.tmp", "{0}/b.tmp" })]
+	[InlineData("ls \"{0}\"/?.t*", new[] { "ls", "{0}/a.tmp", "{0}/b.tmp", "{0}/c.txt" })]
+	[InlineData("ls {0}/[bc].*|wc", new[] { "ls", "{0}/b.tmp", "{0}/c.txt", "|", "wc" })]
+	[InlineData("echo \"{0}/*.tmp\" '{0}/*.tmp'", new[] { "echo", "{0}/*.tmp", "{0}/*.tmp" })]
+	[InlineData(@"echo {0}/\*.tmp {0}/a.tm\?", new[] { "echo", "{0}/*.tmp", "{0}/a.tm?" })]
+	[InlineData("echo {0}/*.none", new[] { "echo", "{0}/*.none" })]
+	[InlineData("echo $P", new[] { "echo", "{0}/a.tmp", "{0}/b.tmp" })]
+	[InlineData("echo \"$P\"", new[] { "echo", "{0}/*.tmp" })]
+	[InlineData("A={0}/* B={0}/* sampletool {0}/c.*", new[] { "A={0}/*", "B={0}/*", "sampletool", "{0}/c.txt" })]
+	[InlineData("true | A={0}/* sampletool", new[] { "true", "|", "A={0}/*", "sampletool" })]
+	[InlineData("echo x > {0}/*.tmp", new[] { "echo", "x", ">", "{0}/*.tmp" })]
+	[InlineData("echo x > {0}/a.t?p", new[] { "echo", "x", ">", "{0}/a.tmp" })]
+	[InlineData("echo ~", new[] { "echo", "{0}/*.tmp" })]
+	[InlineData(@"echo ""{0}/q\r""*", new[] { "echo", @"{0}/q\r.log" })]
+	public void Split_WithWildcards_ExpandsMatchingFiles(string line, string[] expected)
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		foreach (var name in new[] { "a.tmp", "b.tmp", "c.txt", @"q\r.log" })
+		{
+			File.WriteAllText(Path.Combine(folder, name), string.Empty);
+		}
+
+		try
+		{
+			// Act
+			var words = CommandLine.Split(line.Replace("{0}", folder, StringComparison.Ordinal), new Dictionary<string, string> { ["P"] = $"{folder}/*.tmp", ["HOME"] = $"{folder}/*.tmp" });
+
+			// Assert
+			_ = words.Select(word => word.Text).Should().Equal(expected.Select(word => word.Replace("{0}", folder, StringComparison.Ordinal)));
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a wildcard in a <c>NAME=value</c> word stays as typed while the command has no name yet, here at the
+	/// start and after a <c>|</c>, and expands once the word is an argument.
+	/// </summary>
+	/// <param name="line">The command line, run in a folder holding a file named <c>A=b</c>.</param>
+	/// <param name="expected">The words it should give.</param>
+	[Theory]
+	[InlineData("A=* B=* sampletool A=*", new[] { "A=*", "B=*", "sampletool", "A=b" })]
+	[InlineData("sampletool B=1 A=*", new[] { "sampletool", "B=1", "A=b" })]
+	[InlineData("true B=1 | C=2 A=* sampletool", new[] { "true", "B=1", "|", "C=2", "A=*", "sampletool" })]
+	public void Split_WithWildcardInAssignment_ExpandsOnlyArguments(string line, string[] expected)
+	{
+		// Arrange
+		var original = Directory.GetCurrentDirectory();
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		File.WriteAllText(Path.Combine(folder, "A=b"), string.Empty);
+		Directory.SetCurrentDirectory(folder);
+
+		try
+		{
+			// Act
+			var words = CommandLine.Split(line, new Dictionary<string, string>());
+
+			// Assert
+			_ = words.Select(word => word.Text).Should().Equal(expected);
+		}
+		finally
+		{
+			Directory.SetCurrentDirectory(original);
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that every file name a pattern gives keeps the pattern's position, and that without variables the
+	/// pattern isn't expanded at all.
+	/// </summary>
+	[Fact]
+	public void Split_WithWildcard_KeepsPatternPositionAndNeedsVariables()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var line = $"rm {folder}/*.tmp";
+
+		File.WriteAllText(Path.Combine(folder, "a.tmp"), string.Empty);
+		File.WriteAllText(Path.Combine(folder, "b.tmp"), string.Empty);
+
+		try
+		{
+			// Act
+			var expanded = CommandLine.Split(line, new Dictionary<string, string>());
+			var plain = CommandLine.Split(line);
+
+			// Assert
+			_ = expanded[1..].Should().Equal(
+				new Word($"{folder}/a.tmp", IsOperator: false, 3, line.Length),
+				new Word($"{folder}/b.tmp", IsOperator: false, 3, line.Length));
+			_ = plain.Select(word => word.Text).Should().Equal("rm", $"{folder}/*.tmp");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
 	}
 }

@@ -77,6 +77,12 @@ internal static class CommandLine
 	/// user's home folder. A quoted or escaped <c>~</c>, one in the middle of a word, and <c>~user</c> for a user that
 	/// doesn't exist all stay as typed, as in bash.
 	/// </para>
+	/// <para>
+	/// When <paramref name="variables" /> is given, a word with an unquoted <c>*</c>, <c>?</c> or <c>[...]</c> becomes
+	/// the file names it matches, sorted, each a word of its own, through <see cref="Glob.Expand" />. Wildcards from an
+	/// unquoted <c>$NAME</c> count too, as in bash. A quoted or escaped wildcard only matches itself, and a pattern that
+	/// matches nothing stays as typed, which is bash's default.
+	/// </para>
 	/// </remarks>
 	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null)
 	{
@@ -97,6 +103,10 @@ internal static class CommandLine
 		// Where the current word starts in the line, so digits typed right before a redirect can be told apart.
 		var wordStart = 0;
 
+		// The word again for Glob.Expand, with each quoted or escaped wildcard behind a backslash so it matches only
+		// itself.
+		var pattern = new StringBuilder();
+
 		for (var index = 0; index < line.Length; index++)
 		{
 			var character = line[index];
@@ -104,6 +114,7 @@ internal static class CommandLine
 			if (!hasWord)
 			{
 				wordStart = index;
+				_ = pattern.Clear();
 			}
 
 			if (escaped)
@@ -111,10 +122,10 @@ internal static class CommandLine
 				// Inside double quotes bash only escapes these; before anything else the backslash stays.
 				if (quote == '"' && character is not ('"' or '\\' or '$' or '`' or '\n'))
 				{
-					_ = word.Append('\\');
+					Append("\\", quoted: true);
 				}
 
-				_ = word.Append(character);
+				Append(line.AsSpan(index, 1), quoted: true);
 				escaped = false;
 			}
 			else
@@ -127,13 +138,13 @@ internal static class CommandLine
 
 						break;
 					case null or '"' when character == '$' && variables is not null && TryExpandVariable(line, index, variables, out var value, out var end):
-						_ = word.Append(value);
+						Append(value, quoted: quote is not null);
 						hasWord |= value.Length > 0;
 						index = end;
 
 						break;
 					case null when TryExpandTilde(line, index, word, hasWord, variables, out var home, out var tildeEnd):
-						_ = word.Append(home);
+						Append(home, quoted: true);
 						hasWord = true;
 						index = tildeEnd;
 
@@ -169,7 +180,7 @@ internal static class CommandLine
 							}
 							else
 							{
-								_ = word.Append(character);
+								Append(line.AsSpan(index, 1), quoted: quote is not null);
 
 								hasWord = true;
 							}
@@ -182,7 +193,7 @@ internal static class CommandLine
 
 		if (escaped)
 		{
-			_ = word.Append('\\');
+			Append("\\", quoted: true);
 		}
 
 		EndWord(line.Length);
@@ -200,14 +211,70 @@ internal static class CommandLine
 			return text;
 		}
 
-		// Adds the word read so far, if there is one, ending at end.
+		// Adds text to the word and to its pattern.
+		void Append(ReadOnlySpan<char> text, bool quoted)
+		{
+			_ = word.Append(text);
+			AppendPattern(pattern, text, quoted);
+		}
+
+		// Adds the word read so far, if there is one, ending at end, or the file names its wildcards match.
 		void EndWord(int end)
 		{
 			if (hasWord)
 			{
-				words.Add(new Word(TakeWord(), IsOperator: false, wordStart, end));
+				var text = TakeWord();
+
+				words.AddRange(ExpandWildcards(text, pattern, variables, words).Select(match => new Word(match, IsOperator: false, wordStart, end)));
 			}
 		}
+	}
+
+	/// <summary>
+	/// Adds <paramref name="text" /> to <paramref name="pattern" />, behind backslashes when it was quoted, so a quoted
+	/// <c>*</c> matches only a <c>*</c>.
+	/// </summary>
+	/// <param name="pattern">The word being built for <see cref="Glob.Expand" />.</param>
+	/// <param name="text">The characters to add.</param>
+	/// <param name="quoted">
+	/// <see langword="true" /> when the characters were quoted, escaped, or came from a quoted expansion or <c>~</c>.
+	/// </param>
+	private static void AppendPattern(StringBuilder pattern, ReadOnlySpan<char> text, bool quoted)
+	{
+		foreach (var character in text)
+		{
+			_ = quoted && character is '*' or '?' or '[' or ']' or '\\' ? pattern.Append('\\').Append(character) : pattern.Append(character);
+		}
+	}
+
+	/// <summary>
+	/// Gets the words that a finished word stands for once its wildcards are matched against file names.
+	/// </summary>
+	/// <param name="text">The word with its quotes removed.</param>
+	/// <param name="pattern">The word as a pattern for <see cref="Glob.Expand" />.</param>
+	/// <param name="variables">
+	/// The shell variables, or <see langword="null" /> when <see cref="Split" /> expands nothing, wildcards included.
+	/// </param>
+	/// <param name="words">The words before it, which tell whether it names a redirect's file or sets a variable.</param>
+	/// <returns>
+	/// The matching paths, or just <paramref name="text" /> when nothing matches, the word is a <c>NAME=value</c> in
+	/// front of the command, or it's a redirect's file that matches more than one path.
+	/// </returns>
+	/// <remarks>
+	/// POSIX expands no wildcards in the <c>NAME=value</c> words in front of a command, so <c>A=*</c> keeps its
+	/// <c>*</c>. Bash refuses a redirect to a pattern that matches more than one file with "ambiguous redirect".
+	/// Keeping the pattern as the file name at least never writes over the first match; add that error if the
+	/// message is missed.
+	/// </remarks>
+	private static string[] ExpandWildcards(string text, StringBuilder pattern, IReadOnlyDictionary<string, string>? variables, List<Word> words)
+	{
+		// Operators are never assignments, so the command has no name yet when the last other word is one, or none is.
+		var last = words.FindLastIndex(word => !DeclareCommand.IsAssignment(word.Text));
+		var expand = variables is not null && !(DeclareCommand.IsAssignment(text) && (last < 0 || words[last].IsOperator));
+		var matches = expand ? Glob.Expand(pattern.ToString()) : [];
+		var redirect = words is [.., { IsOperator: true, Text: var previous }] && previous.AsSpan().ContainsAny('<', '>');
+
+		return matches.Length == 0 || (redirect && matches.Length > 1) ? [text] : matches;
 	}
 
 	/// <summary>
