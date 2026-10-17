@@ -520,6 +520,26 @@ public sealed partial class ExternalProgramTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that <c>&gt;&amp;-</c> closes the program's output, so its writes there fail.
+	/// </summary>
+	[Fact]
+	public void Run_WithClosedOutput_ClosesItInProgram()
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "sampletool", executable: true, "#!/bin/sh\n{ echo out; } 2>/dev/null || echo closed >&2\n");
+		using var output = new MemoryStream();
+		using var error = new MemoryStream();
+		using var redirection = Open("sampletool >&-");
+
+		// Act
+		_ = ExternalProgram.Run("sampletool", [], output, error, redirection: redirection);
+
+		// Assert
+		_ = System.Text.Encoding.UTF8.GetString(output.ToArray()).Should().BeEmpty();
+		_ = System.Text.Encoding.UTF8.GetString(error.ToArray()).Should().Be("closed\n");
+	}
+
+	/// <summary>
 	/// Checks that <c>2&gt;&amp;1</c> into one stream copies the program's output and errors into it once each, in the
 	/// order they were written.
 	/// </summary>

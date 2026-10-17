@@ -213,6 +213,7 @@ internal static class CommandList
 		Cut(Sequence);
 		openQuote = quote;
 
+		// At the end there are no lines left, so this only marks the here-documents of the last line as unclosed.
 		_ = ReadBodies(line, line.Length, commands, lineStart, ref unclosed);
 
 		return commands;

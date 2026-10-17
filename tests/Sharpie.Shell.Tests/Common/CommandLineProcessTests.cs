@@ -543,6 +543,45 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks that <c>3&gt;&amp;1 1&gt;&amp;2 2&gt;&amp;3</c> swaps a program's output and errors when they're the
+	/// shell's own, which needs both read before either is replaced.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithSwappedStreams_SwapsShellOutputAndErrors()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("sh -c 'echo out; echo err >&2' 3>&1 1>&2 2>&3\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ err\n$ ");
+		_ = run.Error.Should().Be("out\n");
+	}
+
+	/// <summary>
+	/// Checks that a command of only a substitution and a redirect gives the substitution's status, as in bash.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithOnlySubstitutionAndRedirect_GivesItsStatus()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, folder, arguments: ["-c", "$(exit 3) > f; echo $?"]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("3\n");
+			_ = File.Exists(Path.Combine(folder, "f")).Should().BeTrue();
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that a background program's redirect still gets its output after the prompt comes back.
 	/// </summary>
 	[Fact]

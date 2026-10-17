@@ -401,6 +401,7 @@ public sealed class CommandLineTests
 	[InlineData("ls 1>&f", new[] { "ls" }, new[] { "1 &> f" })]
 	[InlineData("ls 2>&f", new[] { "ls" }, new[] { "2 >& f" })]
 	[InlineData("ls >&-", new[] { "ls" }, new[] { "1 >& -" })]
+	[InlineData("ls >& ''", new[] { "ls" }, new[] { "1 &> " })]
 	[InlineData("cat <&3", new[] { "cat" }, new[] { "0 <& 3" })]
 	[InlineData("cat 0<&-", new[] { "cat" }, new[] { "0 <& -" })]
 	[InlineData("cat <<< word", new[] { "cat" }, new[] { "0 <<< word" })]
@@ -601,6 +602,54 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
+	/// Checks that a variable in a here-document's body that isn't set is reported at the delimiter, and that with no
+	/// one to report to it just expands to nothing.
+	/// </summary>
+	[Fact]
+	public void Split_WithUnsetVariableInHereDocument_ReportsItAtDelimiter()
+	{
+		// Arrange
+		var reported = new List<Word>();
+		var variables = new Dictionary<string, string>();
+
+		// Act
+		var words = CommandLine.Split("cat <<EOF\na $SHARPIE_SAMPLE_UNSET b\nEOF", variables, reported.Add);
+		var unreported = CommandLine.Split("cat <<EOF\n$SHARPIE_SAMPLE_UNSET\nEOF", variables);
+
+		// Assert
+		_ = words[2].Text.Should().Be("a  b\n");
+		_ = reported.Should().Equal(new Word("SHARPIE_SAMPLE_UNSET", IsOperator: false, 6, 9));
+		_ = unreported[2].Text.Should().Be("\n");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.ExpandBody" /> with nothing to run substitutions keeps each one as typed,
+	/// variables inside included, while still expanding the variables around it.
+	/// </summary>
+	[Fact]
+	public void ExpandBody_WithoutSubstitute_KeepsSubstitutionsAsTyped()
+	{
+		// Act
+		var body = CommandLine.ExpandBody("a $(x $Y) `b $Y` $Y", new Dictionary<string, string> { ["Y"] = "v" });
+
+		// Assert
+		_ = body.Should().Be("a $(x $Y) `b $Y` v");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.ExpandBody" /> keeps a backslash at the very end of a body as it is.
+	/// </summary>
+	[Fact]
+	public void ExpandBody_WithTrailingBackslash_KeepsIt()
+	{
+		// Act
+		var body = CommandLine.ExpandBody(@"a\", new Dictionary<string, string>());
+
+		// Assert
+		_ = body.Should().Be(@"a\");
+	}
+
+	/// <summary>
 	/// Checks that several here-documents on one line take their bodies in order, and that the delimiter word keeps
 	/// its position in the first line.
 	/// </summary>
@@ -682,6 +731,7 @@ public sealed class CommandLineTests
 	[InlineData("a\nEOF\nrest", 6, true)]
 	[InlineData("a\nEOF", 5, true)]
 	[InlineData("EOF\n", 4, true)]
+	[InlineData("\nEOF", 4, true)]
 	[InlineData("a\nb", 3, false)]
 	[InlineData("a\nEOFx\n", 7, false)]
 	[InlineData("", 0, false)]

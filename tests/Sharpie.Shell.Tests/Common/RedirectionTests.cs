@@ -212,10 +212,14 @@ public sealed class RedirectionTests : IDisposable
 	{
 		// Act
 		using var created = Open("x > new", noClobber: true);
+		using var both = Open("x &> other", noClobber: true);
 		using var device = Open("x > /dev/null", noClobber: true);
 
 		// Assert
 		_ = created!.Targets[1].Opened.Should().NotBeNull();
+		_ = created.Targets[2].Should().Be(StreamTarget.Own(2));
+		_ = both!.Targets[2].Should().Be(both.Targets[1]);
+		_ = both.Targets[1].Opened!.Name.Should().EndWith("other");
 		_ = File.Exists("new").Should().BeTrue();
 		_ = device!.Targets[1].Opened!.Name.Should().Be("/dev/null");
 		_ = this.environment.Error.Should().BeEmpty();

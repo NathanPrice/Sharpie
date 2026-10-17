@@ -155,6 +155,7 @@ internal sealed class Redirection : IDisposable
 	/// <returns>
 	/// <see langword="false" /> for a device, a pipe or a socket, like <c>/dev/null</c>.
 	/// </returns>
+	// Stryker disable once all : each check only runs on its own OS, so a test run on one OS can't tell them apart.
 	private static bool IsRegularFile(FileStream file) =>
 		OperatingSystem.IsWindows() ? NativeMethods.IsDiskFile(file.SafeFileHandle) : NativeMethods.IsRegularFile(file.SafeFileHandle);
 
@@ -165,6 +166,7 @@ internal sealed class Redirection : IDisposable
 	/// <returns>
 	/// <c>NUL</c> for <see cref="NullDevice" /> on Windows; otherwise, <paramref name="path" />.
 	/// </returns>
+	// Stryker disable once all : NUL only exists on Windows, so a test run elsewhere can't see it.
 	private static string SystemPath(string path) => OperatingSystem.IsWindows() && path == NullDevice ? "NUL" : path;
 
 	/// <summary>
@@ -258,6 +260,7 @@ internal sealed class Redirection : IDisposable
 		{
 			return this.Keep(new FileStream(SystemPath(path), FileMode.CreateNew, FileAccess.Write, Shared));
 		}
+		// Stryker disable once all : on Unix /dev/null exists as a file, so only Windows needs the second check.
 		catch (IOException) when (File.Exists(path) || path == NullDevice)
 		{
 		}
@@ -286,6 +289,7 @@ internal sealed class Redirection : IDisposable
 	/// position to the end; a <see cref="Stream.Seek" /> would only move .NET's. Windows copies through .NET's position,
 	/// and seeks only a file that can seek, since <c>NUL</c> can't.
 	/// </remarks>
+	// Stryker disable all : each branch only runs on its own OS, so a test run on one OS can't tell them apart.
 	private static FileStream OpenAppend(string path)
 	{
 		if (!OperatingSystem.IsWindows())
@@ -303,6 +307,8 @@ internal sealed class Redirection : IDisposable
 		return file;
 	}
 
+	// Stryker restore all
+
 	/// <summary>
 	/// Puts a here-document's or here-string's text in a file the command can read like any other.
 	/// </summary>
@@ -318,6 +324,8 @@ internal sealed class Redirection : IDisposable
 	private static FileStream TextFile(string text)
 	{
 		var path = Path.GetTempFileName();
+
+		// Stryker disable once all : the share and delete-on-close flags only matter on Windows.
 		var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, Shared, 4096, OperatingSystem.IsWindows() ? FileOptions.DeleteOnClose : FileOptions.None);
 
 		if (!OperatingSystem.IsWindows())

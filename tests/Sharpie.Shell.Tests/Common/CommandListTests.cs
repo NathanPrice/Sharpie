@@ -341,6 +341,7 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("cat <<EOF\n\\$(date) \\`x\nEOF", new[] { ";", "cat <<EOF\n\\$(date) \\`x\nEOF" })]
 	[InlineData("cat <<EOF\nnow $(date) `x`\nEOF", new[] { ";", "cat <<EOF\nnow $(date) `x`\nEOF" })]
 	[InlineData("cat <<EOF\n$( ) `\nEOF\necho next", new[] { ";", "cat <<EOF\n$( ) `\nEOF", ";", "echo next" })]
+	[InlineData("cat <<EOF\nf(x)\nEOF", new[] { ";", "cat <<EOF\nf(x)\nEOF" })]
 	public void Split_WithHereDocument_AddsBodyToItsCommand(string line, string[] expected)
 	{
 		// Act
@@ -387,6 +388,7 @@ public sealed class CommandListTests : IDisposable
 	[Theory]
 	[InlineData("cat <<EOF", true)]
 	[InlineData("cat <<EOF\nhi", true)]
+	[InlineData("cat <<EOF\nprice $", true)]
 	[InlineData("cat <<EOF\nhi\nEOF", false)]
 	[InlineData("cat <<EOF\nhi\nEOFX", true)]
 	[InlineData("cat <<A <<B\nx\nA", true)]

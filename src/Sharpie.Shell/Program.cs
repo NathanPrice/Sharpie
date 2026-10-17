@@ -356,7 +356,6 @@ internal static class Program
 		// Draws the header and reads one edited line.
 		static string? ReadInteractive(LineEditor editor, TimeSpan took, bool blankLine) =>
 			ReadEdited(editor, PromptHeader.Build(Directory.GetCurrentDirectory(), took, Console.WindowWidth, blankLine), continuation: false);
-
 	}
 
 	/// <summary>
