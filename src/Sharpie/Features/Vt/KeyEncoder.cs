@@ -18,15 +18,23 @@ internal static class KeyEncoder
 	/// <param name="applicationCursorKeys">
 	/// <see langword="true" /> while the program asked for the application forms of the arrow keys.
 	/// </param>
+	/// <param name="disambiguateKeys">
+	/// <see langword="true" /> while the program turned on the kitty keyboard protocol's first flag, so keys that
+	/// legacy encoding sends alike, such as Enter and Shift+Enter, reach it as separate keys.
+	/// </param>
 	/// <returns>
 	/// The text to send, or <see langword="null" /> when the key only types text, which arrives as text input instead.
 	/// </returns>
 	/// <remarks>
 	/// Keys with modifiers use xterm's <c>1;m</c> form, where <c>m</c> is 1 plus 1 for Shift, 2 for Alt and 4 for
 	/// Ctrl. Alt with a key that types text sends ESC first, as xterm does with its meta key sending escape.
+	/// With <paramref name="disambiguateKeys" />, Escape, modified Enter, Tab and Backspace, and Ctrl or Alt with a
+	/// letter, digit or Space send the kitty form <c>ESC [ code ; m u</c> instead. Plain Enter, Tab and Backspace keep
+	/// their usual bytes, as the protocol asks, so a shell left with the flag on by a crashed program still runs
+	/// <c>reset</c>.
 	/// </remarks>
 	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "Avalonia's Key enum has a member for every key on every keyboard. Only the keys a terminal sends need an arm.")]
-	public static string? Encode(Key key, KeyModifiers modifiers, string? symbol, bool applicationCursorKeys)
+	public static string? Encode(Key key, KeyModifiers modifiers, string? symbol, bool applicationCursorKeys, bool disambiguateKeys)
 	{
 		var shift = (modifiers & KeyModifiers.Shift) != 0;
 		var alt = (modifiers & KeyModifiers.Alt) != 0;
@@ -47,6 +55,11 @@ internal static class KeyEncoder
 				: modifier > 1 ? $"\e[1;{modifier}{function.Letter}" : $"\eO{function.Letter}";
 		}
 
+		if (disambiguateKeys && KittyCode(key, modifier > 1, alt || control) is { } code)
+		{
+			return modifier > 1 ? $"\e[{code};{modifier}u" : $"\e[{code}u";
+		}
+
 		var escape = alt ? "\e" : string.Empty;
 
 		return key switch
@@ -60,6 +73,29 @@ internal static class KeyEncoder
 			_ => null,
 		};
 	}
+
+	/// <summary>
+	/// Gets the number the kitty keyboard protocol sends for a key that legacy encoding can't tell apart.
+	/// </summary>
+	/// <param name="key">The key.</param>
+	/// <param name="modified"><see langword="true" /> when any modifier is held.</param>
+	/// <param name="altOrControl"><see langword="true" /> when Alt or Ctrl is held.</param>
+	/// <returns>
+	/// The key's Unicode code point, lowercase for letters, or <see langword="null" /> when the key keeps its legacy
+	/// bytes.
+	/// </returns>
+	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "Avalonia's Key enum has a member for every key on every keyboard. Only the keys a terminal sends need an arm.")]
+	private static int? KittyCode(Key key, bool modified, bool altOrControl) => key switch
+	{
+		Key.Escape => 27,
+		Key.Enter when modified => 13,
+		Key.Tab when modified => 9,
+		Key.Back when modified => 127,
+		>= Key.A and <= Key.Z when altOrControl => 'a' + (key - Key.A),
+		>= Key.D0 and <= Key.D9 when altOrControl => '0' + (key - Key.D0),
+		Key.Space when altOrControl => ' ',
+		_ => null,
+	};
 
 	/// <summary>
 	/// Gets the letter that ends the sequence for a cursor key.

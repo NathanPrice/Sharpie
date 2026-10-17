@@ -299,6 +299,72 @@ public sealed class VtScreenTests
 	}
 
 	/// <summary>
+	/// Checks the kitty keyboard flags after programs push, pop and change them.
+	/// </summary>
+	/// <param name="sequences">What the programs send.</param>
+	/// <param name="expected">The flags in effect.</param>
+	[Theory]
+	[InlineData("", 0)]
+	[InlineData("\e[>1u", 1)]
+	[InlineData("\e[>5u", 1)]
+	[InlineData("\e[>u", 0)]
+	[InlineData("\e[>1u\e[<u", 0)]
+	[InlineData("\e[>1u\e[>0u", 0)]
+	[InlineData("\e[>1u\e[>0u\e[<u", 1)]
+	[InlineData("\e[>1u\e[>1u\e[<2u", 0)]
+	[InlineData("\e[<u", 0)]
+	[InlineData("\e[>1u\e[<5u", 0)]
+	[InlineData("\e[=1u", 1)]
+	[InlineData("\e[>1u\e[=1;3u", 0)]
+	[InlineData("\e[>0u\e[=1;2u", 1)]
+	[InlineData("\e[>1u\e[=0;1u", 0)]
+	[InlineData("\e[>1u\ec", 0)]
+	[InlineData("\e[?1049h\e[>1u\ec\e[?1049h", 0)]
+	[InlineData("\e[>1u\e[u", 1)]
+	public void Feed_KeyboardFlags_TracksStack(string sequences, int expected)
+	{
+		// Act
+		this.screen.Feed(sequences);
+
+		// Assert
+		_ = this.screen.KeyboardFlags.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that the main and alternate screens keep their own keyboard flags.
+	/// </summary>
+	[Fact]
+	public void Feed_KeyboardFlags_KeptApartPerScreen()
+	{
+		// Arrange
+		this.screen.Feed("\e[>1u\e[?1049h");
+
+		// Act
+		var alternate = this.screen.KeyboardFlags;
+		this.screen.Feed("\e[>1u\e[?1049l\e[<u");
+
+		// Assert
+		_ = alternate.Should().Be(0);
+		_ = this.screen.KeyboardFlags.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that pushing onto a full keyboard flag stack drops the oldest entry and keeps the newest.
+	/// </summary>
+	[Fact]
+	public void Feed_KeyboardFlagsPastLimit_DropsOldest()
+	{
+		// Arrange
+		this.screen.Feed("\e[>1u" + string.Concat(Enumerable.Repeat("\e[>0u", 15)));
+
+		// Act
+		this.screen.Feed("\e[>0u\e[<16u");
+
+		// Assert
+		_ = this.screen.KeyboardFlags.Should().Be(0);
+	}
+
+	/// <summary>
 	/// Checks the answers to the reports programs ask the terminal for.
 	/// </summary>
 	/// <param name="request">The request.</param>
@@ -308,6 +374,8 @@ public sealed class VtScreenTests
 	[InlineData("\e[5n", "\e[0n")]
 	[InlineData("\e[c", "\e[?62;22c")]
 	[InlineData("\e[>c", "\e[>1;10;0c")]
+	[InlineData("\e[?u", "\e[?0u")]
+	[InlineData("\e[>1u\e[?u", "\e[?1u")]
 	[InlineData("\e[18t", "\e[8;4;10t")]
 	[InlineData("\e]11;?\a", "\e]11;rgb:1515/1717/1c1c\e\\")]
 	public void Feed_Request_Replies(string request, string expected)

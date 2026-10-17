@@ -53,10 +53,60 @@ public sealed class EncoderTests
 	public void Encode_SpecialKey_SendsXtermBytes(Key key, KeyModifiers modifiers, bool application, string expected)
 	{
 		// Act
-		var sent = KeyEncoder.Encode(key, modifiers, null, application);
+		var sent = KeyEncoder.Encode(key, modifiers, null, application, disambiguateKeys: false);
 
 		// Assert
 		_ = sent.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks the bytes sent while the kitty keyboard protocol's first flag is on, and Shift+Enter while it's off.
+	/// </summary>
+	/// <param name="key">The key.</param>
+	/// <param name="modifiers">The modifiers held.</param>
+	/// <param name="disambiguate">Whether the program turned the flag on.</param>
+	/// <param name="expected">The bytes sent.</param>
+	[Theory]
+	[InlineData(Key.Enter, KeyModifiers.Shift, true, "\e[13;2u")]
+	[InlineData(Key.Enter, KeyModifiers.Control, true, "\e[13;5u")]
+	[InlineData(Key.Enter, KeyModifiers.Alt, true, "\e[13;3u")]
+	[InlineData(Key.Enter, KeyModifiers.None, true, "\r")]
+	[InlineData(Key.Enter, KeyModifiers.Shift, false, "\r")]
+	[InlineData(Key.Escape, KeyModifiers.None, true, "\e[27u")]
+	[InlineData(Key.Escape, KeyModifiers.Shift, true, "\e[27;2u")]
+	[InlineData(Key.Tab, KeyModifiers.Shift, true, "\e[9;2u")]
+	[InlineData(Key.Tab, KeyModifiers.None, true, "\t")]
+	[InlineData(Key.Back, KeyModifiers.Control, true, "\e[127;5u")]
+	[InlineData(Key.Back, KeyModifiers.None, true, "\x7F")]
+	[InlineData(Key.C, KeyModifiers.Control, true, "\e[99;5u")]
+	[InlineData(Key.Z, KeyModifiers.Control, true, "\e[122;5u")]
+	[InlineData(Key.A, KeyModifiers.Alt, true, "\e[97;3u")]
+	[InlineData(Key.D0, KeyModifiers.Control, true, "\e[48;5u")]
+	[InlineData(Key.D9, KeyModifiers.Alt, true, "\e[57;3u")]
+	[InlineData(Key.Space, KeyModifiers.Control, true, "\e[32;5u")]
+	[InlineData(Key.OemOpenBrackets, KeyModifiers.Control, true, "\e")]
+	[InlineData(Key.Up, KeyModifiers.None, true, "\e[A")]
+	[InlineData(Key.F1, KeyModifiers.Shift, true, "\e[1;2P")]
+	public void Encode_DisambiguateKeys_SendsKittyForm(Key key, KeyModifiers modifiers, bool disambiguate, string expected)
+	{
+		// Act
+		var sent = KeyEncoder.Encode(key, modifiers, null, applicationCursorKeys: false, disambiguate);
+
+		// Assert
+		_ = sent.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that a letter typed with no modifier is left to text input while the flag is on.
+	/// </summary>
+	[Fact]
+	public void Encode_DisambiguateKeysPlainLetter_LeftToTextInput()
+	{
+		// Act
+		var sent = KeyEncoder.Encode(Key.B, KeyModifiers.Shift, "B", applicationCursorKeys: false, disambiguateKeys: true);
+
+		// Assert
+		_ = sent.Should().BeNull();
 	}
 
 	/// <summary>
@@ -66,8 +116,8 @@ public sealed class EncoderTests
 	public void Encode_Letter_OnlyAltSendsEscape()
 	{
 		// Act
-		var alt = KeyEncoder.Encode(Key.B, KeyModifiers.Alt, "b", applicationCursorKeys: false);
-		var plain = KeyEncoder.Encode(Key.B, KeyModifiers.None, "b", applicationCursorKeys: false);
+		var alt = KeyEncoder.Encode(Key.B, KeyModifiers.Alt, "b", applicationCursorKeys: false, disambiguateKeys: false);
+		var plain = KeyEncoder.Encode(Key.B, KeyModifiers.None, "b", applicationCursorKeys: false, disambiguateKeys: false);
 
 		// Assert
 		_ = alt.Should().Be("\eb");

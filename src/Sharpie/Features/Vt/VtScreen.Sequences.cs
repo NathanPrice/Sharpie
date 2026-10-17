@@ -121,6 +121,14 @@ internal sealed partial class VtScreen
 		var first = parameters[0];
 		var count = Math.Max(1, first);
 
+		// Plain ESC [ u restores the cursor. With a marker it's the kitty keyboard protocol.
+		if (final == 'u' && marker != '\0')
+		{
+			this.SetKeyboardFlags(marker, parameters);
+
+			return;
+		}
+
 		if (marker == '?')
 		{
 			if (final is 'h' or 'l')
@@ -368,6 +376,8 @@ internal sealed partial class VtScreen
 		this.CursorVisible = true;
 		this.CursorShape = CursorShape.Bar;
 		this.ApplicationCursorKeys = false;
+		this.mainKeyboardFlags.Clear();
+		this.alternateKeyboardFlags.Clear();
 		this.BracketedPaste = false;
 		this.FocusEvents = false;
 		this.MouseTracking = MouseTracking.None;
@@ -440,6 +450,62 @@ internal sealed partial class VtScreen
 				break;
 			case 2004:
 				this.BracketedPaste = on;
+				break;
+			default:
+				break;
+		}
+	}
+
+	/// <summary>
+	/// Answers or changes the kitty keyboard protocol flags, which decide how <see cref="KeyEncoder" /> sends keys.
+	/// </summary>
+	/// <param name="marker">
+	/// <c>?</c> to report the flags, <c>&gt;</c> to push new ones, <c>&lt;</c> to pop some, or <c>=</c> to change the
+	/// ones in effect.
+	/// </param>
+	/// <param name="parameters">
+	/// The flags, or for <c>&lt;</c> how many entries to pop. For <c>=</c>, a second parameter of 1 sets the flags,
+	/// 2 adds them and 3 takes them away.
+	/// </param>
+	private void SetKeyboardFlags(char marker, ReadOnlySpan<int> parameters)
+	{
+		var stack = this.KeyboardFlagStack;
+		var flags = Math.Max(0, parameters[0]) & SupportedKeyboardFlags;
+
+		switch (marker)
+		{
+			case '?':
+				this.reply(string.Create(CultureInfo.InvariantCulture, $"\e[?{this.KeyboardFlags}u"));
+				break;
+			case '>':
+				if (stack.Count == KeyboardFlagLimit)
+				{
+					stack.RemoveAt(0);
+				}
+
+				stack.Add(flags);
+				break;
+			case '<':
+				var popped = Math.Min(stack.Count, Math.Max(1, parameters[0]));
+				stack.RemoveRange(stack.Count - popped, popped);
+				break;
+			case '=':
+				var changed = (parameters.Length > 1 ? parameters[1] : 1) switch
+				{
+					2 => this.KeyboardFlags | flags,
+					3 => this.KeyboardFlags & ~flags,
+					_ => flags,
+				};
+
+				if (stack.Count == 0)
+				{
+					stack.Add(changed);
+				}
+				else
+				{
+					stack[^1] = changed;
+				}
+
 				break;
 			default:
 				break;

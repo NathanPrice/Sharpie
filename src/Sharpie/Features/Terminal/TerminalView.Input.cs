@@ -111,7 +111,7 @@ internal sealed partial class TerminalView
 			return;
 		}
 
-		if (KeyEncoder.Encode(e.Key, e.KeyModifiers, e.KeySymbol, this.Screen.ApplicationCursorKeys) is { } sequence)
+		if (KeyEncoder.Encode(e.Key, e.KeyModifiers, e.KeySymbol, this.Screen.ApplicationCursorKeys, (this.Screen.KeyboardFlags & 1) != 0) is { } sequence)
 		{
 			this.textSent = (e.KeyModifiers & KeyModifiers.Alt) != 0;
 			this.SendText(sequence);
@@ -290,7 +290,7 @@ internal sealed partial class TerminalView
 			// alternateScroll does, and less or man scroll their page.
 			if (this.Screen.AlternateScreen)
 			{
-				var arrow = KeyEncoder.Encode(up ? Key.Up : Key.Down, KeyModifiers.None, null, this.Screen.ApplicationCursorKeys);
+				var arrow = KeyEncoder.Encode(up ? Key.Up : Key.Down, KeyModifiers.None, null, this.Screen.ApplicationCursorKeys, disambiguateKeys: false);
 
 				this.send(Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat(arrow, WheelRows))));
 			}

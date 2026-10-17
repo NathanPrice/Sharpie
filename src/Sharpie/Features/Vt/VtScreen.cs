@@ -96,10 +96,22 @@ internal sealed partial class VtScreen : IVtHandler
 	// cut down to the styles still in use instead of growing as long as the tab is open.
 	private const int InitialStyleLimit = 4096;
 
+	// A bound so a program that pushes keyboard flags without popping them can't grow the stack forever. The kitty
+	// keyboard protocol says to drop the oldest entry once the stack is full.
+	private const int KeyboardFlagLimit = 16;
+
+	// Only the first kitty keyboard flag, which sends keys like Shift+Enter apart from Enter, is supported. Masking
+	// with it keeps the query's answer to what Sharpie actually does.
+	private const int SupportedKeyboardFlags = 1;
+
 	private readonly VtParser parser;
 	private readonly Action<string> reply;
 	private readonly List<AnsiStyle> styles = [default];
 	private readonly Dictionary<AnsiStyle, int> styleIds = new() { [default] = 0 };
+
+	// The kitty keyboard protocol keeps one stack for each screen, so a full-screen program's flags end with it.
+	private readonly List<int> mainKeyboardFlags = [];
+	private readonly List<int> alternateKeyboardFlags = [];
 
 	private TerminalLine[] main;
 	private TerminalLine[] alternate;
@@ -225,6 +237,15 @@ internal sealed partial class VtScreen : IVtHandler
 	public bool ApplicationCursorKeys { get; private set; }
 
 	/// <summary>
+	/// Gets the kitty keyboard protocol flags the program asked for, with <c>ESC [ &gt; flags u</c> and the like.
+	/// </summary>
+	/// <value>
+	/// 1 while keys that legacy encoding sends alike, such as Enter and Shift+Enter, are sent as separate
+	/// <c>ESC [ code ; modifiers u</c> sequences; otherwise 0.
+	/// </value>
+	public int KeyboardFlags => this.KeyboardFlagStack is [.., var top] ? top : 0;
+
+	/// <summary>
 	/// Gets a value indicating whether pasted text is wrapped in <c>ESC [200~</c> and <c>ESC [201~</c>.
 	/// </summary>
 	/// <value>
@@ -319,6 +340,14 @@ internal sealed partial class VtScreen : IVtHandler
 	/// The alternate screen's rows while it shows; otherwise, the main screen's.
 	/// </value>
 	private TerminalLine[] Lines => this.AlternateScreen ? this.alternate : this.main;
+
+	/// <summary>
+	/// Gets the keyboard flag stack for the screen showing.
+	/// </summary>
+	/// <value>
+	/// The alternate screen's stack while it shows; otherwise, the main screen's. The last entry is in effect.
+	/// </value>
+	private List<int> KeyboardFlagStack => this.AlternateScreen ? this.alternateKeyboardFlags : this.mainKeyboardFlags;
 
 	/// <summary>
 	/// Reads the next chunk of program output.
