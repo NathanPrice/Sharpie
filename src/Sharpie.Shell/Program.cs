@@ -70,45 +70,19 @@ internal static class Program
 	internal const string RcFileName = ".sharpierc";
 
 	/// <summary>
-	/// Creates one instance of every builtin command.
+	/// Creates one instance of every builtin command, as <see cref="BuiltinCommands.Create" /> describes, whose lines
+	/// run through <see cref="RunLine" />.
 	/// </summary>
-	/// <param name="commands">
-	/// The dictionary the shell looks commands up in, which <see cref="TypeCommand" /> reads.
-	/// </param>
+	/// <param name="commands">The dictionary the shell looks commands up in.</param>
 	/// <returns>
 	/// The builtins, not yet added to <paramref name="commands" />.
 	/// </returns>
-	internal static ICommand[] CreateBuiltins(Dictionary<string, ICommand> commands)
-	{
-		var alias = new AliasCommand();
-		var declare = new DeclareCommand();
-
-		return
-		[
-			alias,
-			new EchoCommand(),
-			new ExitCommand(declare),
-			new PwdCommand(),
-			new CdCommand(),
-			new ClearCommand(),
-			new CompleteCommand(),
-			new JobsCommand(),
-			new FgCommand(),
-			new BgCommand(),
-			new HistoryCommand(),
-			declare,
-			new ExportCommand(declare),
-			new UnsetCommand(declare),
-			new SetCommand(declare, new ShellSettings()),
-			new ShiftCommand(declare),
-			new SourceCommand(".", declare, line => RunLine(commands, alias, declare, line)),
-			new SourceCommand("source", declare, line => RunLine(commands, alias, declare, line)),
-			new DmanCommand(),
-
-			// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
-			new TypeCommand(commands, alias.Aliases)
-		];
-	}
+	/// <remarks>
+	/// The <c>alias</c> and <c>declare</c> builtins are looked up when a line runs, by which time
+	/// <paramref name="commands" /> holds them.
+	/// </remarks>
+	internal static ICommand[] CreateBuiltins(Dictionary<string, ICommand> commands) =>
+		BuiltinCommands.Create(commands, line => RunLine(commands, (AliasCommand)commands["alias"], (DeclareCommand)commands["declare"], line));
 
 	/// <summary>
 	/// Registers the builtins, then runs the <c>-c</c> command or the script file, or else reads and runs one command
