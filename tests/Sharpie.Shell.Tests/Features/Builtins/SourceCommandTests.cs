@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
 
@@ -12,6 +13,7 @@ public sealed class SourceCommandTests : IDisposable
 {
 	private readonly ShellEnvironment environment = new();
 	private readonly List<string> ran = [];
+	private readonly DeclareCommand declare = new();
 	private readonly string folder;
 	private readonly SourceCommand sut;
 
@@ -22,7 +24,7 @@ public sealed class SourceCommandTests : IDisposable
 	public SourceCommandTests()
 	{
 		this.folder = this.environment.CreateFolder();
-		this.sut = new SourceCommand(".", line =>
+		this.sut = new SourceCommand(".", this.declare, line =>
 		{
 			this.ran.Add(line);
 
@@ -37,7 +39,7 @@ public sealed class SourceCommandTests : IDisposable
 	public void Name_WithSourceName_ReturnsIt()
 	{
 		// Act
-		var command = new SourceCommand("source", _ => 0);
+		var command = new SourceCommand("source", this.declare, _ => 0);
 
 		// Assert
 		_ = command.Name.Should().Be("source");
@@ -194,7 +196,7 @@ public sealed class SourceCommandTests : IDisposable
 		var runs = 0;
 		SourceCommand? command = null;
 
-		command = new SourceCommand(".", _ =>
+		command = new SourceCommand(".", this.declare, _ =>
 		{
 			runs++;
 
@@ -216,6 +218,59 @@ public sealed class SourceCommandTests : IDisposable
 		}.Render(color: false);
 
 		_ = this.environment.Error.Should().Be(error + error);
+	}
+
+	/// <summary>
+	/// Checks that words after the file are the positional parameters while it runs, and the caller's come back after.
+	/// </summary>
+	[Fact]
+	public void Run_WithArguments_SetsPositionalParametersWhileFileRuns()
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.folder, "args.rc", executable: false, "one\n");
+		IReadOnlyList<string>? during = null;
+		var command = new SourceCommand(".", this.declare, _ =>
+		{
+			during = this.declare.Positional;
+
+			return 0;
+		});
+
+		this.declare.SetPositional(["caller"]);
+
+		// Act
+		_ = command.Run([path, "a", "b"]);
+
+		// Assert
+		_ = during.Should().Equal("a", "b");
+		_ = this.declare.Positional.Should().Equal("caller");
+	}
+
+	/// <summary>
+	/// Checks that with no words after the file, it sees and can change the caller's positional parameters.
+	/// </summary>
+	[Fact]
+	public void Run_WithoutArguments_SharesCallersPositionalParameters()
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.folder, "noargs.rc", executable: false, "one\n");
+		IReadOnlyList<string>? during = null;
+		var command = new SourceCommand(".", this.declare, _ =>
+		{
+			during = this.declare.Positional;
+			this.declare.SetPositional(["changed"]);
+
+			return 0;
+		});
+
+		this.declare.SetPositional(["caller"]);
+
+		// Act
+		_ = command.Run([path]);
+
+		// Assert
+		_ = during.Should().Equal("caller");
+		_ = this.declare.Positional.Should().Equal("changed");
 	}
 
 	/// <summary>

@@ -49,7 +49,7 @@ and mouse reporting all work.
 - **Encrypted history.** History is saved encrypted, with the key kept in the operating system's secret store.
 
 **Builtins:** `alias`, `bg`, `cd`, `clear`, `complete`, `declare`, `dman`, `echo`, `exit`, `export`, `fg`,
-`history`, `jobs`, `pwd`, `source` / `.`, `type`, `unset`.
+`history`, `jobs`, `pwd`, `set`, `shift`, `source` / `.`, `type`, `unset`.
 
 ## Getting started
 
@@ -107,8 +107,8 @@ The shell, `Sharpie`, reads its arguments the way POSIX `sh` and bash do. Single
 
 | Option | Effect |
 | --- | --- |
-| `-c COMMAND` | Run `COMMAND` and exit with its status |
-| `FILE` | Run the commands in `FILE` and exit |
+| `-c COMMAND [NAME [ARG...]]` | Run `COMMAND` and exit with its status. `NAME` sets `$0` and the `ARG`s are `$1` onwards |
+| `FILE [ARG...]` | Run the commands in `FILE` and exit. The `ARG`s are `$1` onwards |
 | `-i` | Interactive, even when not attached to a terminal |
 | `-l`, `--login` | Login shell: load `/etc/profile` and `~/.profile` first. A leading `-` in the program name does the same |
 | `--norc` | Skip `~/.sharpierc` |
@@ -165,7 +165,6 @@ offline use. Inside the window the page opens in the built-in reader, in another
 >
 > - **Command substitution.** A line that uses `$(...)` or backticks is refused with status 2 rather than run with
 >   the wrong arguments.
-> - **`$0` and positional parameters.** Extra words after `-c COMMAND` or a script file are ignored.
 > - **Builtins in pipelines of three or more stages.** Those stages only run programs found on `PATH`.
 > - **Redirects on a pipeline.** `>` and `2>` work on single commands only.
 

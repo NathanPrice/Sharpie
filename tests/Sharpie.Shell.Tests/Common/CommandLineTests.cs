@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Common;
 
@@ -77,7 +78,7 @@ public sealed class CommandLineTests
 	[InlineData(@"echo \$A", new[] { "echo", "$A" })]
 	[InlineData("echo $MISSING z", new[] { "echo", "z" })]
 	[InlineData("echo \"$MISSING\"", new[] { "echo", "" })]
-	[InlineData("echo $ $1", new[] { "echo", "$", "$1" })]
+	[InlineData("echo $ $1", new[] { "echo", "$" })]
 	[InlineData("echo ${A}end", new[] { "echo", "oneend" })]
 	[InlineData("echo ${A}and${B}", new[] { "echo", "oneandtwo" })]
 	[InlineData("echo stock_${A}_id", new[] { "echo", "stock_one_id" })]
@@ -86,8 +87,9 @@ public sealed class CommandLineTests
 	[InlineData("echo ${MISSING} z", new[] { "echo", "z" })]
 	[InlineData("echo ${A", new[] { "echo", "${A" })]
 	[InlineData("echo a$", new[] { "echo", "a$" })]
-	[InlineData("echo a$1", new[] { "echo", "a$1" })]
-	[InlineData("echo _$1", new[] { "echo", "_$1" })]
+	[InlineData("echo a$1", new[] { "echo", "a" })]
+	[InlineData("echo _$1", new[] { "echo", "_" })]
+	[InlineData("echo $-", new[] { "echo", "$-" })]
 	[InlineData("echo {$A}", new[] { "echo", "{one}" })]
 	[InlineData("echo }${A}", new[] { "echo", "}one" })]
 	[InlineData("echo $Ab", new[] { "echo" })]
@@ -101,6 +103,90 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>$0</c> to <c>$9</c>, <c>${10}</c> and <c>$#</c> expand to the positional parameters, and that
+	/// <c>$@</c> and <c>$*</c> give one word per parameter, joined to the text that touches them, as bash does.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="parameters">The positional parameters.</param>
+	/// <param name="expected">The words the line should produce.</param>
+	[Theory]
+	[InlineData("echo $0 $1 $2 $#", new[] { "a", "b" }, new[] { "echo", "name", "a", "b", "2" })]
+	[InlineData("echo $10 ${10}", new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "ten" }, new[] { "echo", "10", "ten" })]
+	[InlineData("echo \"$1\" $3", new[] { "a b" }, new[] { "echo", "a b" })]
+	[InlineData("echo $# $#x", new string[0], new[] { "echo", "0", "0x" })]
+	[InlineData("echo $@", new[] { "a", "b c" }, new[] { "echo", "a", "b c" })]
+	[InlineData("echo ${@} ${*}", new[] { "a", "b" }, new[] { "echo", "a", "b", "a", "b" })]
+	[InlineData("echo \"$@\"", new[] { "a", "", "b" }, new[] { "echo", "a", "", "b" })]
+	[InlineData("echo $@", new[] { "a", "", "b" }, new[] { "echo", "a", "b" })]
+	[InlineData("echo \"x$@y\"", new[] { "a", "b" }, new[] { "echo", "xa", "by" })]
+	[InlineData("echo x$@y", new[] { "a" }, new[] { "echo", "xay" })]
+	[InlineData("echo \"$*\"", new[] { "a", "b" }, new[] { "echo", "a b" })]
+	[InlineData("echo $*", new[] { "a", "b" }, new[] { "echo", "a", "b" })]
+	[InlineData("echo \"$@\" end", new string[0], new[] { "echo", "end" })]
+	[InlineData("echo \"x$@y\"", new string[0], new[] { "echo", "xy" })]
+	[InlineData("echo \"$@\"y", new string[0], new[] { "echo", "y" })]
+	[InlineData("echo \"x$@\"", new string[0], new[] { "echo", "x" })]
+	[InlineData("echo \"$*\"", new string[0], new[] { "echo", "" })]
+	[InlineData("echo '$@' \\$@ ${@", new[] { "a" }, new[] { "echo", "$@", "$@", "${@" })]
+	[InlineData("echo \"$@\" | wc", new[] { "a", "b" }, new[] { "echo", "a", "b", "|", "wc" })]
+	public void Split_WithPositionalParameters_ExpandsThem(string line, string[] parameters, string[] expected)
+	{
+		// Arrange
+		var declare = new DeclareCommand();
+
+		declare.Set("0", "name");
+		declare.SetPositional(parameters);
+
+		// Act
+		var words = CommandLine.Split(line, declare.Variables);
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that the words <c>$@</c> gives all point at the expansion, so an error can show where they came from.
+	/// </summary>
+	[Fact]
+	public void Split_WithParameterList_PointsEachWordAtIt()
+	{
+		// Arrange
+		var declare = new DeclareCommand();
+
+		declare.SetPositional(["a", "b"]);
+
+		// Act
+		var words = CommandLine.Split("echo x$@", declare.Variables);
+
+		// Assert
+		_ = words.Should().Equal(new Word("echo", false, 0, 4), new Word("xa", false, 5, 8), new Word("b", false, 5, 8));
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.QuoteIfNeeded" /> leaves plain words alone and quotes the rest the way bash's
+	/// <c>set</c> and <c>set -x</c> do.
+	/// </summary>
+	/// <param name="text">The text to quote.</param>
+	/// <param name="expected">The text as it should be written.</param>
+	[Theory]
+	[InlineData("plain", "plain")]
+	[InlineData("a=b:c,d@e%f+g~h/i.j-k_0", "a=b:c,d@e%f+g~h/i.j-k_0")]
+	[InlineData("", "''")]
+	[InlineData("a b", "'a b'")]
+	[InlineData("it's", @"'it'\''s'")]
+	[InlineData("~", "'~'")]
+	[InlineData("$x", "'$x'")]
+	[InlineData("*", "'*'")]
+	public void QuoteIfNeeded_WithText_QuotesOnlyWhenNeeded(string text, string expected)
+	{
+		// Act
+		var quoted = CommandLine.QuoteIfNeeded(text);
+
+		// Assert
+		_ = quoted.Should().Be(expected);
 	}
 
 	/// <summary>

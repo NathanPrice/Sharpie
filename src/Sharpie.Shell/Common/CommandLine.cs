@@ -33,6 +33,12 @@ internal static class CommandLine
 	private static readonly SearchValues<char> OperatorStarts = SearchValues.Create("|&;<>()");
 
 	/// <summary>
+	/// The characters <see cref="QuoteIfNeeded" /> leaves unquoted, the ones bash's own quoting leaves alone.
+	/// </summary>
+	private static readonly SearchValues<char> PlainCharacters =
+		SearchValues.Create("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-./:,+=@%~");
+
+	/// <summary>
 	/// Splits <paramref name="line" /> into words on spaces and tabs and around operators, keeping everything inside
 	/// single or double quotes literally.
 	/// </summary>
@@ -65,10 +71,17 @@ internal static class CommandLine
 	/// <para>
 	/// Outside single quotes, <c>$NAME</c> is replaced by the shell variable's value, or the environment variable's when
 	/// no shell variable has that name, and a name set in neither gives nothing. An
-	/// unquoted <c>$NAME</c> that comes out empty adds no argument, like bash. A <c>$</c> not followed by a letter or
-	/// underscore stays as typed. <c>${NAME}</c> marks where the name ends, so <c>${A}b</c> expands <c>A</c> and keeps
+	/// unquoted <c>$NAME</c> that comes out empty adds no argument, like bash. A <c>$</c> followed by none of the forms
+	/// below stays as typed. <c>${NAME}</c> marks where the name ends, so <c>${A}b</c> expands <c>A</c> and keeps
 	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. <c>$?</c> is the last command's exit status. Values
 	/// aren't split on spaces.
+	/// </para>
+	/// <para>
+	/// <c>$1</c> to <c>$9</c> and <c>${10}</c> onwards are the positional parameters, <c>$#</c> their count and
+	/// <c>$0</c> the shell or script name. <c>$@</c> and <c>$*</c> give one word per parameter, with the text touching
+	/// them joined to the first and last, so <c>"a$@b"</c> with <c>1</c> and <c>2</c> gives <c>a1</c> and <c>2b</c>.
+	/// <c>"$*"</c> gives one word with the parameters separated by spaces. <c>"$@"</c> with no parameters gives no word
+	/// at all, as in bash.
 	/// </para>
 	/// <para>
 	/// When <paramref name="variables" /> is given, an unquoted <c>~</c> at the start of a word becomes the home
@@ -119,8 +132,7 @@ internal static class CommandLine
 
 			if (escaped)
 			{
-				// Inside double quotes bash only escapes these; before anything else the backslash stays.
-				if (quote == '"' && character is not ('"' or '\\' or '$' or '`' or '\n'))
+				if (KeepsBackslash(quote, character))
 				{
 					Append("\\", quoted: true);
 				}
@@ -137,9 +149,8 @@ internal static class CommandLine
 						hasWord = true;
 
 						break;
-					case null or '"' when character == '$' && variables is not null && TryExpandVariable(line, index, variables, out var value, out var end):
-						Append(value, quoted: quote is not null);
-						hasWord |= value.Length > 0;
+					case null or '"' when TryExpand(line, index, variables, quote is not null, out var parts, out var end):
+						AppendParts(parts, quoted: quote is not null, end);
 						index = end;
 
 						break;
@@ -167,7 +178,8 @@ internal static class CommandLine
 							}
 							else if (quote is null && OperatorAt(line, index) is { } typed)
 							{
-								var stream = hasWord && IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
+								// With no word yet the span is empty, since wordStart is then this very index.
+								var stream = IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
 								var start = stream.Length > 0 ? wordStart : index;
 
 								EndWord(index);
@@ -218,6 +230,26 @@ internal static class CommandLine
 			AppendPattern(pattern, text, quoted);
 		}
 
+		// Adds what a $ expansion gave, each part as a word of its own, the first joined to the text before it and the
+		// last to the text after it. An unquoted empty part adds no word, and a quoted one adds an empty word.
+		void AppendParts(string[] parts, bool quoted, int end)
+		{
+			for (var part = 0; part < parts.Length; part++)
+			{
+				if (part > 0)
+				{
+					EndWord(end + 1);
+					_ = pattern.Clear();
+				}
+
+				Append(parts[part], quoted);
+				hasWord |= quoted || parts[part].Length > 0;
+			}
+
+			// "$@" with no parameters is no word at all, not an empty one, unless more text touches it.
+			hasWord &= parts.Length > 0 || word.Length > 0;
+		}
+
 		// Adds the word read so far, if there is one, ending at end, or the file names its wildcards match.
 		void EndWord(int end)
 		{
@@ -229,6 +261,17 @@ internal static class CommandLine
 			}
 		}
 	}
+
+	/// <summary>
+	/// Checks whether an escaping backslash stays in the word along with the character after it.
+	/// </summary>
+	/// <param name="quote">The quote character that's open, or <see langword="null" /> outside quotes.</param>
+	/// <param name="character">The character after the backslash.</param>
+	/// <returns>
+	/// <see langword="true" /> inside double quotes before any character but <c>"</c>, <c>\</c>, <c>$</c>, <c>`</c> and
+	/// a newline, the only ones bash escapes there.
+	/// </returns>
+	private static bool KeepsBackslash(char? quote, char character) => quote == '"' && character is not ('"' or '\\' or '$' or '`' or '\n');
 
 	/// <summary>
 	/// Adds <paramref name="text" /> to <paramref name="pattern" />, behind backslashes when it was quoted, so a quoted
@@ -323,7 +366,73 @@ internal static class CommandLine
 		typed.Length > 0 && typedOperator.ArgumentNotNull()[0] is '<' or '>' && !typed.ContainsAnyExceptInRange('0', '9');
 
 	/// <summary>
-	/// Reads the <c>$NAME</c>, <c>${NAME}</c> or <c>$?</c> that starts at the <c>$</c> at <paramref name="index" />.
+	/// Reads the expansion, if any, that starts at <paramref name="index" />.
+	/// </summary>
+	/// <param name="line">The command line being split.</param>
+	/// <param name="index">The position to look at, which expands only when it holds a <c>$</c>.</param>
+	/// <param name="variables">
+	/// The shell variables, positional parameters included, or <see langword="null" /> to leave every <c>$</c> as typed.
+	/// </param>
+	/// <param name="quoted"><see langword="true" /> inside double quotes, where <c>$*</c> joins its parameters.</param>
+	/// <param name="parts">
+	/// The words the expansion gives: one for a variable, one per parameter for <c>$@</c> and <c>$*</c>, and one for
+	/// <c>"$*"</c>.
+	/// </param>
+	/// <param name="end">The position of the last character the expansion used.</param>
+	/// <returns>
+	/// <see langword="false" /> when no form follows the <c>$</c>, so it stays as typed.
+	/// </returns>
+	private static bool TryExpand(string line, int index, IReadOnlyDictionary<string, string>? variables, bool quoted, out string[] parts, out int end)
+	{
+		parts = [];
+		end = index;
+
+		if (line[index] != '$' || variables is null)
+		{
+			return false;
+		}
+
+		if (TryReadParameterList(line, index, out var star, out end))
+		{
+			var parameters = DeclareCommand.ReadPositional(variables);
+
+			parts = star && quoted ? [string.Join(' ', parameters)] : [.. parameters];
+
+			return true;
+		}
+
+		var found = TryExpandVariable(line, index, variables, out var value, out end);
+
+		parts = [value];
+
+		return found;
+	}
+
+	/// <summary>
+	/// Reads the <c>$@</c>, <c>$*</c>, <c>${@}</c> or <c>${*}</c> that starts at the <c>$</c> at
+	/// <paramref name="index" />, which stands for all the positional parameters.
+	/// </summary>
+	/// <param name="line">The command line being split.</param>
+	/// <param name="index">The position of the <c>$</c>.</param>
+	/// <param name="star"><see langword="true" /> for <c>*</c>, which joins the parameters inside double quotes.</param>
+	/// <param name="end">The position of the last character the expansion used.</param>
+	/// <returns>
+	/// <see langword="false" /> when none of the four forms starts there.
+	/// </returns>
+	private static bool TryReadParameterList(string line, int index, out bool star, out int end)
+	{
+		var braced = index + 1 < line.Length && line[index + 1] == '{';
+		var at = index + (braced ? 2 : 1);
+
+		star = at < line.Length && line[at] == '*';
+		end = braced ? at + 1 : at;
+
+		return at < line.Length && line[at] is '@' or '*' && (!braced || (end < line.Length && line[end] == '}'));
+	}
+
+	/// <summary>
+	/// Reads the <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c>, <c>$#</c> or <c>$0</c> to <c>$9</c> that starts at the
+	/// <c>$</c> at <paramref name="index" />.
 	/// </summary>
 	/// <param name="line">The command line being split.</param>
 	/// <param name="index">The position of the <c>$</c>.</param>
@@ -337,9 +446,10 @@ internal static class CommandLine
 	/// </returns>
 	private static bool TryExpandVariable(string line, int index, IReadOnlyDictionary<string, string> variables, out string value, out int end)
 	{
-		if (index + 1 < line.Length && line[index + 1] == '?')
+		// Only one digit counts, so $10 is $1 followed by 0, as in POSIX. ${10} goes through the braces below.
+		if (index + 1 < line.Length && (line[index + 1] is '?' or '#' || char.IsAsciiDigit(line[index + 1])))
 		{
-			value = Lookup(variables, "?");
+			value = Lookup(variables, line[index + 1].ToString());
 			end = index + 1;
 
 			return true;
@@ -459,6 +569,18 @@ internal static class CommandLine
 	/// The text in single quotes, with each <c>'</c> inside written as <c>'\''</c>.
 	/// </returns>
 	internal static string Quote(string text) => $"'{text.ArgumentNotNull().Replace("'", @"'\''", StringComparison.Ordinal)}'";
+
+	/// <summary>
+	/// Quotes <paramref name="text" /> through <see cref="Quote" /> only when a shell would read it differently
+	/// unquoted, the way bash writes values in <c>set</c> and <c>set -x</c> output.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	/// <returns>
+	/// The text as is when it's made only of letters, digits and <c>_-./:,+=@%~</c> and doesn't start with <c>~</c>.
+	/// Otherwise, an empty text included, the quoted text.
+	/// </returns>
+	internal static string QuoteIfNeeded(string text) =>
+		text.ArgumentNotNull().Length > 0 && !text.AsSpan().ContainsAnyExcept(PlainCharacters) && text[0] != '~' ? text : Quote(text);
 
 	/// <summary>
 	/// Gets the value of the variable <paramref name="name" />.

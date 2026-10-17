@@ -12,7 +12,11 @@ namespace Sharpie.Shell.Common;
 /// <param name="NoRc"><see langword="true" /> when <c>--norc</c> asked to skip <c>~/.sharpierc</c>.</param>
 /// <param name="Command">The command string after <c>-c</c>, or <see langword="null" /> without <c>-c</c>.</param>
 /// <param name="ScriptFile">The file of commands to run, or <see langword="null" /> when there's none.</param>
-internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, string? Command, string? ScriptFile)
+/// <param name="Arguments">
+/// The words after the command or script file. With <c>-c</c> the first sets <c>$0</c> and the rest are the positional
+/// parameters; with a script file they're all positional parameters.
+/// </param>
+internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, string? Command, string? ScriptFile, IReadOnlyList<string> Arguments)
 {
 	/// <summary>
 	/// Reads the options the way POSIX <c>sh</c> and bash do.
@@ -29,8 +33,7 @@ internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, str
 	/// <remarks>
 	/// Single-letter options can be joined, so <c>-lc</c> is <c>-l -c</c>, as login tools and editors pass them.
 	/// <c>--</c> or a lone <c>-</c> ends the options. The first word after them is the command with <c>-c</c> and the
-	/// script file without it. Later words would set <c>$0</c> and the positional parameters, which Sharpie doesn't
-	/// have, so they're ignored.
+	/// script file without it. The words after that go into <see cref="Arguments" />.
 	/// </remarks>
 	public static ShellOptions? Parse(string? programName, IReadOnlyList<string> args, out string error)
 	{
@@ -109,7 +112,7 @@ internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, str
 			return null;
 		}
 
-		return new ShellOptions(login, interactive, noRc, command ? operand : null, command ? null : operand);
+		return new ShellOptions(login, interactive, noRc, command ? operand : null, command ? null : operand, [.. args.Skip(index + 1)]);
 	}
 
 	/// <summary>

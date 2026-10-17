@@ -20,8 +20,10 @@ internal partial class DeclareCommand : ICommand
 	/// </summary>
 	/// <remarks>
 	/// Kept on the command itself because the shell creates one <see cref="DeclareCommand" /> for the whole session.
+	/// The positional parameters live here too, under <c>1</c>, <c>2</c> and so on, with their count under <c>#</c>, so
+	/// <c>$1</c>, <c>${10}</c> and <c>$#</c> expand like any other variable.
 	/// </remarks>
-	private readonly Dictionary<string, string> variables = [];
+	private readonly Dictionary<string, string> variables = new() { ["#"] = "0" };
 
 	/// <summary>
 	/// Gets the shell variables set so far, keyed by name.
@@ -42,6 +44,14 @@ internal partial class DeclareCommand : ICommand
 		get => int.TryParse(this.variables.GetValueOrDefault("?"), CultureInfo.InvariantCulture, out var status) ? status : 0;
 		set => this.Set("?", value.ToString(CultureInfo.InvariantCulture));
 	}
+
+	/// <summary>
+	/// Gets the positional parameters, <c>$1</c> onwards.
+	/// </summary>
+	/// <value>
+	/// The parameters in order, empty when there are none.
+	/// </value>
+	public IReadOnlyList<string> Positional => ReadPositional(this.variables);
 
 	/// <inheritdoc />
 	public string Name => "declare";
@@ -137,6 +147,47 @@ internal partial class DeclareCommand : ICommand
 		{
 			Environment.SetEnvironmentVariable(name, value);
 		}
+	}
+
+	/// <summary>
+	/// Replaces the positional parameters, as <c>set --</c> does.
+	/// </summary>
+	/// <param name="values">The new parameters, which become <c>$1</c> onwards.</param>
+	/// <remarks>
+	/// Written straight into the variables and never the environment, since no program could read a variable named
+	/// <c>1</c> or <c>#</c>.
+	/// </remarks>
+	public void SetPositional(IReadOnlyList<string> values)
+	{
+		_ = values.ArgumentNotNull();
+
+		for (var number = values.Count + 1; number <= this.Positional.Count; number++)
+		{
+			_ = this.variables.Remove(number.ToString(CultureInfo.InvariantCulture));
+		}
+
+		for (var index = 0; index < values.Count; index++)
+		{
+			this.variables[(index + 1).ToString(CultureInfo.InvariantCulture)] = values[index];
+		}
+
+		this.variables["#"] = values.Count.ToString(CultureInfo.InvariantCulture);
+	}
+
+	/// <summary>
+	/// Reads the positional parameters out of a set of shell variables.
+	/// </summary>
+	/// <param name="variables">The shell variables, which hold the count under <c>#</c>.</param>
+	/// <returns>
+	/// <c>$1</c> onwards, in order, or none when <c>#</c> is missing.
+	/// </returns>
+	public static IReadOnlyList<string> ReadPositional(IReadOnlyDictionary<string, string> variables)
+	{
+		_ = variables.ArgumentNotNull();
+
+		var count = int.TryParse(variables.GetValueOrDefault("#"), CultureInfo.InvariantCulture, out var number) ? number : 0;
+
+		return [.. Enumerable.Range(1, count).Select(index => variables.GetValueOrDefault(index.ToString(CultureInfo.InvariantCulture), string.Empty))];
 	}
 
 	/// <summary>

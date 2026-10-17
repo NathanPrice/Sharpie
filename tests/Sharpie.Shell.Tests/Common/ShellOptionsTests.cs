@@ -43,8 +43,29 @@ public sealed class ShellOptionsTests
 		var options = ShellOptions.Parse(programName, args, out var error);
 
 		// Assert
-		_ = options.Should().Be(new ShellOptions(login, interactive, noRc, command, scriptFile));
+		_ = options.Should().BeEquivalentTo(new ShellOptions(login, interactive, noRc, command, scriptFile, []), config => config.Excluding(parsed => parsed.Arguments));
 		_ = error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that the words after the command or script file are kept, options among them, for <c>$0</c> and the
+	/// positional parameters.
+	/// </summary>
+	/// <param name="args">The arguments.</param>
+	/// <param name="expected">The words that should be kept.</param>
+	[Theory]
+	[InlineData(new[] { "-c", "ls" }, new string[0])]
+	[InlineData(new[] { "-c", "ls", "name", "one", "-x" }, new[] { "name", "one", "-x" })]
+	[InlineData(new[] { "script.sh", "-c", "two" }, new[] { "-c", "two" })]
+	[InlineData(new[] { "--", "script.sh", "a" }, new[] { "a" })]
+	[InlineData(new string[0], new string[0])]
+	public void Parse_WithWordsAfterOperand_KeepsThemAsArguments(string[] args, string[] expected)
+	{
+		// Act
+		var options = ShellOptions.Parse("Sharpie", args, out _);
+
+		// Assert
+		_ = options!.Arguments.Should().Equal(expected);
 	}
 
 	/// <summary>
@@ -86,7 +107,7 @@ public sealed class ShellOptionsTests
 	public void IsInteractive_WithOptions_FollowsPosix(bool interactiveOption, string? command, string? scriptFile, bool terminal, bool expected)
 	{
 		// Arrange
-		var options = new ShellOptions(false, interactiveOption, false, command, scriptFile);
+		var options = new ShellOptions(false, interactiveOption, false, command, scriptFile, []);
 
 		// Act
 		var interactive = options.IsInteractive(terminal);

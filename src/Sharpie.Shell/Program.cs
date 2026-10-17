@@ -99,8 +99,10 @@ internal static class Program
 			declare,
 			new ExportCommand(declare),
 			new UnsetCommand(declare),
-			new SourceCommand(".", line => RunLine(commands, alias, declare, line)),
-			new SourceCommand("source", line => RunLine(commands, alias, declare, line)),
+			new SetCommand(declare),
+			new ShiftCommand(declare),
+			new SourceCommand(".", declare, line => RunLine(commands, alias, declare, line)),
+			new SourceCommand("source", declare, line => RunLine(commands, alias, declare, line)),
 			new DmanCommand(),
 
 			// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
@@ -179,6 +181,20 @@ internal static class Program
 		var aliases = (AliasCommand)commands["alias"];
 		var interactive = options.IsInteractive(terminal);
 
+		// -c takes $0 from the first word after the command, as sh does. The script file's arguments become its
+		// positional parameters through the . builtin below.
+		declare.Set("0", options switch
+		{
+			{ Command: not null, Arguments: [var name, ..] } => name,
+			{ ScriptFile: { } script } => script,
+			_ => NativeMethods.ProgramName() ?? "Sharpie",
+		});
+
+		if (options is { Command: not null, Arguments.Count: > 1 })
+		{
+			declare.SetPositional([.. options.Arguments.Skip(1)]);
+		}
+
 		if (options.Login)
 		{
 			ShellImport.RunProfile(Environment.ProcessPath!, aliases, commands.Keys);
@@ -195,7 +211,7 @@ internal static class Program
 
 			return options.Command is not null
 				? RunLine(commands, aliases, declare, options.Command)
-				: commands["."].Run([options.ScriptFile!]);
+				: commands["."].Run([options.ScriptFile!, .. options.Arguments]);
 		}
 
 		return RunPrompts(commands, declare, aliases, terminal, interactive && !options.NoRc);

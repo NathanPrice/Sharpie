@@ -209,4 +209,61 @@ public sealed class DeclareCommandTests : IDisposable
 		_ = bad.Should().Be(1);
 		_ = this.sut.Variables.Should().Contain("b", "3");
 	}
+
+	/// <summary>
+	/// Checks that there are no positional parameters at first, and <c>$#</c> is already 0.
+	/// </summary>
+	[Fact]
+	public void Positional_WhenNew_IsEmptyWithCountZero()
+	{
+		// Assert
+		_ = this.sut.Positional.Should().BeEmpty();
+		_ = this.sut.Variables.Should().Contain("#", "0");
+	}
+
+	/// <summary>
+	/// Checks that setting fewer parameters than before drops the old ones past the new count.
+	/// </summary>
+	[Fact]
+	public void SetPositional_WithFewerValues_DropsTheOldOnes()
+	{
+		// Arrange
+		this.sut.SetPositional(["a", "b", "c"]);
+
+		// Act
+		this.sut.SetPositional(["x"]);
+
+		// Assert
+		_ = this.sut.Positional.Should().Equal("x");
+		_ = this.sut.Variables.Should().Contain("1", "x").And.Contain("#", "1").And.NotContainKeys("2", "3");
+	}
+
+	/// <summary>
+	/// Checks that positional parameters stay out of the environment.
+	/// </summary>
+	[Fact]
+	public void SetPositional_WithValues_LeavesEnvironmentAlone()
+	{
+		// Act
+		this.sut.SetPositional(["a"]);
+
+		// Assert
+		_ = Environment.GetEnvironmentVariable("1").Should().BeNull();
+		_ = Environment.GetEnvironmentVariable("#").Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that a missing count or a count past the stored parameters still reads back in order.
+	/// </summary>
+	[Fact]
+	public void ReadPositional_WithMissingCountOrValues_FillsTheGaps()
+	{
+		// Act
+		var none = DeclareCommand.ReadPositional(new Dictionary<string, string> { ["1"] = "a" });
+		var gaps = DeclareCommand.ReadPositional(new Dictionary<string, string> { ["#"] = "2", ["2"] = "b" });
+
+		// Assert
+		_ = none.Should().BeEmpty();
+		_ = gaps.Should().Equal("", "b");
+	}
 }

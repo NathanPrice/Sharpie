@@ -1,5 +1,6 @@
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Features.Builtins;
 
@@ -9,12 +10,14 @@ namespace Sharpie.Shell.Features.Builtins;
 /// <param name="name">
 /// The name the command is typed as: <c>.</c>, the POSIX name, or <c>source</c>, the one bash and zsh add.
 /// </param>
+/// <param name="declare">The <c>declare</c> builtin, which holds the positional parameters.</param>
 /// <param name="runLine">Runs one command line, the same way the shell runs a typed one, and gives its status.</param>
 /// <remarks>
-/// The shell also runs <c>~/.sharpierc</c> with it at startup. Arguments after the file name are ignored, since
-/// Sharpie has no positional parameters.
+/// The shell also runs <c>~/.sharpierc</c> and script files with it. Arguments after the file name become the
+/// positional parameters while the file runs, and the old ones come back after, as in bash. With none, the file sees
+/// the caller's.
 /// </remarks>
-internal sealed class SourceCommand(string name, Func<string, int> runLine) : ICommand
+internal sealed class SourceCommand(string name, DeclareCommand declare, Func<string, int> runLine) : ICommand
 {
 	/// <summary>
 	/// How many files may be running inside one another before the next one is refused.
@@ -74,6 +77,13 @@ internal sealed class SourceCommand(string name, Func<string, int> runLine) : IC
 			return 1;
 		}
 
+		var caller = declare.Positional;
+
+		if (args.Length > 1)
+		{
+			declare.SetPositional(args[1..]);
+		}
+
 		this.depth++;
 
 		try
@@ -90,6 +100,11 @@ internal sealed class SourceCommand(string name, Func<string, int> runLine) : IC
 		finally
 		{
 			this.depth--;
+
+			if (args.Length > 1)
+			{
+				declare.SetPositional(caller);
+			}
 		}
 	}
 
