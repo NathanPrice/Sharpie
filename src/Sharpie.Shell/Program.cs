@@ -311,7 +311,17 @@ internal static class Program
 				return declare.Status;
 			}
 
+			// The history file keeps one entry per line, so a here-document's body isn't saved.
 			history.Record(line);
+
+			if (ReadBodies(line, editor) is not { } command)
+			{
+				took = TimeSpan.Zero;
+
+				continue;
+			}
+
+			line = command;
 
 			if (inWindow && editor is not null && CommandLine.PagedCommand(line) is { } paged
 				&& (paged[0] == "man" ? ManPageExists(paged[1..]) : DmanCommand.Find(paged[1..])))
@@ -340,23 +350,68 @@ internal static class Program
 			return Console.ReadLine();
 		}
 
-		// Draws the header and reads one edited line. Ctrl+C is read as a key only while the line is being edited, so
-		// programs the line starts still get it as SIGINT, or as a console Ctrl+C event on Windows.
-		static string? ReadInteractive(LineEditor editor, TimeSpan took, bool blankLine)
+		// Draws the header and reads one edited line.
+		static string? ReadInteractive(LineEditor editor, TimeSpan took, bool blankLine) =>
+			ReadEdited(editor, PromptHeader.Build(Directory.GetCurrentDirectory(), took, Console.WindowWidth, blankLine), continuation: false);
+
+	}
+
+	/// <summary>
+	/// Reads one line with the line editor.
+	/// </summary>
+	/// <param name="editor">The editor.</param>
+	/// <param name="header">The text drawn above the prompt.</param>
+	/// <param name="continuation"><see langword="true" /> for a line of a here-document's body.</param>
+	/// <returns>
+	/// What <see cref="LineEditor.ReadLine" /> gives.
+	/// </returns>
+	/// <remarks>
+	/// Ctrl+C is read as a key only while the line is being edited, so programs the line starts still get it as
+	/// SIGINT, or as a console Ctrl+C event on Windows.
+	/// </remarks>
+	private static string? ReadEdited(LineEditor editor, string header, bool continuation)
+	{
+		Console.TreatControlCAsInput = true;
+
+		try
 		{
-			var header = PromptHeader.Build(Directory.GetCurrentDirectory(), took, Console.WindowWidth, blankLine);
-
-			Console.TreatControlCAsInput = true;
-
-			try
-			{
-				return editor.ReadLine(header);
-			}
-			finally
-			{
-				Console.TreatControlCAsInput = false;
-			}
+			return editor.ReadLine(header, continuation);
 		}
+		finally
+		{
+			Console.TreatControlCAsInput = false;
+		}
+	}
+
+	/// <summary>
+	/// Reads the bodies of the here-documents <paramref name="line" /> starts, a line at a time after a <c>&gt; </c>
+	/// prompt, until every delimiter line has come.
+	/// </summary>
+	/// <param name="line">The line just read.</param>
+	/// <param name="editor">The line editor, or <see langword="null" /> for plain lines from standard input.</param>
+	/// <returns>
+	/// The command with its bodies. At the end of plain input, the lines read so far, as bash runs them.
+	/// <see langword="null" /> after Ctrl+C or Ctrl+D in the editor, which drops the command.
+	/// </returns>
+	[SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters", Justification = "bash's PS2 prompt, the same in every language, like the $ prompt.")]
+	private static string? ReadBodies(string line, LineEditor? editor)
+	{
+		while (CommandList.IsHereDocumentOpen(line))
+		{
+			if (editor is null)
+			{
+				Console.Write(LineEditor.ContinuationPrompt);
+			}
+
+			if ((editor is null ? Console.ReadLine() : ReadEdited(editor, string.Empty, continuation: true)) is not { } next)
+			{
+				return editor is null ? line : null;
+			}
+
+			line += "\n" + next;
+		}
+
+		return line;
 	}
 
 	/// <summary>

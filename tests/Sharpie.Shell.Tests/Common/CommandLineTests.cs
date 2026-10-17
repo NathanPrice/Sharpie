@@ -575,6 +575,32 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
+	/// Checks that command substitution in a here-document's body runs only when the delimiter isn't quoted, that its
+	/// output isn't split, and that the delimiter itself runs nothing.
+	/// </summary>
+	/// <param name="line">The command, its body and its delimiter line.</param>
+	/// <param name="expected">The text the command should read.</param>
+	[Theory]
+	[InlineData("cat <<EOF\na $(echo x) `b` \\$(no) \\`no`\nEOF", "a [echo x] [b] $(no) `no`\n")]
+	[InlineData("cat <<EOF\n`echo \\\"q\\\" \\$X`\nEOF", "[echo \\\"q\\\" $X]\n")]
+	[InlineData("cat <<EOF\n$(echo \")\")\nEOF", "[echo \")\"]\n")]
+	[InlineData("cat <<EOF\n$(lines)\nEOF", "one  two\n\nthree\n")]
+	[InlineData("cat <<EOF\n$(never closed\nEOF", "$(never closed\n")]
+	[InlineData("cat <<'EOF'\n$(echo x) `b`\nEOF", "$(echo x) `b`\n")]
+	[InlineData("cat <<$(x)\nbody\n$(x)", "body\n")]
+	public void Split_WithSubstitutionInHereDocument_RunsItWhenUnquoted(string line, string expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string>();
+
+		// Act
+		var words = CommandLine.Split(line, variables, substitute: list => list == "lines" ? "one  two\n\nthree\n\n" : $"[{list}]");
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal("cat", words[1].Text, expected);
+	}
+
+	/// <summary>
 	/// Checks that several here-documents on one line take their bodies in order, and that the delimiter word keeps
 	/// its position in the first line.
 	/// </summary>

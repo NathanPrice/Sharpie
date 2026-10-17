@@ -56,8 +56,14 @@ internal static class CommandList
 	/// in its command whole, so a <c>;</c>, quote or <c>#</c> inside it neither cuts nor ends the command around it.
 	/// The refusals are reported rather than passed on as text, so a command meant to get the output of another
 	/// never runs with the wrong arguments.
+	/// <para>
+	/// At a newline, the lines after it up to each delimiter line are the bodies of the here-documents the commands
+	/// since the last newline start. They're added, newlines and delimiter lines included, to the end of the command
+	/// that owns them, for <see cref="CommandLine.Split" /> to read, and skip the quote, comment, substitution and
+	/// operator rules, so <c>don't</c>, <c>#</c>, <c>;</c> and an unclosed <c>$(</c> in them are text.
+	/// </para>
 	/// </remarks>
-	public static IReadOnlyList<(string Operator, string Command)>? Split(string line) => SplitOrRefuse(line, out _, out _);
+	public static IReadOnlyList<(string Operator, string Command)>? Split(string line) => SplitOrRefuse(line, out _, out _, out _);
 
 	/// <summary>
 	/// Finds what <paramref name="line" /> leaves open at its end, which the next line of a file goes on with, as
@@ -70,9 +76,24 @@ internal static class CommandList
 	/// however it ends. A quote inside a comment doesn't count, so <c># don't</c> is complete.
 	/// </returns>
 	internal static char? Unfinished(string line) =>
-		SplitOrRefuse(line, out var refused, out var quote) is not null ? quote
+		SplitOrRefuse(line, out var refused, out var quote, out _) is not null ? quote
 		: line.AsSpan(refused).StartsWith("$((", StringComparison.Ordinal) ? null
 		: line[refused] == '`' ? '`' : '(';
+
+	/// <summary>
+	/// Checks whether <paramref name="text" /> ends inside a here-document's body, so a reader should add the next
+	/// line before running it.
+	/// </summary>
+	/// <param name="text">The lines read so far, joined by newlines.</param>
+	/// <returns>
+	/// <see langword="true" /> when some here-document has no delimiter line yet.
+	/// </returns>
+	public static bool IsHereDocumentOpen(string text)
+	{
+		_ = SplitOrRefuse(text, out _, out _, out var unclosed);
+
+		return unclosed is not null;
+	}
 
 	/// <summary>
 	/// Cuts <paramref name="line" /> into its commands, as <see cref="Split" /> describes.
@@ -85,16 +106,24 @@ internal static class CommandList
 	/// <param name="openQuote">
 	/// When this method returns the commands, contains the quote the line ends inside, or <see langword="null" />.
 	/// </param>
+	/// <param name="unclosed">
+	/// The delimiter of a here-document whose body runs to the end of <paramref name="line" />, or
+	/// <see langword="null" /> when every body was closed.
+	/// </param>
 	/// <returns>
 	/// The commands, or <see langword="null" /> when the line is refused.
 	/// </returns>
-	private static List<(string Operator, string Command)>? SplitOrRefuse(string line, out int refused, out char? openQuote)
+	private static List<(string Operator, string Command)>? SplitOrRefuse(string line, out int refused, out char? openQuote, out string? unclosed)
 	{
 		_ = line.ArgumentNotNull();
 
 		// Stryker disable once Unary : refused is only read when the line is refused, and every refusal sets it.
 		refused = -1;
 		openQuote = null;
+		unclosed = null;
+
+		// The first command since the last newline, whose here-documents' bodies start after the next one.
+		var lineStart = 0;
 
 		var commands = new List<(string Operator, string Command)>();
 		var command = new StringBuilder();
@@ -139,7 +168,7 @@ internal static class CommandList
 
 			if (quote is null && character == '#' && wordStart)
 			{
-				index = line.IndexOf('\n', index) is var newline and >= 0 ? newline - 1 : line.Length;
+				index = CommandLine.LineEnd(line, index) - 1;
 
 				continue;
 			}
@@ -153,6 +182,12 @@ internal static class CommandList
 
 				Cut(typed);
 				index += typed.Length - 1;
+
+				if (character == '\n')
+				{
+					index = ReadBodies(line, index + 1, commands, lineStart, ref unclosed) - 1;
+					lineStart = commands.Count;
+				}
 
 				continue;
 			}
@@ -177,6 +212,8 @@ internal static class CommandList
 
 		Cut(Sequence);
 		openQuote = quote;
+
+		_ = ReadBodies(line, line.Length, commands, lineStart, ref unclosed);
 
 		return commands;
 
@@ -217,6 +254,41 @@ internal static class CommandList
 	}
 
 	/// <summary>
+	/// Reads the bodies of the here-documents that the commands since the last newline start, and adds each to the end
+	/// of the command that owns it.
+	/// </summary>
+	/// <param name="line">The whole text being split.</param>
+	/// <param name="position">Where the line after that newline starts.</param>
+	/// <param name="commands">The commands so far.</param>
+	/// <param name="first">The first command since the last newline.</param>
+	/// <param name="unclosed">Set to a here-document's delimiter when its body runs to the end of the text.</param>
+	/// <returns>
+	/// Where the line after the last body starts.
+	/// </returns>
+	private static int ReadBodies(string line, int position, List<(string Operator, string Command)> commands, int first, ref string? unclosed)
+	{
+		for (var index = first; index < commands.Count; index++)
+		{
+			var (before, owner) = commands[index];
+
+			foreach (var (delimiter, _, stripTabs) in CommandLine.HereDocuments(owner))
+			{
+				var (_, end, closed) = CommandLine.ReadHereDocument(line, position, delimiter, stripTabs);
+				var body = line[position..end];
+
+				// The newline after the delimiter line belongs to the list, not the body.
+				owner += body.Length > 0 ? "\n" + (body.EndsWith('\n') ? body[..^1] : body) : string.Empty;
+				unclosed = closed ? unclosed : delimiter;
+				position = end;
+			}
+
+			commands[index] = (before, owner);
+		}
+
+		return position;
+	}
+
+	/// <summary>
 	/// Reads the list operator that starts at <paramref name="index" />, outside quotes.
 	/// </summary>
 	/// <param name="line">The line.</param>
@@ -252,7 +324,8 @@ internal static class CommandList
 	/// POSIX gives <c>&amp;&amp;</c> and <c>||</c> the same precedence, read from the left, so in
 	/// <c>false &amp;&amp; a || b</c> the skipped <c>a</c> keeps the status at 1 and <c>b</c> runs. POSIX doesn't let
 	/// <c>set -e</c> act on a command followed by <c>&amp;&amp;</c> or <c>||</c>, so <c>false || b</c> is a test, not a
-	/// failure.
+	/// failure. A here-document whose delimiter line never comes, at the end of a <c>-c</c> command or a file, gets the
+	/// lines that were there, after a warning, as in bash.
 	/// </remarks>
 	public static int Run(string line, int status, Func<string, int> run, Action<int>? failed = null)
 	{
@@ -280,7 +353,7 @@ internal static class CommandList
 	{
 		_ = run.ArgumentNotNull();
 
-		if (SplitOrRefuse(line, out var refused, out _) is not { } commands)
+		if (SplitOrRefuse(line, out var refused, out _, out var unclosed) is not { } commands)
 		{
 			var arithmetic = line.AsSpan(refused).StartsWith("$((", StringComparison.Ordinal);
 			var backquote = line[refused] == '`';
@@ -302,6 +375,14 @@ internal static class CommandList
 			(report with { Source = line, Start = refused }).Write();
 
 			return UnsupportedStatus;
+		}
+
+		if (unclosed is not null)
+		{
+			new ShellError("sharpie::parser::unclosed_here_document", $"The here-document never got its `{unclosed}` line")
+			{
+				Help = $"end it with a line holding only {unclosed}; it ran with the lines it had",
+			}.Write();
 		}
 
 		for (var index = 0; index < commands.Count; index++)

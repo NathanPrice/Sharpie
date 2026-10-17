@@ -38,6 +38,9 @@ internal sealed class LineEditor(
 	// list of matches.
 	private const string SelectedName = "\e[48;2;56;74;102m";
 
+	// What bash's PS2 shows before each line of a here-document's body.
+	internal const string ContinuationPrompt = "> ";
+
 	private readonly StringBuilder line = new();
 
 	// Kept across redraws, so a redraw doesn't grow a new builder from scratch on every key.
@@ -54,6 +57,7 @@ internal sealed class LineEditor(
 	private IReadOnlyList<string>? listed;
 	private int? selected;
 	private string suggestion = string.Empty;
+	private bool continuation;
 
 	// Set after Escape, so ESC and a letter read as two keys still count as Alt and that letter, as readline reads ESC.
 	// .NET returns them as two keys when more input arrives in the same read.
@@ -76,14 +80,20 @@ internal sealed class LineEditor(
 	/// Draws <paramref name="header" /> and the prompt, then reads keys until Enter.
 	/// </summary>
 	/// <param name="header">The text printed once above the prompt, ending with a line break.</param>
+	/// <param name="continuation">
+	/// <see langword="true" /> for a line of a here-document's body, which gets <c>&gt; </c> as its prompt and no
+	/// coloring or suggestion, since it's text rather than a command.
+	/// </param>
 	/// <returns>
 	/// The line, an empty line after Ctrl+C, or <see langword="null" /> after Ctrl+D on an empty line, which ends
-	/// the shell as end of input does.
+	/// the shell as end of input does. For a <paramref name="continuation" /> line, Ctrl+C also gives
+	/// <see langword="null" />, so the caller can drop the whole command.
 	/// </returns>
-	public string? ReadLine(string header)
+	public string? ReadLine(string header, bool continuation = false)
 	{
 		_ = header.ArgumentNotNull();
 
+		this.continuation = continuation;
 		_ = this.line.Clear();
 		this.cursor = 0;
 		this.cursorRow = 0;
@@ -118,7 +128,7 @@ internal sealed class LineEditor(
 
 			// ^C is shown like bash, so it's clear the line was dropped, not run.
 			return outcome == Outcome.Submit ? this.Finish(string.Empty, this.line.ToString())
-				: outcome == Outcome.Cancel ? this.Finish("^C", string.Empty)
+				: outcome == Outcome.Cancel ? this.Finish("^C", this.continuation ? null : string.Empty)
 				: this.Finish(string.Empty, null);
 		}
 	}
@@ -220,7 +230,7 @@ internal sealed class LineEditor(
 	{
 		// Hidden while browsing, because the next Up searches by the text typed before the first Up, not by the line
 		// on screen, so a suggestion there would promise a line Up doesn't give.
-		if (this.line.Length == 0 || this.cursor != this.line.Length || this.listed is not null || this.Browsing)
+		if (this.continuation || this.line.Length == 0 || this.cursor != this.line.Length || this.listed is not null || this.Browsing)
 		{
 			return string.Empty;
 		}
@@ -464,8 +474,17 @@ internal sealed class LineEditor(
 			_ = screen.Append(CultureInfo.InvariantCulture, $"\e[{this.cursorRow}A");
 		}
 
-		_ = screen.Append("\r\e[J").Append(PromptHeader.Symbol);
-		this.AppendColored(screen);
+		// The continuation prompt is as wide as the symbol, so the column maths below holds for both.
+		_ = screen.Append("\r\e[J").Append(this.continuation ? ContinuationPrompt : PromptHeader.Symbol);
+
+		if (this.continuation)
+		{
+			_ = screen.Append(this.line);
+		}
+		else
+		{
+			this.AppendColored(screen);
+		}
 
 		if (this.suggestion.Length > 0)
 		{

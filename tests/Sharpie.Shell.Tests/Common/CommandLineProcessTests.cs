@@ -399,6 +399,90 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks that a here-document typed at the plain prompt asks for its body after <c>&gt; </c> and feeds it to
+	/// the command, expanding variables only when the delimiter isn't quoted.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithHereDocumentAtPrompt_ReadsBody()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("SAMPLE=val\ncat <<EOF | tr a-z A-Z\nhi $SAMPLE\nEOF\ncat <<'EOF'; echo next\nhi $SAMPLE\nEOF\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ $ > > HI VAL\n$ > > hi $SAMPLE\nnext\n$ ");
+	}
+
+	/// <summary>
+	/// Checks that a here-document whose delimiter line never comes runs with the lines it had once input ends, after
+	/// a warning.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithUnclosedHereDocumentAtEndOfInput_RunsWhatItHas()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("cat <<EOF\nlast line\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ > > last line\n$ ");
+		_ = run.Error.Should().StartWith("Error: sharpie::parser::unclosed_here_document\n");
+	}
+
+	/// <summary>
+	/// Checks that a here-document in a <c>-c</c> command reads the lines after it, with <c>&lt;&lt;-</c> dropping
+	/// the leading tabs.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithHereDocumentInCommandOption_ReadsBody()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "cat <<-EOF && echo after\n\tone\n\t\ttwo\n\tEOF\necho last"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("one\ntwo\nafter\nlast\n");
+	}
+
+	/// <summary>
+	/// Checks that <c>$(...)</c> and backquotes in a here-document's body run when the delimiter isn't quoted, with
+	/// their output kept whole, and stay as typed when it is, as in bash.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithSubstitutionInHereDocument_RunsItOnlyWhenUnquoted()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "cat <<EOF\n$(echo sub) `printf 'a  b'`\nEOF\ncat <<'EOF'\n$(echo sub) `echo a`\nEOF"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Error.Should().BeEmpty();
+		_ = run.Output.Should().Be("sub a  b\n$(echo sub) `echo a`\n");
+	}
+
+	/// <summary>
+	/// Checks that a here-document in a sourced file reads its body, keeping a body line's trailing backslash for
+	/// the here-document's own rules.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithHereDocumentInSourcedFile_ReadsBody()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		await File.WriteAllTextAsync(Path.Combine(folder, "script.sh"), "cat <<EOF\njoined \\\nline\nkept\\\\\nEOF\ncat <<'EOF'\nraw \\\nEOF\necho done\n").ConfigureAwait(true);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(". ./script.sh\nexit\n", folder).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("$ joined line\nkept\\\nraw \\\ndone\n$ ");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that a background program's redirect still gets its output after the prompt comes back.
 	/// </summary>
 	[Fact]

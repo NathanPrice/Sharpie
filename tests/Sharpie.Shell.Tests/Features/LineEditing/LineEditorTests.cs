@@ -185,6 +185,43 @@ public sealed class LineEditorTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a here-document's body line is drawn after <c>&gt; </c> with no coloring or suggestion, even when
+	/// it starts like a command or a history line.
+	/// </summary>
+	[Fact]
+	public void ReadLine_Continuation_DrawsPlainLineAfterPrompt()
+	{
+		// Arrange
+		this.Type("echo fi");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty, continuation: true);
+
+		// Assert
+		_ = line.Should().Be("echo fi");
+		_ = this.output.ToString().Should().EndWith("\r\e[J> echo fi\r\e[9C\r\n").And.NotContainAny("\e[32m", "\e[30m", "\e[0m");
+	}
+
+	/// <summary>
+	/// Checks that Ctrl+C while reading a here-document's body gives no line, so the whole command is dropped.
+	/// </summary>
+	[Fact]
+	public void ReadLine_CtrlCInContinuation_ReturnsNull()
+	{
+		// Arrange
+		this.Type("half a line");
+		this.Press(ConsoleKey.C, control: true);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty, continuation: true);
+
+		// Assert
+		_ = line.Should().BeNull();
+		_ = this.output.ToString().Should().EndWith("^C\r\n");
+	}
+
+	/// <summary>
 	/// Checks that Ctrl+D on an empty line ends input, and on a non-empty line deletes instead.
 	/// </summary>
 	[Fact]

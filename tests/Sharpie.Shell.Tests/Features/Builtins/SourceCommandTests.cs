@@ -294,7 +294,7 @@ public sealed class SourceCommandTests : IDisposable
 
 	/// <summary>
 	/// Checks that a line ending in an odd number of backslashes joins the next one, and an even number doesn't, and
-	/// that a line leaving a quote or substitution open joins the lines that close it.
+	/// that a line leaving a quote, substitution or here-document open joins the lines that close it.
 	/// </summary>
 	/// <param name="lines">The lines of the file.</param>
 	/// <param name="expected">The command lines that should come out.</param>
@@ -314,6 +314,11 @@ public sealed class SourceCommandTests : IDisposable
 	[InlineData(new[] { @"X=$(echo a \", "b)" }, new[] { "X=$(echo a b)" })]
 	[InlineData(new[] { "# don't", "echo hi" }, new[] { "# don't", "echo hi" })]
 	[InlineData(new[] { "echo 'open", "" }, new[] { "echo 'open" })]
+	[InlineData(new[] { "cat <<EOF", @"body \", "EOF", "next" }, new[] { "cat <<EOF\nbody \\\nEOF", "next" })]
+	[InlineData(new[] { @"cat \", "<<EOF", "x", "EOF" }, new[] { "cat <<EOF\nx\nEOF" })]
+	[InlineData(new[] { "cat <<A <<B", "1", "A", "2", "B", @"a\", "b" }, new[] { "cat <<A <<B\n1\nA\n2\nB", "ab" })]
+	[InlineData(new[] { "cat <<EOF", "never closed" }, new[] { "cat <<EOF\nnever closed" })]
+	[InlineData(new[] { "cat <<EOF", "don't $(", "EOF", "echo c" }, new[] { "cat <<EOF\ndon't $(\nEOF", "echo c" })]
 	public void JoinContinuedLines_WithLines_JoinsOnOddBackslashes(string[] lines, string[] expected)
 	{
 		// Act

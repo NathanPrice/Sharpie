@@ -146,18 +146,21 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 	}
 
 	/// <summary>
-	/// Joins each line that ends in an unescaped backslash to the line after it, and each line that leaves a quote,
-	/// <c>$(</c> or backquote open to the lines that close it, as POSIX does.
+	/// Joins each line that ends in an unescaped backslash to the line after it, each line that leaves a quote,
+	/// <c>$(</c> or backquote open to the lines that close it, as POSIX does, and a line that starts a here-document to
+	/// the lines of its body.
 	/// </summary>
 	/// <param name="lines">The lines of the file.</param>
 	/// <returns>
-	/// The command lines, with each joining backslash and its line break removed. Lines joined for an open quote or
-	/// substitution keep the line break between them, so <c>X=$(</c> on one line and <c>pwd)</c> on the next run as
-	/// one command.
+	/// The command lines, with each joining backslash and its line break removed. Lines joined for an open quote,
+	/// substitution or here-document keep the line break between them, so <c>X=$(</c> on one line and <c>pwd)</c> on
+	/// the next run as one command.
 	/// </returns>
 	/// <remarks>
 	/// The backslash counts when there's an odd number of them at the end, so <c>\\</c>, an escaped backslash, doesn't
-	/// join. Inside single quotes a backslash is only itself, so the line break stays.
+	/// join. Inside single quotes a backslash is only itself, so the line break stays. Body lines are kept as they are,
+	/// trailing backslashes and quotes included, for <see cref="CommandLine.Split" /> to read by the here-document's
+	/// rules.
 	/// </remarks>
 	internal static IEnumerable<string> JoinContinuedLines(IEnumerable<string> lines)
 	{
@@ -165,30 +168,49 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 
 		var pending = string.Empty;
 
+		// The command read so far while a here-document's body is still open.
+		string? body = null;
+
 		foreach (var line in lines)
 		{
-			var joined = pending + line;
-			var open = CommandList.Unfinished(joined);
-
-			// The run of backslashes the line ends with.
-			if (open != '\'' && joined[joined.TrimEnd('\\').Length..].Length % 2 == 1)
+			if (body is not null)
 			{
-				pending = joined[..^1];
-			}
-			else if (open is not null)
-			{
-				pending = joined + "\n";
+				body += "\n" + line;
 			}
 			else
 			{
-				pending = string.Empty;
+				var joined = pending + line;
+				var open = CommandList.Unfinished(joined);
 
-				yield return joined;
+				// The run of backslashes the line ends with.
+				if (open != '\'' && joined[joined.TrimEnd('\\').Length..].Length % 2 == 1)
+				{
+					pending = joined[..^1];
+
+					continue;
+				}
+
+				if (open is not null)
+				{
+					pending = joined + "\n";
+
+					continue;
+				}
+
+				pending = string.Empty;
+				body = joined;
+			}
+
+			if (!CommandList.IsHereDocumentOpen(body))
+			{
+				yield return body;
+
+				body = null;
 			}
 		}
 
 		// Whatever is still open at the end of the file, which Run reports.
-		if (pending.TrimEnd('\n') is { Length: > 0 } rest)
+		if ((body ?? pending.TrimEnd('\n')) is { Length: > 0 } rest)
 		{
 			yield return rest;
 		}

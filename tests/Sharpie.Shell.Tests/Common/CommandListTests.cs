@@ -317,6 +317,96 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that each here-document's body, up to its delimiter line, goes on the end of the command that starts it,
+	/// with the operators around it kept, and that quotes, comments, substitutions and operators in a body are text.
+	/// </summary>
+	/// <param name="line">The text to split.</param>
+	/// <param name="expected">The operator and command pairs, flattened.</param>
+	[Theory]
+	[InlineData("cat <<EOF\nhi\nEOF\necho next", new[] { ";", "cat <<EOF\nhi\nEOF", ";", "echo next" })]
+	[InlineData("cat <<EOF; echo b\nhi\nEOF", new[] { ";", "cat <<EOF\nhi\nEOF", ";", "echo b" })]
+	[InlineData("echo a; cat <<EOF\nhi\nEOF", new[] { ";", "echo a", ";", "cat <<EOF\nhi\nEOF" })]
+	[InlineData("cat <<EOF &&\nhi\nEOF\necho next", new[] { ";", "cat <<EOF\nhi\nEOF", "&&", "echo next" })]
+	[InlineData("cat <<A && cat <<B\none\nA\ntwo\nB", new[] { ";", "cat <<A\none\nA", "&&", "cat <<B\ntwo\nB" })]
+	[InlineData("cat <<A <<B\none\nA\ntwo\nB", new[] { ";", "cat <<A <<B\none\nA\ntwo\nB" })]
+	[InlineData("cat <<EOF\ndon't # stop; a && b || c\n'\nEOF", new[] { ";", "cat <<EOF\ndon't # stop; a && b || c\n'\nEOF" })]
+	[InlineData("cat <<-EOF\n\thi\n\tEOF\necho next", new[] { ";", "cat <<-EOF\n\thi\n\tEOF", ";", "echo next" })]
+	[InlineData("cat <<EOF # a note\nhi\nEOF", new[] { ";", "cat <<EOF\nhi\nEOF" })]
+	[InlineData("cat <<EOF\nhi", new[] { ";", "cat <<EOF\nhi" })]
+	[InlineData("cat <<EOF", new[] { ";", "cat <<EOF" })]
+	[InlineData("cat <<EOF\n", new[] { ";", "cat <<EOF" })]
+	[InlineData("cat '<<EOF'\nEOF", new[] { ";", "cat '<<EOF'", ";", "EOF" })]
+	[InlineData("cat <<EOF\n\nEOF", new[] { ";", "cat <<EOF\n\nEOF" })]
+	[InlineData("cat <<'EOF'\n$(date) `x`\nEOF", new[] { ";", "cat <<'EOF'\n$(date) `x`\nEOF" })]
+	[InlineData("cat <<EOF\n\\$(date) \\`x\nEOF", new[] { ";", "cat <<EOF\n\\$(date) \\`x\nEOF" })]
+	[InlineData("cat <<EOF\nnow $(date) `x`\nEOF", new[] { ";", "cat <<EOF\nnow $(date) `x`\nEOF" })]
+	[InlineData("cat <<EOF\n$( ) `\nEOF\necho next", new[] { ";", "cat <<EOF\n$( ) `\nEOF", ";", "echo next" })]
+	public void Split_WithHereDocument_AddsBodyToItsCommand(string line, string[] expected)
+	{
+		// Act
+		var commands = CommandList.Split(line);
+
+		// Assert
+		_ = commands.Should().NotBeNull();
+		_ = commands!.SelectMany(command => new[] { command.Operator, command.Command }).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that a here-document that never gets its delimiter line still runs with the lines it had, after a
+	/// warning.
+	/// </summary>
+	[Fact]
+	public void Run_WithUnclosedHereDocument_WarnsAndRuns()
+	{
+		// Arrange
+		var ran = new List<string>();
+
+		// Act
+		var status = CommandList.Run("cat <<EOF\nhi", 0, command =>
+		{
+			ran.Add(command);
+
+			return 4;
+		});
+
+		// Assert
+		_ = ran.Should().Equal("cat <<EOF\nhi");
+		_ = status.Should().Be(4);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::unclosed_here_document", "The here-document never got its `EOF` line")
+		{
+			Help = "end it with a line holding only EOF; it ran with the lines it had",
+		}.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandList.IsHereDocumentOpen" /> says whether a reader still owes a here-document its
+	/// delimiter line.
+	/// </summary>
+	/// <param name="text">The lines read so far.</param>
+	/// <param name="expected">Whether another line is needed.</param>
+	[Theory]
+	[InlineData("cat <<EOF", true)]
+	[InlineData("cat <<EOF\nhi", true)]
+	[InlineData("cat <<EOF\nhi\nEOF", false)]
+	[InlineData("cat <<EOF\nhi\nEOFX", true)]
+	[InlineData("cat <<A <<B\nx\nA", true)]
+	[InlineData("cat <<A <<B\nx\nA\nB", false)]
+	[InlineData("cat <<-EOF\n\tEOF", false)]
+	[InlineData("cat <<EOF\n\tEOF", true)]
+	[InlineData("cat <<EOF\nEOF\ncat <<END", true)]
+	[InlineData("cat <<< EOF", false)]
+	[InlineData("cat '<<EOF'", false)]
+	[InlineData("echo hi", false)]
+	public void IsHereDocumentOpen_WithText_SaysWhetherBodyIsOpen(string text, bool expected)
+	{
+		// Act
+		var open = CommandList.IsHereDocumentOpen(text);
+
+		// Assert
+		_ = open.Should().Be(expected);
+	}
+
+	/// <summary>
 	/// Restores the console after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();

@@ -176,11 +176,11 @@ internal static class CommandLine
 			var delimiter = words[index];
 			var (body, end, _) = ReadHereDocument(line, position, delimiter.Text, words[index - 1].Text.EndsWith('-'));
 
-			// A variable that isn't set is reported at the delimiter, since the body's own text is gone by now.
-			words[index] = delimiter with
-			{
-				Text = variables is null || IsQuoted(line, delimiter) ? body : ExpandBody(body, variables, unset is null ? null : name => unset(name with { Start = delimiter.Start, End = delimiter.End })),
-			};
+			// A variable that isn't set is reported at the delimiter, since <<- and joined lines move the body's text
+			// away from where it was typed.
+			Action<Word>? bodyUnset = unset is null ? null : name => unset(name with { Start = delimiter.Start, End = delimiter.End });
+
+			words[index] = delimiter with { Text = variables is null || IsQuoted(line, delimiter) ? body : ExpandBody(body, variables, bodyUnset, substitute) };
 			position = end;
 		}
 
@@ -564,14 +564,33 @@ internal static class CommandLine
 			return ([line[start..(close + 1)]], true);
 		}
 
-		var inner = line[start] == '`' ? Unescape(line[(start + 1)..close], inDoubleQuotes: quote == '"') : line[(start + 2)..close];
-
-		// argv can't hold NUL, and bash drops it with a warning.
-		var output = substitute(inner).Replace("\0", string.Empty, StringComparison.Ordinal).TrimEnd('\n');
+		var output = SubstitutionOutput(line, start, close, inDoubleQuotes: quote == '"', substitute);
 
 		var split = quote is null && !IsAssignmentWord(word, words);
 
 		return (split ? output.Split([' ', '\t', '\n']) : [output], quote is not null);
+	}
+
+	/// <summary>
+	/// Runs the substitution from <paramref name="start" /> to <paramref name="close" />.
+	/// </summary>
+	/// <param name="line">The text holding it.</param>
+	/// <param name="start">The position of the <c>$(</c> or backquote.</param>
+	/// <param name="close">The position of the closing <c>)</c> or backquote.</param>
+	/// <param name="inDoubleQuotes">
+	/// <see langword="true" /> when it's inside double quotes, where a backslash before <c>"</c> inside backquotes is
+	/// dropped too.
+	/// </param>
+	/// <param name="substitute">Runs the command list.</param>
+	/// <returns>
+	/// Its output with NUL characters and trailing newlines removed.
+	/// </returns>
+	private static string SubstitutionOutput(string line, int start, int close, bool inDoubleQuotes, Func<string, string> substitute)
+	{
+		var inner = line[start] == '`' ? Unescape(line[(start + 1)..close], inDoubleQuotes) : line[(start + 2)..close];
+
+		// argv can't hold NUL, and bash drops it with a warning.
+		return substitute(inner).Replace("\0", string.Empty, StringComparison.Ordinal).TrimEnd('\n');
 	}
 
 	/// <summary>
@@ -1142,13 +1161,18 @@ internal static class CommandLine
 	/// <param name="body">The body from <see cref="ReadHereDocument" />.</param>
 	/// <param name="variables">The shell variables.</param>
 	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
+	/// <param name="substitute">
+	/// Runs each <c>$(...)</c> and backquotes for its output, or <see langword="null" /> to keep them as typed.
+	/// </param>
 	/// <returns>
 	/// The body with <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c> and the positional parameters replaced as
-	/// <see cref="Split" /> replaces them inside double quotes, except that <c>$@</c> joins its parameters too. A
+	/// <see cref="Split" /> replaces them inside double quotes, except that <c>$@</c> joins its parameters too, and
+	/// each command substitution replaced by its output, never split. Inside backquotes a backslash before <c>"</c>
+	/// stays, as in bash. A
 	/// backslash is dropped only before <c>$</c>, <c>`</c>, <c>\</c> or a newline, and a backslash before a newline
 	/// joins the two lines. Quotes are ordinary characters.
 	/// </returns>
-	internal static string ExpandBody(string body, IReadOnlyDictionary<string, string> variables, Action<Word>? unset = null)
+	internal static string ExpandBody(string body, IReadOnlyDictionary<string, string> variables, Action<Word>? unset = null, Func<string, string>? substitute = null)
 	{
 		var text = new StringBuilder();
 
@@ -1157,6 +1181,11 @@ internal static class CommandLine
 			if (body[index] == '\\' && index + 1 < body.Length && body[index + 1] is '$' or '`' or '\\' or '\n')
 			{
 				_ = body[++index] == '\n' ? text : text.Append(body[index]);
+			}
+			else if (SubstitutionEnd(body, index) is var close and >= 0)
+			{
+				_ = text.Append(substitute is null ? body[index..(close + 1)] : SubstitutionOutput(body, index, close, inDoubleQuotes: false, substitute));
+				index = close;
 			}
 			else if (TryExpand(body, index, variables, quoted: true, unset, out var parts, out var end))
 			{
@@ -1192,7 +1221,7 @@ internal static class CommandLine
 	/// <returns>
 	/// The position of the next newline, or the text's length when there is none.
 	/// </returns>
-	private static int LineEnd(string text, int index) => text.IndexOf('\n', index) is var newline and >= 0 ? newline : text.Length;
+	internal static int LineEnd(string text, int index) => text.IndexOf('\n', index) is var newline and >= 0 ? newline : text.Length;
 
 	/// <summary>
 	/// Finds the words that are here-document delimiters.
