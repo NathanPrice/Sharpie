@@ -92,6 +92,10 @@ internal static partial class ExternalProgram
 	/// <c>NAME=VALUE</c> words that only this program gets in its environment, as in <c>LANG=C sort</c>, or
 	/// <see langword="null" /> for none. An assigned <c>PATH</c> is also where the program is looked for, as in bash.
 	/// </param>
+	/// <param name="redirection">
+	/// The command's redirects, applied over <paramref name="input" />, <paramref name="output" /> and
+	/// <paramref name="error" />, which are its own streams 0, 1 and 2. <see langword="null" /> for none.
+	/// </param>
 	/// <param name="listJob">
 	/// <see langword="false" /> for a background program inside a command substitution. Like one in bash's
 	/// subshell, it isn't added to <see cref="Jobs" /> or announced, and its output still goes to
@@ -102,7 +106,7 @@ internal static partial class ExternalProgram
 	/// when it was found but couldn't start (that error is printed here). <see langword="null" /> when the program
 	/// isn't on <c>PATH</c>, and nothing was printed.
 	/// </returns>
-	public static int? Run(string commandName, string[] arguments, Stream? output = null, Stream? error = null, bool background = false, Stream? input = null, IReadOnlyList<string>? assignments = null, bool listJob = true)
+	public static int? Run(string commandName, string[] arguments, Stream? output = null, Stream? error = null, bool background = false, Stream? input = null, IReadOnlyList<string>? assignments = null, Redirection? redirection = null, bool listJob = true)
 	{
 		_ = commandName.ArgumentNotNull();
 		_ = arguments.ArgumentNotNull();
@@ -110,11 +114,10 @@ internal static partial class ExternalProgram
 		assignments ??= [];
 
 		var fullPath = PathFinder.FindExecutable(commandName, AssignedPath(assignments));
-
 		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
 		return fullPath is null ? null
-			: OperatingSystem.IsWindows() ? RunWithProcess(commandName, fullPath, arguments, output, error, background, input, assignments, listJob)
-			: RunWithSpawn(commandName, fullPath, arguments, output, error, background, input, assignments, listJob);
+			: OperatingSystem.IsWindows() ? RunWithProcess(commandName, fullPath, arguments, output, error, background, input, assignments, redirection, listJob)
+			: RunWithSpawn(commandName, fullPath, arguments, output, error, background, input, assignments, redirection?.Targets ?? Redirection.Standard, listJob);
 	}
 
 	/// <summary>
@@ -133,6 +136,10 @@ internal static partial class ExternalProgram
 	/// <param name="output">
 	/// Where the last program's standard output goes, or <see langword="null" /> to let it write to the terminal.
 	/// </param>
+	/// <param name="redirections">
+	/// Each stage's redirects, in the same order, applied over the pipe ends that are its own streams, or
+	/// <see langword="null" /> for none.
+	/// </param>
 	/// <remarks>
 	/// If any program isn't on <c>PATH</c>, <paramref name="notFound" /> is called for it and none of them run. Bash
 	/// would still start the others.
@@ -142,12 +149,14 @@ internal static partial class ExternalProgram
 	/// the rightmost program that didn't give 0. 127 when a program isn't on <c>PATH</c>, or 126 when one couldn't
 	/// start.
 	/// </returns>
-	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null, bool pipeFail = false, Stream? output = null)
+	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null, bool pipeFail = false, Stream? output = null, IReadOnlyList<Redirection>? redirections = null)
 	{
 		_ = stages.ArgumentNotNull();
 		_ = notFound.ArgumentNotNull();
 
 		assignments ??= [.. stages.Select(_ => Array.Empty<string>())];
+
+		var targets = stages.Select((_, index) => redirections?[index].Targets ?? Redirection.Standard).ToArray();
 
 		var paths = stages.Select((stage, index) => PathFinder.FindExecutable(stage[0], AssignedPath(assignments[index]))).ToArray();
 
@@ -165,7 +174,7 @@ internal static partial class ExternalProgram
 		}
 
 		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
-		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments, pipeFail, output) : RunPipelineWithSpawn(stages, paths!, assignments, pipeFail, output);
+		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments, targets, pipeFail, output) : RunPipelineWithSpawn(stages, paths!, assignments, targets, pipeFail, output);
 	}
 
 	/// <summary>

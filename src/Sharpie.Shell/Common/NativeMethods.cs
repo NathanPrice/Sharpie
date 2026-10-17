@@ -29,6 +29,9 @@ internal static partial class NativeMethods
 	// DuplicateHandle's option to give the copy the same access as the original.
 	private const uint DuplicateSameAccess = 2;
 
+	// GetFileType's answer for a file on a disk.
+	private const uint FileTypeDisk = 1;
+
 	/// <summary>
 	/// Turns on escape sequence handling for the console the shell writes to, so the colors and cursor moves of the
 	/// line editor and the colors of error reports work on Windows.
@@ -113,6 +116,27 @@ internal static partial class NativeMethods
 	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static partial bool DuplicateHandle(nint sourceProcess, SafeHandle source, nint targetProcess, out nint target, uint access, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint options);
+
+	/// <summary>
+	/// Checks whether <paramref name="file" /> is a file on a disk, not a device like <c>NUL</c>, a pipe or a console.
+	/// </summary>
+	/// <param name="file">The open file.</param>
+	/// <returns>
+	/// <see langword="true" /> for a disk file.
+	/// </returns>
+	[SupportedOSPlatform("windows")]
+	internal static bool IsDiskFile(SafeHandle file) => GetFileType(file) == FileTypeDisk;
+
+	/// <summary>
+	/// Gets the kind of file a handle is open on.
+	/// </summary>
+	/// <param name="file">The handle.</param>
+	/// <returns>
+	/// 1 for a disk file, 2 for a character device or console, 3 for a pipe, 0 when unknown.
+	/// </returns>
+	[LibraryImport("kernel32")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+	private static partial uint GetFileType(SafeHandle file);
 
 	/// <summary>
 	/// Gets one of the process's standard handles.

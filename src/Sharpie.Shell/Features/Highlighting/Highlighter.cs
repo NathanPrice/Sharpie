@@ -80,7 +80,7 @@ internal static class Highlighter
 
 		var tokens = new List<Token>();
 		string? command = null;
-		var afterRedirect = false;
+		TargetKind? target = null;
 		var argumentCount = 0;
 
 		foreach (var (start, end, strings) in SplitRaw(line))
@@ -92,16 +92,16 @@ internal static class Highlighter
 			var value = word.Text;
 			TokenKind? kind;
 
-			if (afterRedirect)
+			// Only a file name is checked, so the delimiter in <<EOF, the text in <<< x and the 1 in 2>&1 aren't flagged.
+			if (target is { } redirected)
 			{
-				kind = FolderExists(value) ? null : TokenKind.MissingPath;
-				afterRedirect = false;
+				kind = redirected == TargetKind.File && !FolderExists(value) ? TokenKind.MissingPath : null;
+				target = null;
 			}
-			// The same operators CommandLine.SplitRedirect takes out.
-			else if (word is { IsOperator: true, Text: ">" or "1>" or ">>" or "1>>" or "2>" or "2>>" })
+			else if (word.IsOperator && CommandLine.RedirectKind(word.Text) is { } redirect)
 			{
 				kind = TokenKind.Redirect;
-				afterRedirect = true;
+				target = redirect;
 			}
 			else
 			{
@@ -286,14 +286,14 @@ internal static class Highlighter
 	/// </summary>
 	/// <param name="path">The redirect target as typed.</param>
 	/// <returns>
-	/// <see langword="true" /> when the folder exists; otherwise, <see langword="false" />, including for an empty or
-	/// invalid path.
+	/// <see langword="true" /> when the folder exists or the path is <c>/dev/null</c>, which works on Windows too;
+	/// otherwise, <see langword="false" />, including for an empty or invalid path.
 	/// </returns>
 	private static bool FolderExists(string path)
 	{
 		try
 		{
-			return Path.GetDirectoryName(Path.GetFullPath(ExpandHome(path))) is { } folder && Directory.Exists(folder);
+			return path == Redirection.NullDevice || (Path.GetDirectoryName(Path.GetFullPath(ExpandHome(path))) is { } folder && Directory.Exists(folder));
 		}
 		catch (ArgumentException)
 		{

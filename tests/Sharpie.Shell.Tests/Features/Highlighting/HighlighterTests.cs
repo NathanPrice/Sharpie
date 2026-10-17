@@ -112,6 +112,11 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("1>>")]
 	[InlineData("2>")]
 	[InlineData("2>>")]
+	[InlineData("<")]
+	[InlineData("3<")]
+	[InlineData(">|")]
+	[InlineData("&>")]
+	[InlineData("&>>")]
 	public void Highlight_RedirectToExistingFolder_MarksOnlyOperator(string @operator)
 	{
 		// Act
@@ -119,6 +124,30 @@ public sealed class HighlighterTests : IDisposable
 
 		// Assert
 		_ = tokens.Should().Equal(new Token(0, 4, TokenKind.Command), new Token(8, @operator.Length, TokenKind.Redirect));
+	}
+
+	/// <summary>
+	/// Checks that a stream copy, a here-document's delimiter and a here-string's text are marked as redirects but
+	/// never checked as paths, and that <c>/dev/null</c> is never flagged.
+	/// </summary>
+	/// <param name="line">The typed line.</param>
+	/// <param name="operatorStart">Where the operator starts.</param>
+	/// <param name="operatorLength">How long the operator is.</param>
+	[Theory]
+	[InlineData("echo hi 2>&1", 8, 3)]
+	[InlineData("echo hi >&-", 8, 2)]
+	[InlineData("echo hi 0<&9", 8, 3)]
+	[InlineData("echo hi <<EOF", 8, 2)]
+	[InlineData("echo hi <<-nope/EOF", 8, 3)]
+	[InlineData("echo hi <<< nope/x", 8, 3)]
+	[InlineData("echo hi > /dev/null", 8, 1)]
+	public void Highlight_RedirectWithoutFileTarget_MarksOnlyOperator(string line, int operatorStart, int operatorLength)
+	{
+		// Act
+		var tokens = Highlighter.Highlight(line, Builtins);
+
+		// Assert
+		_ = tokens.Should().Equal(new Token(0, 4, TokenKind.Command), new Token(operatorStart, operatorLength, TokenKind.Redirect));
 	}
 
 	/// <summary>
@@ -131,6 +160,8 @@ public sealed class HighlighterTests : IDisposable
 	[Theory]
 	[InlineData("cat ./nope", 4, 6)]
 	[InlineData("echo hi > nope/out.txt", 10, 12)]
+	[InlineData("cat < nope/in.txt", 6, 11)]
+	[InlineData("echo hi &>> nope/out", 12, 8)]
 	[InlineData("cd nope", 3, 4)]
 	[InlineData("cd notes.txt", 3, 9)]
 	public void Highlight_MissingPath_FlagsWord(string line, int start, int length)

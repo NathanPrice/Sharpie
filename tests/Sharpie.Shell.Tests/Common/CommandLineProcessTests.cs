@@ -352,6 +352,103 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks the redirects bash scripts lean on, run through the shell: reading a file, sending errors down a pipe,
+	/// a redirect on a pipeline's last stage, both streams into one file, and a command of nothing but a redirect.
+	/// </summary>
+	/// <param name="line">The command, with <c>{0}</c> for a folder holding <c>in.txt</c>.</param>
+	/// <param name="expectedOutput">What the terminal shows after the prompt.</param>
+	/// <param name="expectedFile">What <c>out.txt</c> in the folder holds afterwards, or <see langword="null" /> when it's never made.</param>
+	[Theory]
+	[InlineData("wc -l < {0}/in.txt", "2\n", null)]
+	[InlineData("ls {0}/nope 2>&1 | wc -l", "1\n", null)]
+	[InlineData("ls {0}/nope 2>/dev/null | wc -l", "0\n", null)]
+	[InlineData("cat {0}/in.txt | head -n 1 > {0}/out.txt", "", "one\n")]
+	[InlineData("echo early > {0}/out.txt; sh -c 'echo out; echo err >&2' &> {0}/out.txt", "", "out\nerr\n")]
+	[InlineData("echo early > {0}/out.txt; echo late &>> {0}/out.txt", "", "early\nlate\n")]
+	[InlineData("echo early > {0}/out.txt; > {0}/out.txt", "", "")]
+	[InlineData("> {0}/out.txt", "", "")]
+	[InlineData("echo both >&{0}/out.txt", "", "both\n")]
+	[InlineData("echo hi 2>&1 | wc -c", "3\n", null)]
+	[InlineData("cat <<< 'some text' | wc -c", "10\n", null)]
+	[InlineData("echo to-file 2>{0}/out.txt 1>&2", "", "to-file\n")]
+	public async Task Shell_WithRedirects_RoutesStreams(string line, string expectedOutput, string? expectedFile)
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		await File.WriteAllTextAsync(Path.Combine(folder, "in.txt"), "one\ntwo\n").ConfigureAwait(true);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync($"{string.Format(CultureInfo.InvariantCulture, line, folder)}\nexit\n", folder).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be($"$ {expectedOutput}$ ");
+			_ = File.Exists(Path.Combine(folder, "out.txt")).Should().Be(expectedFile is not null);
+
+			if (expectedFile is not null)
+			{
+				_ = (await File.ReadAllTextAsync(Path.Combine(folder, "out.txt")).ConfigureAwait(true)).Should().Be(string.Format(CultureInfo.InvariantCulture, expectedFile, folder));
+			}
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a background program's redirect still gets its output after the prompt comes back.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithBackgroundRedirect_WritesFile()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var file = Path.Combine(folder, "out.txt");
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync($"sh -c 'sleep 0.2; echo later' > {file} &\nsleep 1\nexit\n").ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().StartWith("$ [1] ");
+			_ = (await File.ReadAllTextAsync(file).ConfigureAwait(true)).Should().Be("later\n");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that a redirect that fails runs nothing, not even the stages whose own redirects opened.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithFailedRedirectInPipeline_RunsNothing()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync("echo ran > made.txt | cat < missing.txt\necho $?\nexit\n", folder).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("$ $ 1\n$ ");
+			_ = run.Error.Should().StartWith("Error: sharpie::shell::redirect_failed\n\n  × Can't open `missing.txt` for reading\n");
+			_ = (await File.ReadAllTextAsync(Path.Combine(folder, "made.txt")).ConfigureAwait(true)).Should().BeEmpty();
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that a redirect typed with no spaces around it still writes the file.
 	/// </summary>
 	[Fact]
@@ -432,9 +529,14 @@ public sealed class CommandLineProcessTests
 	/// <param name="start">Where the operator starts in <paramref name="line" />.</param>
 	/// <param name="label">The note the error puts under the operator.</param>
 	[Theory]
-	[InlineData("echo a <x", "<", 7, "Sharpie can't run this operator yet")]
-	[InlineData("echo a 2>&1", "2>&", 7, "Sharpie can't run this operator yet")]
+	[InlineData("echo a <>x", "<>", 7, "Sharpie can't run this operator yet")]
+	[InlineData("echo a |& cat", "|&", 7, "Sharpie can't run this operator yet")]
 	[InlineData("echo a >", ">", 7, "needs a file name after it")]
+	[InlineData("echo a 2>&", "2>&", 7, "needs a stream number after it")]
+	[InlineData("cat <<", "<<", 4, "needs a delimiter after it")]
+	[InlineData("echo a 256>x", "256>", 7, "stream numbers go up to 255")]
+	[InlineData("echo a > f | | wc", "|", 11, "needs a command on both sides")]
+	[InlineData("echo a | > f", "|", 7, "needs a command on both sides")]
 	[InlineData("echo a |", "|", 7, "needs a command on both sides")]
 	[InlineData("| echo a", "|", 0, "needs a command on both sides")]
 	[InlineData("echo a | | wc", "|", 7, "needs a command on both sides")]

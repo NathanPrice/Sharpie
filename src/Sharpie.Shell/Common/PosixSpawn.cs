@@ -48,7 +48,34 @@ internal static unsafe class PosixSpawn
 	/// shell's environment first, because .NET deletes a variable set to an empty value, and
 	/// <c>GIT_PAGER= git log</c> needs <c>GIT_PAGER</c> present and empty.
 	/// </remarks>
-	public static int Start(string path, IReadOnlyList<string> arguments, int processGroup, int input = -1, int output = -1, int error = -1, bool newSession = false, IReadOnlyList<string>? assignments = null)
+	public static int Start(string path, IReadOnlyList<string> arguments, int processGroup, int input = -1, int output = -1, int error = -1, bool newSession = false, IReadOnlyList<string>? assignments = null) =>
+		Start(path, arguments, processGroup, [.. new[] { (input, 0), (output, 1), (error, 2) }.Where(pair => pair.Item1 >= 0)], [], newSession, assignments);
+
+	/// <summary>
+	/// Starts the program at <paramref name="path" /> with the open files <paramref name="streams" /> gives it, and
+	/// returns without waiting for it.
+	/// </summary>
+	/// <param name="path">The program's full path.</param>
+	/// <param name="arguments">The program name as typed, which becomes its <c>argv[0]</c>, then its arguments.</param>
+	/// <param name="processGroup">0 for a new process group, another id to join that group, or -1 for the shell's.</param>
+	/// <param name="streams">
+	/// Each open file in the shell, and the descriptor number it gets in the program. A number not listed is the
+	/// shell's own for 0, 1 and 2, and closed above them.
+	/// </param>
+	/// <param name="closed">The descriptor numbers to close in the program.</param>
+	/// <param name="newSession"><see langword="true" /> to start the program in a new session.</param>
+	/// <param name="assignments"><c>NAME=VALUE</c> words only this program gets in its environment.</param>
+	/// <returns>
+	/// The new process id.
+	/// </returns>
+	/// <exception cref="Win32Exception">The program couldn't be started.</exception>
+	/// <remarks>
+	/// Every source is first copied above every source and target, and only then onto its target, so
+	/// <c>3&gt;&amp;1 1&gt;&amp;2 2&gt;&amp;3</c> reads all three before any is replaced, as bash's redirects do one by
+	/// one. A pair whose source is its own target still goes through a copy, which clears the close-on-exec flag .NET
+	/// sets on every file it opens.
+	/// </remarks>
+	public static int Start(string path, IReadOnlyList<string> arguments, int processGroup, IReadOnlyList<(int Source, int Target)> streams, IReadOnlyList<int> closed, bool newSession = false, IReadOnlyList<string>? assignments = null)
 	{
 		var fileActions = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
 		var attributes = NativeMemory.AllocZeroed(NativeMethods.OpaqueSize);
@@ -62,13 +89,23 @@ internal static unsafe class PosixSpawn
 			_ = NativeMethods.AttributesInit(attributes);
 
 			// The sources are pipes and files the shell opened, which .NET marks close-on-exec. dup2 clears that flag on
-			// the copy, so the program keeps exactly these three and nothing else of the shell's.
-			foreach (var (source, target) in new[] { (input, 0), (output, 1), (error, 2) })
+			// the copy, so the program keeps exactly these and nothing else of the shell's.
+			var spare = streams.Count == 0 ? 0 : streams.Max(pair => Math.Max(pair.Source, pair.Target)) + 1;
+
+			for (var index = 0; index < streams.Count; index++)
 			{
-				if (source >= 0)
-				{
-					_ = NativeMethods.FileActionsAddDup2(fileActions, source, target);
-				}
+				_ = NativeMethods.FileActionsAddDup2(fileActions, streams[index].Source, spare + index);
+			}
+
+			for (var index = 0; index < streams.Count; index++)
+			{
+				_ = NativeMethods.FileActionsAddDup2(fileActions, spare + index, streams[index].Target);
+				_ = NativeMethods.FileActionsAddClose(fileActions, spare + index);
+			}
+
+			foreach (var fd in closed)
+			{
+				_ = NativeMethods.FileActionsAddClose(fileActions, fd);
 			}
 
 			var flags = (short)(NativeMethods.SpawnSetSignalDefaults | NativeMethods.SpawnSetSignalMask);

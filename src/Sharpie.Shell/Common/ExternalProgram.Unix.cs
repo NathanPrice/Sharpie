@@ -24,6 +24,7 @@ internal static partial class ExternalProgram
 	/// <param name="background"><see langword="true" /> to return without waiting; otherwise, <see langword="false" />.</param>
 	/// <param name="input">What the program reads, or <see langword="null" /> for the terminal.</param>
 	/// <param name="assignments">The <c>NAME=VALUE</c> words only this program gets in its environment.</param>
+	/// <param name="targets">Where each of the program's streams goes, from its redirects.</param>
 	/// <param name="listJob"><see langword="false" /> for a background program in a command substitution.</param>
 	/// <returns>
 	/// The status as <see cref="Run" /> gives it.
@@ -33,14 +34,17 @@ internal static partial class ExternalProgram
 	/// listed background job, whose output then goes to the terminal: nobody would read the pipe once this returns.
 	/// An unlisted one's copies go on in <see cref="Detached" />, and another thread collects its exit.
 	/// </remarks>
-	private static int RunWithSpawn(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input, IReadOnlyList<string> assignments, bool listJob)
+	private static int RunWithSpawn(string commandName, string fullPath, string[] arguments, Stream? output, Stream? error, bool background, Stream? input, IReadOnlyList<string> assignments, StreamTarget[] targets, bool listJob)
 	{
 		using var plumbing = new Plumbing();
 
 		var detached = background && !listJob;
-		var outputFile = plumbing.Writer(output, copy: !background || detached);
-		var errorFile = plumbing.Writer(error, copy: !background || detached);
-		var inputFile = plumbing.Reader(input);
+		var (streams, closed) = Descriptors(targets, stream => stream switch
+		{
+			0 => plumbing.Reader(input),
+			1 => plumbing.Writer(output, copy: !background || detached),
+			_ => plumbing.Writer(error, copy: !background || detached),
+		});
 
 		// Rebuilt from the split words, so quotes the user typed don't show up in jobs. Pass the raw line instead if
 		// the listing ever has to match the input exactly.
@@ -49,7 +53,7 @@ internal static partial class ExternalProgram
 
 		try
 		{
-			pid = PosixSpawn.Start(fullPath, [commandName, .. arguments], JobControl.Enabled ? 0 : -1, inputFile, outputFile, errorFile, assignments: assignments);
+			pid = PosixSpawn.Start(fullPath, [commandName, .. arguments], JobControl.Enabled ? 0 : -1, streams, closed, assignments: assignments);
 		}
 		catch (Win32Exception exception)
 		{
@@ -105,6 +109,7 @@ internal static partial class ExternalProgram
 	/// <param name="stages">Each program's name followed by its arguments, in pipeline order.</param>
 	/// <param name="paths">Where each program was found, in the same order.</param>
 	/// <param name="assignments">Each stage's <c>NAME=VALUE</c> words, in the same order.</param>
+	/// <param name="targets">Where each stage's streams go, from its redirects, in the same order.</param>
 	/// <param name="pipeFail"><see langword="true" /> for <c>set -o pipefail</c>.</param>
 	/// <param name="output">Where the last program writes, or <see langword="null" /> for the terminal.</param>
 	/// <returns>
@@ -117,7 +122,7 @@ internal static partial class ExternalProgram
 	/// <c>head</c> does in <c>yes | head -n 3</c>, the earlier one gets SIGPIPE on its next write and ends, as in any
 	/// shell.
 	/// </remarks>
-	private static int RunPipelineWithSpawn(string[][] stages, string[] paths, string[][] assignments, bool pipeFail, Stream? output)
+	private static int RunPipelineWithSpawn(string[][] stages, string[] paths, string[][] assignments, StreamTarget[][] targets, bool pipeFail, Stream? output)
 	{
 		using var plumbing = new Plumbing();
 
@@ -139,10 +144,16 @@ internal static partial class ExternalProgram
 				var input = index > 0 ? (int)pipes[index - 1].SafePipeHandle.DangerousGetHandle() : -1;
 				var stageOutput = index < pipes.Length ? (int)pipes[index].ClientSafePipeHandle.DangerousGetHandle() : lastOutput;
 				var group = !JobControl.Enabled ? -1 : job?.ProcessId ?? 0;
+				var (streams, closed) = Descriptors(targets[index], stream => stream switch
+				{
+					0 => input,
+					1 => stageOutput,
+					_ => -1,
+				});
 
 				try
 				{
-					var pid = PosixSpawn.Start(paths[index], stages[index], group, input, stageOutput, assignments: assignments[index]);
+					var pid = PosixSpawn.Start(paths[index], stages[index], group, streams, closed, assignments: assignments[index]);
 
 					job ??= new Job(0, pid, string.Join(" | ", stages.Select((stage, stageIndex) => string.Join(' ', [.. assignments[stageIndex], .. stage]))));
 					job.Add(pid);
@@ -190,6 +201,48 @@ internal static partial class ExternalProgram
 
 		// The killed programs' statuses would otherwise stand in for the one that never ran.
 		return failed ? CannotRun : PipelineStatus(job!.ExitCodes, pipeFail);
+	}
+
+	/// <summary>
+	/// Works out which of the shell's open files each of a program's descriptors gets.
+	/// </summary>
+	/// <param name="targets">Where each of the program's streams goes, by number.</param>
+	/// <param name="own">
+	/// Gives the shell's descriptor for the command's own stream 0, 1 or 2, or -1 for the shell's descriptor with that
+	/// number.
+	/// </param>
+	/// <returns>
+	/// The pairs for <see cref="PosixSpawn.Start(string, IReadOnlyList{string}, int, IReadOnlyList{ValueTuple{int, int}}, IReadOnlyList{int}, bool, IReadOnlyList{string})" />,
+	/// and the descriptors to close.
+	/// </returns>
+	/// <remarks>
+	/// A closed number above 2 needs no step, since .NET opens every file close-on-exec and the program never gets it.
+	/// macOS fails the whole start on a close step for a descriptor that isn't open.
+	/// </remarks>
+	private static (List<(int Source, int Target)> Streams, List<int> Closed) Descriptors(StreamTarget[] targets, Func<int, int> own)
+	{
+		var streams = new List<(int Source, int Target)>();
+		var closed = new List<int>();
+
+		for (var fd = 0; fd < targets.Length; fd++)
+		{
+			if (targets[fd].Opened is { } file)
+			{
+				streams.Add(((int)file.SafeFileHandle.DangerousGetHandle(), fd));
+			}
+			else if (!targets[fd].Closed)
+			{
+				var inherited = targets[fd].Inherited;
+
+				streams.Add((own(inherited) is var source and >= 0 ? source : inherited, fd));
+			}
+			else if (fd <= 2)
+			{
+				closed.Add(fd);
+			}
+		}
+
+		return (streams, closed);
 	}
 
 	/// <summary>
@@ -247,6 +300,9 @@ internal static partial class ExternalProgram
 		private readonly List<Func<Task>> copiers = [];
 		private readonly List<Task> copies = [];
 
+		// One pipe per stream, so 2>&1 into one stream doesn't start two copies into it.
+		private readonly Dictionary<Stream, int> ends = [];
+
 		/// <summary>
 		/// Gets the file a program should write to for <paramref name="stream" />.
 		/// </summary>
@@ -269,6 +325,11 @@ internal static partial class ExternalProgram
 				return -1;
 			}
 
+			if (this.ends.TryGetValue(stream, out var end))
+			{
+				return end;
+			}
+
 			var pipe = new AnonymousPipeServerStream(PipeDirection.In);
 
 			this.pipes.Add(pipe);
@@ -276,7 +337,7 @@ internal static partial class ExternalProgram
 			// The pipe's end only arrives once every program holding it has exited, so the copy runs alongside.
 			this.copiers.Add(() => pipe.CopyToAsync(stream));
 
-			return (int)pipe.ClientSafePipeHandle.DangerousGetHandle();
+			return this.ends[stream] = (int)pipe.ClientSafePipeHandle.DangerousGetHandle();
 		}
 
 		/// <summary>
@@ -298,6 +359,11 @@ internal static partial class ExternalProgram
 				return -1;
 			}
 
+			if (this.ends.TryGetValue(stream, out var end))
+			{
+				return end;
+			}
+
 			var pipe = new AnonymousPipeServerStream(PipeDirection.Out);
 
 			this.pipes.Add(pipe);
@@ -317,7 +383,7 @@ internal static partial class ExternalProgram
 				}
 			}));
 
-			return (int)pipe.ClientSafePipeHandle.DangerousGetHandle();
+			return this.ends[stream] = (int)pipe.ClientSafePipeHandle.DangerousGetHandle();
 		}
 
 		/// <summary>

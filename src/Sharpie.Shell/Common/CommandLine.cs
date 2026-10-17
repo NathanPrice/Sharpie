@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Text;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Features.Variables;
@@ -17,10 +18,54 @@ namespace Sharpie.Shell.Common;
 internal readonly record struct Word(string Text, bool IsOperator, int Start = 0, int End = 0);
 
 /// <summary>
+/// One redirect taken out of a command's words, such as <c>2&gt;&amp;1</c> or <c>&lt; in.txt</c>.
+/// </summary>
+/// <param name="Stream">
+/// The stream number typed before the operator, or the default: 0 for <c>&lt;</c> operators, 1 for the others.
+/// </param>
+/// <param name="Operator">The operator without its stream number, such as <c>&gt;&amp;</c>.</param>
+/// <param name="Target">
+/// The word after the operator: a file name, a stream number or <c>-</c>, a here-string's text, or a here-document's
+/// body.
+/// </param>
+internal readonly record struct Redirect(int Stream, string Operator, Word Target);
+
+/// <summary>
+/// What the word after a redirect operator names.
+/// </summary>
+internal enum TargetKind
+{
+	/// <summary>
+	/// A file, as after <c>&gt;</c> or <c>&lt;</c>.
+	/// </summary>
+	File,
+
+	/// <summary>
+	/// Another stream's number, or <c>-</c> to close the stream, as after <c>&gt;&amp;</c> or <c>&lt;&amp;</c>.
+	/// </summary>
+	Stream,
+
+	/// <summary>
+	/// Text the command reads, as after <c>&lt;&lt;</c>, <c>&lt;&lt;-</c> or <c>&lt;&lt;&lt;</c>.
+	/// </summary>
+	Text,
+}
+
+/// <summary>
 /// Breaks a typed command line into words the way a POSIX shell does.
 /// </summary>
 internal static class CommandLine
 {
+	/// <summary>
+	/// The highest stream number a redirect may name. A bigger one is refused rather than handed to the system.
+	/// </summary>
+	internal const int MaxStream = 255;
+
+	/// <summary>
+	/// The characters of a stream number typed before a redirect operator.
+	/// </summary>
+	private static readonly char[] Digits = [.. "0123456789"];
+
 	/// <summary>
 	/// The operators bash's parser reads, longest first so that <c>&gt;&gt;</c> isn't read as two <c>&gt;</c>.
 	/// </summary>
@@ -115,12 +160,58 @@ internal static class CommandLine
 	/// each id as its own argument and an empty output adds none. <c>$((</c> is arithmetic, not a substitution, and
 	/// stays as typed.
 	/// </para>
+	/// <para>
+	/// An unquoted newline ends the words, and the here-document bodies follow it. The word after each <c>&lt;&lt;</c>
+	/// or <c>&lt;&lt;-</c> is its delimiter, read with no expansions, and comes back holding its body as
+	/// <see cref="ReadHereDocument" /> and <see cref="ExpandBody" /> describe, keeping its <c>Start</c> and
+	/// <c>End</c>. The word after <c>&lt;&lt;&lt;</c> expands variables but no wildcards, as in bash.
+	/// </para>
 	/// </remarks>
 	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null, Action<Word>? unset = null, Func<string, string>? substitute = null)
 	{
+		var words = SplitWords(line, variables, unset, substitute, out var position);
+
+		foreach (var index in HereDocumentTargets(words))
+		{
+			var delimiter = words[index];
+			var (body, end, _) = ReadHereDocument(line, position, delimiter.Text, words[index - 1].Text.EndsWith('-'));
+
+			// A variable that isn't set is reported at the delimiter, since the body's own text is gone by now.
+			words[index] = delimiter with
+			{
+				Text = variables is null || IsQuoted(line, delimiter) ? body : ExpandBody(body, variables, unset is null ? null : name => unset(name with { Start = delimiter.Start, End = delimiter.End })),
+			};
+			position = end;
+		}
+
+		return words;
+	}
+
+	/// <summary>
+	/// Splits the first line of <paramref name="line" /> into words, as <see cref="Split" /> describes, leaving each
+	/// here-document delimiter as typed.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="variables">The shell variables, or <see langword="null" /> to expand nothing.</param>
+	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
+	/// <param name="substitute">Runs a command substitution, as <see cref="Split" /> describes.</param>
+	/// <param name="bodyStart">
+	/// Where the text after the first unquoted newline starts, or the line's length when there is none.
+	/// </param>
+	/// <returns>
+	/// The words.
+	/// </returns>
+	private static Word[] SplitWords(string line, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset, Func<string, string>? substitute, out int bodyStart)
+	{
 		_ = line.ArgumentNotNull();
 
+		// Where the here-document bodies start, after the first unquoted newline.
+		var body = line.Length;
 		var words = new List<Word>();
+
+		// The variables and substitutions the word being read expands, which are none in a here-document's delimiter.
+		var expand = variables;
+		var run = substitute;
 		var word = new StringBuilder();
 
 		// The quote character that's currently open, or null outside quotes.
@@ -148,17 +239,12 @@ internal static class CommandLine
 
 			if (!hasWord)
 			{
-				wordStart = index;
-				_ = pattern.Clear();
+				StartWord(index);
 			}
 
 			if (escaped)
 			{
-				if (KeepsBackslash(quote, character))
-				{
-					Append("\\", quoted: true);
-				}
-
+				Append(KeptBackslash(quote, character), quoted: true);
 				Append(line.AsSpan(index, 1), quoted: true);
 				escaped = false;
 			}
@@ -176,20 +262,20 @@ internal static class CommandLine
 						index = close;
 
 						break;
-					case null or '"' when TryExpand(line, index, variables, quote is not null, unset, out var parts, out var end):
+					case null or '"' when TryExpand(line, index, expand, quote is not null, unset, out var parts, out var end):
 						AppendParts(parts, quoted: quote is not null, end);
 						afterExpansion = end + 1;
 						index = end;
 
 						break;
-					case null when TryExpandTilde(line, index, word, hasWord, variables, out var home, out var tildeEnd):
+					case null when TryExpandTilde(line, index, word, hasWord, expand, out var home, out var tildeEnd):
 						Append(home, quoted: true);
 						hasWord = true;
 						index = tildeEnd;
 
 						break;
 					case null when StartsComment(character, hasWord, index, afterExpansion):
-						index = line.Length;
+						index = LineEnd(line, index) - 1;
 
 						break;
 					case null when character is '\'' or '"':
@@ -198,34 +284,9 @@ internal static class CommandLine
 
 						break;
 					default:
-						{
-							if (character == quote)
-							{
-								quote = null;
-							}
-							else if (quote is null && OperatorAt(line, index) is { } typed)
-							{
-								// With no word yet the span is empty, since wordStart is then this very index.
-								var stream = IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
-								var start = stream.Length > 0 ? wordStart : index;
+						index = ReadPlain(character, index);
 
-								EndWord(index);
-								words.Add(new Word(stream + typed, IsOperator: true, start, index + typed.Length));
-								index += typed.Length - 1;
-							}
-							else if (quote is null && character is ' ' or '\t')
-							{
-								EndWord(index);
-							}
-							else
-							{
-								Append(line.AsSpan(index, 1), quoted: quote is not null);
-
-								hasWord = true;
-							}
-
-							break;
-						}
+						break;
 				}
 			}
 		}
@@ -236,8 +297,64 @@ internal static class CommandLine
 		}
 
 		EndWord(line.Length);
+		bodyStart = body;
 
 		return [.. words];
+
+		// Gets ready for a word that may start at index.
+		void StartWord(int index)
+		{
+			wordStart = index;
+			_ = pattern.Clear();
+
+			// A here-document's delimiter is matched as typed, so <<$X ends at a line holding $X, and <<$(x) at $(x).
+			(expand, run) = IsDelimiter(words) ? (null, null) : (variables, substitute);
+		}
+
+		// Reads a character that isn't a quote opening, an escape or an expansion, and gives the position of the last
+		// character it used.
+		int ReadPlain(char character, int index)
+		{
+			if (character == quote)
+			{
+				quote = null;
+			}
+			else if (quote is null && OperatorAt(line, index) is { } typed)
+			{
+				// With no word yet the span is empty, since wordStart is then this very index.
+				var stream = IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
+				// Taken digits are exactly the text typed before the operator, since IsStreamNumber allows nothing else.
+				var start = index - stream.Length;
+
+				EndWord(index);
+				words.Add(new Word(stream + typed, IsOperator: true, start, index + typed.Length));
+
+				return index + typed.Length - 1;
+			}
+			else if (quote is null && character is ' ' or '\t' or '\n')
+			{
+				EndWord(index);
+
+				return character == '\n' ? EndLine(index) : index;
+			}
+			else
+			{
+				Append(line.AsSpan(index, 1), quoted: quote is not null);
+
+				hasWord = true;
+			}
+
+			return index;
+		}
+
+		// Ends the words at the newline at index, since the here-document bodies follow it, and gives the position
+		// that ends the loop.
+		int EndLine(int index)
+		{
+			body = index + 1;
+
+			return line.Length;
+		}
 
 		// Gives the word read so far and starts a new one.
 		string TakeWord()
@@ -254,7 +371,7 @@ internal static class CommandLine
 		// split into words the way a $@ expansion is.
 		void Substitute(int start, int close)
 		{
-			var (fields, quoted) = SubstitutionFields(line, start, close, quote, word.ToString(), words, substitute);
+			var (fields, quoted) = SubstitutionFields(line, start, close, quote, word.ToString(), words, run);
 
 			AppendParts(fields, quoted, close);
 			afterExpansion = close + 1;
@@ -424,17 +541,6 @@ internal static class CommandLine
 		line[index] == '`' || (line.AsSpan(index).StartsWith("$(", StringComparison.Ordinal) && !line.AsSpan(index).StartsWith("$((", StringComparison.Ordinal));
 
 	/// <summary>
-	/// Checks whether an escaping backslash stays in the word along with the character after it.
-	/// </summary>
-	/// <param name="quote">The quote character that's open, or <see langword="null" /> outside quotes.</param>
-	/// <param name="character">The character after the backslash.</param>
-	/// <returns>
-	/// <see langword="true" /> inside double quotes before any character but <c>"</c>, <c>\</c>, <c>$</c>, <c>`</c> and
-	/// a newline, the only ones bash escapes there.
-	/// </returns>
-	private static bool KeepsBackslash(char? quote, char character) => quote == '"' && character is not ('"' or '\\' or '$' or '`' or '\n');
-
-	/// <summary>
 	/// Runs the substitution from <paramref name="start" /> to <paramref name="close" /> and cuts its output into the
 	/// words it adds.
 	/// </summary>
@@ -555,21 +661,24 @@ internal static class CommandLine
 	/// <param name="words">The words before it, which tell whether it names a redirect's file or sets a variable.</param>
 	/// <returns>
 	/// The matching paths, or just <paramref name="text" /> when nothing matches, the word is a <c>NAME=value</c> in
-	/// front of the command, or it's a redirect's file that matches more than one path.
+	/// front of the command or the text of a here-document or here-string, or it's a redirect's file that matches more
+	/// than one path.
 	/// </returns>
 	/// <remarks>
 	/// POSIX expands no wildcards in the <c>NAME=value</c> words in front of a command, so <c>A=*</c> keeps its
-	/// <c>*</c>. Bash refuses a redirect to a pattern that matches more than one file with "ambiguous redirect".
-	/// Keeping the pattern as the file name at least never writes over the first match; add that error if the
-	/// message is missed.
+	/// <c>*</c>, and bash expands none in <c>&lt;&lt;&lt; *</c>. Bash refuses a redirect to a pattern that matches more
+	/// than one file with "ambiguous redirect". Keeping the pattern as the file name at least never writes over the
+	/// first match; add that error if the message is missed.
 	/// </remarks>
 	private static string[] ExpandWildcards(string text, StringBuilder pattern, IReadOnlyDictionary<string, string>? variables, List<Word> words)
 	{
+		var previous = words is [.., { IsOperator: true, Text: var typed }] ? RedirectKind(typed) : null;
+
 		// Operators are never assignments, so the command has no name yet when the last other word is one, or none is.
 		var last = words.FindLastIndex(word => !DeclareCommand.IsAssignment(word.Text));
-		var expand = variables is not null && !(DeclareCommand.IsAssignment(text) && (last < 0 || words[last].IsOperator));
+		var expand = variables is not null && previous != TargetKind.Text && !(DeclareCommand.IsAssignment(text) && (last < 0 || words[last].IsOperator));
 		var matches = expand ? Glob.Expand(pattern.ToString()) : [];
-		var redirect = words is [.., { IsOperator: true, Text: var previous }] && previous.AsSpan().ContainsAny('<', '>');
+		var redirect = previous is not null;
 
 		return matches.Length == 0 || (redirect && matches.Length > 1) ? [text] : matches;
 	}
@@ -859,104 +968,270 @@ internal static class CommandLine
 		variables.TryGetValue(name, out var value) ? value : Environment.GetEnvironmentVariable(name) ?? string.Empty;
 
 	/// <summary>
-	/// Takes the redirections out of <paramref name="words" />: <c>&gt;</c> or <c>1&gt;</c> to write standard output,
-	/// <c>&gt;&gt;</c> or <c>1&gt;&gt;</c> to append it, and <c>2&gt;</c> or <c>2&gt;&gt;</c> to write or append
-	/// standard error, each followed by a file name.
+	/// Gets what the word after a redirect operator names.
 	/// </summary>
-	/// <param name="words">The words from <see cref="Split" />.</param>
+	/// <param name="typed">The operator, with or without the stream number typed before it.</param>
 	/// <returns>
-	/// The words left for the command, plus the file name word for each stream, kept whole so an error can point at
-	/// it. A path is <see langword="null" /> when that stream isn't redirected. <c>AppendOutput</c> and <c>AppendError</c> are <see langword="true" /> when that
-	/// stream should go on the end of its file instead of replacing it. An operator with no file name after it, or
-	/// another operator in its place, stays in the words. If the same stream is redirected twice, the last operator
-	/// and file name win.
+	/// The kind of target, or <see langword="null" /> when <paramref name="typed" /> isn't a redirect Sharpie runs.
+	/// <c>&lt;&gt;</c> isn't one yet.
 	/// </returns>
-	public static (Word[] Words, Word? OutputPath, bool AppendOutput, Word? ErrorPath, bool AppendError)
-		SplitRedirect(Word[] words)
+	internal static TargetKind? RedirectKind(string typed) => typed.ArgumentNotNull().TrimStart(Digits) switch
 	{
-		_ = words.ArgumentNotNull();
+		"<" or ">" or ">>" or ">|" or "&>" or "&>>" => TargetKind.File,
+		"<&" or ">&" => TargetKind.Stream,
+		"<<" or "<<-" or "<<<" => TargetKind.Text,
+		_ => null,
+	};
 
-		var remaining = new List<Word>();
-		Word? outputPath = null;
-		var appendOutput = false;
-		Word? errorPath = null;
-		var appendError = false;
+	/// <summary>
+	/// Takes the redirects out of one command's words, in the order they were typed.
+	/// </summary>
+	/// <param name="stage">One command of a pipeline, from <see cref="SplitPipeline" />.</param>
+	/// <returns>
+	/// The words left for the command, and each redirect with the word after its operator, kept whole so an error can
+	/// point at it. An operator with no word after it, another operator in its place, or a stream number above
+	/// <see cref="MaxStream" /> stays in the words, so the command is refused rather than run without it.
+	/// </returns>
+	/// <remarks>
+	/// <c>&gt;&amp;word</c> on stream 1 means <c>&amp;&gt;word</c> when the word isn't a stream number or <c>-</c>, as in
+	/// bash, so <c>&gt;&amp;out.txt</c> writes both streams to the file.
+	/// </remarks>
+	public static (Word[] Words, Redirect[] Redirects) SplitRedirect(Word[] stage)
+	{
+		_ = stage.ArgumentNotNull();
 
-		for (var index = 0; index < words.Length; index++)
+		var words = new List<Word>();
+		var redirects = new List<Redirect>();
+
+		for (var index = 0; index < stage.Length; index++)
 		{
-			var hasPath = index + 1 < words.Length && !words[index + 1].IsOperator;
-
-			switch (hasPath)
+			if (stage[index] is { IsOperator: true, Text: var typed } && index + 1 < stage.Length && !stage[index + 1].IsOperator
+				&& StreamOf(typed) is { } stream)
 			{
-				case true when words[index] is { IsOperator: true, Text: ">" or "1>" }:
-					outputPath = words[++index];
-					appendOutput = false;
+				var target = stage[++index];
+				var operatorText = typed.TrimStart(Digits);
 
-					break;
-				case true when words[index] is { IsOperator: true, Text: ">>" or "1>>" }:
-					outputPath = words[++index];
-					appendOutput = true;
-
-					break;
-				case true when words[index] is { IsOperator: true, Text: "2>" }:
-					errorPath = words[++index];
-					appendError = false;
-
-					break;
-				case true when words[index] is { IsOperator: true, Text: "2>>" }:
-					errorPath = words[++index];
-					appendError = true;
-
-					break;
-				default:
-					remaining.Add(words[index]);
-
-					break;
+				redirects.Add(operatorText == ">&" && stream == 1 && target.Text != "-" && !IsNumber(target.Text)
+					? new Redirect(stream, "&>", target)
+					: new Redirect(stream, operatorText, target));
+			}
+			else
+			{
+				words.Add(stage[index]);
 			}
 		}
 
-		return ([.. remaining], outputPath, appendOutput, errorPath, appendError);
+		return ([.. words], [.. redirects]);
 	}
+
+	/// <summary>
+	/// Gets the stream a redirect operator works on.
+	/// </summary>
+	/// <param name="typed">The operator as typed, stream number included.</param>
+	/// <returns>
+	/// The typed number, or 0 for a <c>&lt;</c> operator and 1 for the others when none was typed.
+	/// <see langword="null" /> when <paramref name="typed" /> isn't a redirect Sharpie runs or its number is above
+	/// <see cref="MaxStream" />.
+	/// </returns>
+	internal static int? StreamOf(string typed)
+	{
+		var digits = typed.ArgumentNotNull().Length - typed.TrimStart(Digits).Length;
+
+		return RedirectKind(typed) is null ? null
+			: digits == 0 ? (typed[0] == '<' ? 0 : 1)
+			: int.TryParse(typed.AsSpan(0, digits), NumberStyles.None, CultureInfo.InvariantCulture, out var stream) && stream <= MaxStream ? stream
+			: null;
+	}
+
+	/// <summary>
+	/// Checks whether <paramref name="text" /> is a stream number, as in <c>2&gt;&amp;1</c>.
+	/// </summary>
+	/// <param name="text">The word after the operator.</param>
+	/// <returns>
+	/// <see langword="true" /> when it's one or more digits and nothing else.
+	/// </returns>
+	internal static bool IsNumber(string text) => text.Length > 0 && !text.AsSpan().ContainsAnyExceptInRange('0', '9');
 
 	/// <summary>
 	/// Splits <paramref name="words" /> at every <c>|</c> operator into the commands of a pipeline.
 	/// </summary>
-	/// <param name="words">The words from <see cref="Split" />, with redirects already taken out.</param>
+	/// <param name="words">The words from <see cref="Split" />.</param>
 	/// <returns>
-	/// Each command's name followed by its arguments, in order. With no <c>|</c> this is one command. An empty array
-	/// means the words can't run: some command was empty, as in <c>a |</c> or <c>a | | b</c>, or another operator was
-	/// left over, such as <c>&lt;</c> or a <c>&gt;</c> with no file name.
+	/// Each command's words, redirects included, in order. With no <c>|</c> this is one command. A command is empty
+	/// when a <c>|</c> has nothing on one side, as in <c>a |</c> or <c>a | | b</c>.
 	/// </returns>
-	public static string[][] SplitPipeline(Word[] words)
+	public static Word[][] SplitPipeline(Word[] words)
 	{
 		_ = words.ArgumentNotNull();
 
-		var stages = new List<string[]>();
+		var stages = new List<Word[]>();
 		var start = 0;
 
 		for (var index = 0; index <= words.Length; index++)
 		{
-			if (index != words.Length && words[index] is not { IsOperator: true, Text: "|" })
+			if (index == words.Length || words[index] is { IsOperator: true, Text: "|" })
 			{
-				if (words[index].IsOperator)
-				{
-					return [];
-				}
-
-				continue;
+				stages.Add(words[start..index]);
+				start = index + 1;
 			}
-
-			if (index == start)
-			{
-				return [];
-			}
-
-			stages.Add([.. words[start..index].Select(word => word.Text)]);
-			start = index + 1;
 		}
 
 		return [.. stages];
 	}
+
+	/// <summary>
+	/// Gets the here-documents a command's first line starts, in order.
+	/// </summary>
+	/// <param name="command">The command as typed, or just its first line.</param>
+	/// <returns>
+	/// Each <c>&lt;&lt;</c> or <c>&lt;&lt;-</c>'s delimiter with its quotes removed, whether any part of it was quoted
+	/// or escaped, which keeps the body literal, and whether it's <c>&lt;&lt;-</c>, which drops leading tabs.
+	/// </returns>
+	internal static (string Delimiter, bool Quoted, bool StripTabs)[] HereDocuments(string command)
+	{
+		var words = SplitWords(command, null, null, null, out _);
+
+		return [.. HereDocumentTargets(words).Select(index => (words[index].Text, IsQuoted(command, words[index]), words[index - 1].Text.EndsWith('-')))];
+	}
+
+	/// <summary>
+	/// Reads one here-document's body, line by line, up to the line that holds only its delimiter.
+	/// </summary>
+	/// <param name="text">The text holding the body.</param>
+	/// <param name="start">Where the body's first line starts.</param>
+	/// <param name="delimiter">The delimiter, quotes removed.</param>
+	/// <param name="stripTabs">
+	/// <see langword="true" /> for <c>&lt;&lt;-</c>, which drops the tabs at the start of each line, the delimiter
+	/// line's included.
+	/// </param>
+	/// <returns>
+	/// The body with every line ending in a newline and nothing expanded, where the text after the delimiter line
+	/// starts, and whether the delimiter line was found. Without it the body runs to the end of
+	/// <paramref name="text" />.
+	/// </returns>
+	internal static (string Body, int End, bool Closed) ReadHereDocument(string text, int start, string delimiter, bool stripTabs)
+	{
+		_ = text.ArgumentNotNull();
+
+		var body = new StringBuilder();
+		var position = start;
+
+		while (position < text.Length)
+		{
+			var newline = text.IndexOf('\n', position);
+			var lineEnd = newline < 0 ? text.Length : newline;
+			var line = text[position..lineEnd];
+
+			position = Math.Min(lineEnd + 1, text.Length);
+			line = stripTabs ? line.TrimStart('\t') : line;
+
+			if (line == delimiter)
+			{
+				return (body.ToString(), position, true);
+			}
+
+			_ = body.Append(line).Append('\n');
+		}
+
+		return (body.ToString(), position, false);
+	}
+
+	/// <summary>
+	/// Expands the body of a here-document whose delimiter wasn't quoted, as bash does.
+	/// </summary>
+	/// <param name="body">The body from <see cref="ReadHereDocument" />.</param>
+	/// <param name="variables">The shell variables.</param>
+	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
+	/// <returns>
+	/// The body with <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c> and the positional parameters replaced as
+	/// <see cref="Split" /> replaces them inside double quotes, except that <c>$@</c> joins its parameters too. A
+	/// backslash is dropped only before <c>$</c>, <c>`</c>, <c>\</c> or a newline, and a backslash before a newline
+	/// joins the two lines. Quotes are ordinary characters.
+	/// </returns>
+	internal static string ExpandBody(string body, IReadOnlyDictionary<string, string> variables, Action<Word>? unset = null)
+	{
+		var text = new StringBuilder();
+
+		for (var index = 0; index < body.Length; index++)
+		{
+			if (body[index] == '\\' && index + 1 < body.Length && body[index + 1] is '$' or '`' or '\\' or '\n')
+			{
+				_ = body[++index] == '\n' ? text : text.Append(body[index]);
+			}
+			else if (TryExpand(body, index, variables, quoted: true, unset, out var parts, out var end))
+			{
+				_ = text.AppendJoin(' ', parts);
+				index = end;
+			}
+			else
+			{
+				_ = text.Append(body[index]);
+			}
+		}
+
+		return text.ToString();
+	}
+
+	/// <summary>
+	/// Gets the backslash that stays in a word before an escaped character, if any.
+	/// </summary>
+	/// <param name="quote">The quote that's open, or <see langword="null" />.</param>
+	/// <param name="character">The escaped character.</param>
+	/// <returns>
+	/// <c>\</c> inside double quotes before anything but <c>"</c>, <c>\</c>, <c>$</c>, <c>`</c> and a newline, which
+	/// are the only characters bash escapes there; otherwise, an empty string.
+	/// </returns>
+	private static string KeptBackslash(char? quote, char character) =>
+		quote == '"' && character is not ('"' or '\\' or '$' or '`' or '\n') ? "\\" : string.Empty;
+
+	/// <summary>
+	/// Finds where the line holding <paramref name="index" /> ends.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	/// <param name="index">A position in it.</param>
+	/// <returns>
+	/// The position of the next newline, or the text's length when there is none.
+	/// </returns>
+	private static int LineEnd(string text, int index) => text.IndexOf('\n', index) is var newline and >= 0 ? newline : text.Length;
+
+	/// <summary>
+	/// Finds the words that are here-document delimiters.
+	/// </summary>
+	/// <param name="words">The words of a command's first line.</param>
+	/// <returns>
+	/// The index of each word right after a <c>&lt;&lt;</c> or <c>&lt;&lt;-</c>, in order. An operator in its place
+	/// isn't one.
+	/// </returns>
+	private static IEnumerable<int> HereDocumentTargets(Word[] words) =>
+		Enumerable.Range(1, Math.Max(words.Length - 1, 0)).Where(index => IsDelimiterOperator(words[index - 1]) && !words[index].IsOperator);
+
+	/// <summary>
+	/// Checks whether the word being read right now is a here-document delimiter, which expands nothing.
+	/// </summary>
+	/// <param name="words">The words read before it.</param>
+	/// <returns>
+	/// <see langword="true" /> when the last of them is <c>&lt;&lt;</c> or <c>&lt;&lt;-</c>.
+	/// </returns>
+	private static bool IsDelimiter(List<Word> words) => words is [.., var previous] && IsDelimiterOperator(previous);
+
+	/// <summary>
+	/// Checks whether <paramref name="word" /> is <c>&lt;&lt;</c> or <c>&lt;&lt;-</c>, with or without a stream number.
+	/// </summary>
+	/// <param name="word">The word.</param>
+	/// <returns>
+	/// <see langword="true" /> for either operator.
+	/// </returns>
+	private static bool IsDelimiterOperator(Word word) => word is { IsOperator: true, Text: var typed } && typed.TrimStart(Digits) is "<<" or "<<-";
+
+	/// <summary>
+	/// Checks whether any part of a here-document's delimiter was quoted or escaped, which keeps the body literal.
+	/// </summary>
+	/// <param name="line">The command as typed.</param>
+	/// <param name="delimiter">The delimiter word.</param>
+	/// <returns>
+	/// <see langword="true" /> when its typed text holds <c>'</c>, <c>"</c> or <c>\</c>.
+	/// </returns>
+	private static bool IsQuoted(string line, Word delimiter) => line.AsSpan(delimiter.Start, delimiter.End - delimiter.Start).ContainsAny('\'', '"', '\\');
 
 	/// <summary>
 	/// Gets the words of a line that only runs <c>man</c> or <c>dman</c>, which the terminal window shows in its own
@@ -978,14 +1253,14 @@ internal static class CommandLine
 
 		// Only notes the substitution, so nothing runs before the shell runs the line itself.
 		var substituted = false;
-		var (words, outputPath, _, errorPath, _) = SplitRedirect(Split(line, substitute: _ =>
+		var (words, redirects) = SplitRedirect(Split(line, substitute: _ =>
 		{
 			substituted = true;
 
 			return string.Empty;
 		}));
 
-		return !substituted && words is [{ IsOperator: false, Text: "man" or "dman" }, _, ..] && outputPath is null && errorPath is null
+		return !substituted && words is [{ IsOperator: false, Text: "man" or "dman" }, _, ..] && redirects is []
 			&& !Array.Exists(words, word => word.IsOperator)
 			? [.. words.Select(word => word.Text)]
 			: null;

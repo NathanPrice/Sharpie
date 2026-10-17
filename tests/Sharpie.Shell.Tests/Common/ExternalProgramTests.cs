@@ -479,6 +479,108 @@ public sealed partial class ExternalProgramTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that <c>3&gt;&amp;1 1&gt;&amp;2 2&gt;&amp;3</c> swaps a program's output and errors, which needs every
+	/// stream read before any is replaced.
+	/// </summary>
+	[Fact]
+	public void Run_WithSwappedStreams_SwapsOutputAndErrors()
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "sampletool", executable: true, "#!/bin/sh\necho out\necho err >&2\n");
+		using var output = new MemoryStream();
+		using var error = new MemoryStream();
+		using var redirection = Open("sampletool 3>&1 1>&2 2>&3");
+
+		// Act
+		_ = ExternalProgram.Run("sampletool", [], output, error, redirection: redirection);
+
+		// Assert
+		_ = System.Text.Encoding.UTF8.GetString(output.ToArray()).Should().Be("err\n");
+		_ = System.Text.Encoding.UTF8.GetString(error.ToArray()).Should().Be("out\n");
+	}
+
+	/// <summary>
+	/// Checks that a file opened on a stream past 2 reaches the program under that number, and that a closed stream
+	/// is closed in the program.
+	/// </summary>
+	[Fact]
+	public void Run_WithHigherStream_GivesProgramThatNumber()
+	{
+		// Arrange
+		var file = Path.Combine(this.folder, "three.txt");
+		_ = ShellEnvironment.CreateFile(this.folder, "sampletool", executable: true, "#!/bin/sh\necho x >&3\necho y >&4 || echo closed >&3\n");
+		using var redirection = Open($"sampletool 3> {file} 4>&1 4>&-");
+
+		// Act
+		var status = ExternalProgram.Run("sampletool", [], redirection: redirection);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = File.ReadAllText(file).Should().Be("x\nclosed\n");
+	}
+
+	/// <summary>
+	/// Checks that <c>2&gt;&amp;1</c> into one stream copies the program's output and errors into it once each, in the
+	/// order they were written.
+	/// </summary>
+	[Fact]
+	public void Run_WithErrorsCopiedToOutput_WritesBothIntoOneStream()
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "sampletool", executable: true, "#!/bin/sh\necho one\necho two >&2\necho three\n");
+		using var output = new MemoryStream();
+		using var redirection = Open("sampletool 2>&1");
+
+		// Act
+		_ = ExternalProgram.Run("sampletool", [], output, redirection: redirection);
+
+		// Assert
+		_ = System.Text.Encoding.UTF8.GetString(output.ToArray()).Should().Be("one\ntwo\nthree\n");
+	}
+
+	/// <summary>
+	/// Checks that a here-document on a pipeline's first stage is what that stage reads, and that a redirect on the
+	/// last stage takes its output and errors.
+	/// </summary>
+	[Fact]
+	public void RunPipeline_WithHereDocumentOnFirstStage_FeedsIt()
+	{
+		// Arrange
+		var file = Path.Combine(this.folder, "out.txt");
+		_ = ShellEnvironment.CreateFile(this.folder, "reader", executable: true, "#!/bin/sh\nread line\necho \"got $line\"\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "brackets", executable: true, "#!/bin/sh\nread line\necho \"[$line]\"\necho done >&2\n");
+		using var first = Open("reader <<EOF\nhello\nEOF");
+		using var last = Open($"brackets > {file} 2>&1");
+
+		// Act
+		var status = ExternalProgram.RunPipeline([["reader"], ["brackets"]], _ => { }, redirections: [first, last]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = File.ReadAllText(file).Should().Be("[got hello]\ndone\n");
+	}
+
+	/// <summary>
+	/// Checks that <c>2&gt;&amp;1 |</c> sends a stage's errors down the pipe with its output.
+	/// </summary>
+	[Fact]
+	public void RunPipeline_WithErrorsCopiedToPipe_SendsBothToNextStage()
+	{
+		// Arrange
+		var file = Path.Combine(this.folder, "out.txt");
+		_ = ShellEnvironment.CreateFile(this.folder, "complain", executable: true, "#!/bin/sh\necho oops >&2\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "reader", executable: true, "#!/bin/sh\nread line\necho \"got $line\"\n");
+		using var first = Open("complain 2>&1");
+		using var last = Open($"reader > {file}");
+
+		// Act
+		_ = ExternalProgram.RunPipeline([["complain"], ["reader"]], _ => { }, redirections: [first, last]);
+
+		// Assert
+		_ = File.ReadAllText(file).Should().Be("got oops\n");
+	}
+
+	/// <summary>
 	/// Checks that a new job is numbered one past the newest job still listed, like bash, even after older ones ended.
 	/// </summary>
 	[Fact]
@@ -502,6 +604,15 @@ public sealed partial class ExternalProgramTests : IDisposable
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();
+
+	/// <summary>
+	/// Opens the redirects of <paramref name="line" />.
+	/// </summary>
+	/// <param name="line">A command with redirects that all open.</param>
+	/// <returns>
+	/// The opened redirects.
+	/// </returns>
+	private static Redirection Open(string line) => Redirection.Open(CommandLine.SplitRedirect(CommandLine.Split(line)).Redirects, line, noClobber: false)!;
 
 	/// <summary>
 	/// Matches the <c>[job] pid</c> line a background program prints, capturing the process id.

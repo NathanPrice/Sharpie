@@ -404,6 +404,54 @@ internal static unsafe partial class NativeMethods
 	internal static partial int SignalSetAdd(void* signals, int signal);
 
 	/// <summary>
+	/// Adds a step that closes <paramref name="fd" /> in the child.
+	/// </summary>
+	/// <param name="fileActions">The list.</param>
+	/// <param name="fd">The descriptor to close.</param>
+	/// <returns>
+	/// 0, or an error number.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "posix_spawn_file_actions_addclose")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int FileActionsAddClose(void* fileActions, int fd);
+
+	/// <summary>
+	/// Checks whether <paramref name="file" /> is a regular file, not a device, pipe or socket.
+	/// </summary>
+	/// <param name="file">The open file.</param>
+	/// <returns>
+	/// <see langword="true" /> for a regular file, or when the check fails.
+	/// </returns>
+	/// <remarks>
+	/// The C library's <c>struct stat</c> is laid out differently on every OS and processor, and glibc only exports
+	/// <c>fstat</c> itself from 2.33. .NET's own native library wraps it in one layout everywhere, with the file type
+	/// in the second field, and .NET's file classes call it the same way.
+	/// </remarks>
+	internal static bool IsRegularFile(SafeHandle file)
+	{
+		// FileStatus is about 130 bytes; the type is in Mode, after the 4-byte Flags.
+		const int ModeOffset = 4;
+		const int TypeMask = 0xF000;
+		const int Regular = 0x8000;
+
+		var status = stackalloc byte[512];
+
+		return FileStatus(file, status) != 0 || (*(int*)(status + ModeOffset) & TypeMask) == Regular;
+	}
+
+	/// <summary>
+	/// Reads what the system knows about an open file, through .NET's own native library.
+	/// </summary>
+	/// <param name="file">The open file.</param>
+	/// <param name="status">Receives .NET's <c>FileStatus</c>.</param>
+	/// <returns>
+	/// 0, or -1 with the reason in the last error.
+	/// </returns>
+	[LibraryImport("libSystem.Native", EntryPoint = "SystemNative_FStat", SetLastError = true)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial int FileStatus(SafeHandle file, byte* status);
+
+	/// <summary>
 	/// Waits for a child process to change state.
 	/// </summary>
 	/// <param name="pid">A process id, or minus a process group id to wait for any process in that group.</param>

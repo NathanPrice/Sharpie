@@ -1,6 +1,7 @@
 using System.Collections;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Text;
 using Serilog;
@@ -212,6 +213,28 @@ internal static class Program
 	}
 
 	/// <summary>
+	/// Shows the banner and imports the login shell's aliases, for a shell running in the Sharpie window.
+	/// </summary>
+	/// <param name="commands">The builtins, by name, which an imported alias may start with.</param>
+	/// <param name="aliases">The <c>alias</c> builtin, which gets the imported aliases.</param>
+	/// <returns>
+	/// <see langword="true" /> when the banner was printed.
+	/// </returns>
+	private static bool StartWindow(Dictionary<string, ICommand> commands, AliasCommand aliases)
+	{
+		// Run gives null when fastfetch isn't installed, and prints nothing.
+		var bannerShown = ExternalProgram.Run("fastfetch", []) is not null;
+
+		// After the banner, so the window isn't blank while the user's shell starts up.
+		if (Environment.GetEnvironmentVariable(ImportVariable) != "0")
+		{
+			ShellImport.Run(Environment.GetEnvironmentVariable("SHELL"), Environment.ProcessPath!, aliases, commands.Keys);
+		}
+
+		return bannerShown;
+	}
+
+	/// <summary>
 	/// Reads and runs one command line at a time until <c>exit</c> ends the process or standard input closes.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
@@ -230,15 +253,9 @@ internal static class Program
 		var variables = declare.Variables;
 
 		// The window features below are off when the variable is unset, so the shell's own process tests never touch
-		// the keyring. Run gives null when fastfetch isn't installed, and prints nothing.
+		// the keyring.
 		var inWindow = Environment.GetEnvironmentVariable(WindowVariable) == "1";
-		var bannerShown = inWindow && ExternalProgram.Run("fastfetch", []) is not null;
-
-		// After the banner, so the window isn't blank while the user's shell starts up.
-		if (inWindow && Environment.GetEnvironmentVariable(ImportVariable) != "0")
-		{
-			ShellImport.Run(Environment.GetEnvironmentVariable("SHELL"), Environment.ProcessPath!, aliases, commands.Keys);
-		}
+		var bannerShown = inWindow && StartWindow(commands, aliases);
 
 		// After the import so the user's own settings win, and before the history starts so a HISTFILE set there is used.
 		if (runRcFile)
@@ -641,6 +658,7 @@ internal static class Program
 	/// <remarks>
 	/// Under <c>set -u</c> a shell that isn't interactive exits with 127 at the first unset variable, as bash does.
 	/// </remarks>
+	[SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "Each opened Redirection goes into the list, which the finally disposes.")]
 	private static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, string line)
 	{
 		var substituted = 0;
@@ -660,7 +678,7 @@ internal static class Program
 			return ReportUnset(line, missing, settings.Interactive);
 		}
 
-		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(CommandCommand.Unwrap(aliases.Expand(split, declare.Variables, Substitution)));
+		var words = CommandCommand.Unwrap(aliases.Expand(split, declare.Variables, Substitution));
 
 		// A trailing & runs the command in the background.
 		var background = words is [.., { IsOperator: true, Text: "&" }];
@@ -676,89 +694,76 @@ internal static class Program
 			return substituted;
 		}
 
-		if (background && NeedsShellCopy(words, commands))
+		var parts = CommandLine.SplitPipeline(words).Select(CommandLine.SplitRedirect).ToArray();
+
+		if (background && NeedsShellCopy(parts, commands))
 		{
-			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), ["-c", line.EndsWith('&') ? line[..^1] : line], [], standardOutput, null, background: true);
+			using var none = Redirection.Open([], line, noClobber: false)!;
+
+			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), ["-c", line.EndsWith('&') ? line[..^1] : line], [], standardOutput, background: true, none);
 		}
 
-		// Redirects aren't applied to a pipeline.
-		var stages = CommandLine.SplitPipeline(words);
-
-		// Operators the shell can't run yet, like < or 2>&1, are refused rather than passed on as arguments.
-		if (stages is [])
+		// Operators the shell can't run yet, like <>, are refused rather than passed on as arguments.
+		if (Unusable(words, parts) is { } unusable)
 		{
-			ReportUnusable(line, words);
+			ReportUnusable(line, unusable);
 
 			return CommandList.UnsupportedStatus;
 		}
 
-		Trace(settings, stages);
+		var redirections = new List<Redirection>();
 
-		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
-		if (stages is [var only] && Array.TrueForAll(only, DeclareCommand.IsAssignment))
+		try
 		{
-			return AssignmentStatus(declare.Run(only), substituted);
-		}
-
-		// NAME=VALUE words in front of a command go into that command's environment only, as in POSIX. The last word
-		// is always kept as the command, so A=1 | cat still reports A=1 as not found rather than running nothing.
-		var assignments = stages.Select(stage => stage.TakeWhile(DeclareCommand.IsAssignment).Take(stage.Length - 1).ToArray()).ToArray();
-
-		stages = [.. stages.Select((stage, index) => stage[assignments[index].Length..])];
-
-		// The word each stage's command name came from, in stage order, for a not-found report to point at.
-		var names = Enumerable.Range(0, words.Length)
-			.Where(index => index == 0 || words[index - 1] is { IsOperator: true, Text: "|" })
-			.Select((start, stage) => words[start + assignments[stage].Length])
-			.ToArray();
-		var arguments = stages[0][1..];
-
-		using var output = OpenRedirect(outputPath, appendOutput, out var outputFailed);
-
-		if (outputFailed)
-		{
-			return 1;
-		}
-
-		using var error = OpenRedirect(errorPath, appendError, out var errorFailed);
-
-		return errorFailed ? 1
-			: stages.Length > 1 ? RunPipeline(stages)
-			: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltinOrExec(command, declare, settings, arguments, assignments[0], output, error)
-			: RunProgram(names[0], arguments, assignments[0], OutputOf(output), error, background);
-
-		// Opens the redirect file at path, or gives null when path is null. The file is created if missing, then
-		// emptied, or positioned at its end when append is true. Sets failed after reporting the reason when the file
-		// can't be opened.
-		FileStream? OpenRedirect(Word? path, bool append, out bool failed)
-		{
-			failed = false;
-
-			if (path is not { } file)
+			// Every stage's files are opened before anything runs, so a redirect that fails runs nothing, and > f on
+			// its own still creates f.
+			foreach (var (_, redirects) in parts)
 			{
-				return null;
-			}
-
-			try
-			{
-				// Shared, because .NET turns the share mode into a file lock on Linux and macOS. File.Create's exclusive
-				// lock made a second shell's > /dev/null fail while the first one's was open; bash takes no lock.
-				return new FileStream(file.Text, append ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-			}
-			// A missing folder, a read-only file, or an empty name like > "" would otherwise end the whole shell.
-			catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
-			{
-				new ShellError("sharpie::shell::redirect_failed", $"Can't open `{file.Text}` for writing")
+				if (Redirection.Open(redirects, line, noClobber: false) is not { } opened)
 				{
-					Source = line,
-					Start = file.Start,
-					End = file.End,
-					Label = exception.Message,
-				}.Write();
-				failed = true;
+					return 1;
+				}
 
-				return null;
+				redirections.Add(opened);
 			}
+
+			return parts is [{ Words: [] }] ? substituted : Run([.. parts.Select(part => part.Words)], [.. redirections]);
+		}
+		finally
+		{
+			foreach (var redirection in redirections)
+			{
+				redirection.Dispose();
+			}
+		}
+
+		// Runs the stages once their redirects are open.
+		int Run(Word[][] stageWords, Redirection[] redirections)
+		{
+			var stages = stageWords.Select(stage => stage.Select(word => word.Text).ToArray()).ToArray();
+
+			Trace(settings, stages);
+
+			// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
+			if (stages is [var only] && Array.TrueForAll(only, DeclareCommand.IsAssignment))
+			{
+				return AssignmentStatus(declare.Run(only), substituted);
+			}
+
+			// NAME=VALUE words in front of a command go into that command's environment only, as in POSIX. The last
+			// word is always kept as the command, so A=1 | cat still reports A=1 as not found rather than running
+			// nothing.
+			var assignments = stages.Select(stage => stage.TakeWhile(DeclareCommand.IsAssignment).Take(stage.Length - 1).ToArray()).ToArray();
+
+			stages = [.. stages.Select((stage, index) => stage[assignments[index].Length..])];
+
+			// The word each stage's command name came from, in stage order, for a not-found report to point at.
+			var names = stageWords.Select((stage, index) => stage[assignments[index].Length]).ToArray();
+			var arguments = stages[0][1..];
+
+			return stages.Length > 1 ? RunPipeline(stages, assignments, names, redirections)
+				: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltinOrExec(command, declare, settings, arguments, assignments[0], redirections[0].Targets)
+				: RunProgram(names[0], arguments, assignments[0], standardOutput, background, redirections[0]);
 		}
 
 		// Runs the stages as a pipeline, the last one writing to standardOutput. A two-stage pipeline, left | right, may have a builtin on either side. No
@@ -770,7 +775,7 @@ internal static class Program
 		// stages builtins aren't looked up, so echo runs the program on PATH and type isn't found. Handling them
 		// there means running the stages before the last builtin into Stream.Null.
 		// The status is the last stage's, as in bash, or with pipefail the last failing stage's.
-		int RunPipeline(string[][] stages)
+		int RunPipeline(string[][] stages, string[][] assignments, Word[] names, Redirection[] redirections)
 		{
 			var left = stages[0];
 			var right = stages[^1];
@@ -779,51 +784,76 @@ internal static class Program
 
 			if (leftBuiltin is null && rightBuiltin is null)
 			{
-				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], null), assignments, settings.PipeFail, standardOutput);
+				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], redirections[index].Targets, null), assignments, settings.PipeFail, standardOutput, redirections);
 			}
 
 			if (rightBuiltin is not null)
 			{
 				var leftStatus = leftBuiltin is not null
-					? RunBuiltin(leftBuiltin, declare, left[1..], assignments[0], Stream.Null, null)
-					: RunProgram(names[0], left[1..], assignments[0], Stream.Null, null, background: false);
+					? RunBuiltin(leftBuiltin, declare, left[1..], assignments[0], Stream.Null, redirections[0].Targets)
+					: RunProgram(names[0], left[1..], assignments[0], Stream.Null, background: false, redirections[0]);
 
-				return ExternalProgram.PipelineStatus([leftStatus, RunBuiltin(rightBuiltin, declare, right[1..], assignments[^1], standardOutput, null)], settings.PipeFail);
+				return ExternalProgram.PipelineStatus([leftStatus, RunBuiltin(rightBuiltin, declare, right[1..], assignments[^1], standardOutput, redirections[^1].Targets)], settings.PipeFail);
 			}
 
 			using var buffer = new MemoryStream();
 
-			var builtinStatus = RunBuiltin(leftBuiltin!, declare, left[1..], assignments[0], buffer, null);
+			var builtinStatus = RunBuiltin(leftBuiltin!, declare, left[1..], assignments[0], buffer, redirections[0].Targets);
 
 			buffer.Position = 0;
 
-			return ExternalProgram.PipelineStatus([builtinStatus, RunProgram(names[^1], right[1..], assignments[^1], standardOutput, null, background: false, buffer)], settings.PipeFail);
+			return ExternalProgram.PipelineStatus([builtinStatus, RunProgram(names[^1], right[1..], assignments[^1], standardOutput, background: false, redirections[^1], buffer)], settings.PipeFail);
 		}
 
 		// Runs a program on PATH with its NAME=VALUE words in its environment, or reports that it isn't there.
-		int RunProgram(Word name, string[] arguments, string[] assignments, Stream? output, Stream? error, bool background, Stream? input = null)
+		int RunProgram(Word name, string[] arguments, string[] assignments, Stream? output, bool background, Redirection redirection, Stream? input = null)
 		{
-			if (ExternalProgram.Run(name.Text, arguments, output, error, background, input, assignments, listJob: substitutionDepth == 0) is { } status)
+			if (ExternalProgram.Run(name.Text, arguments, output, null, background, input, assignments, redirection, listJob: substitutionDepth == 0) is { } status)
 			{
 				return status;
 			}
 
-			ReportNotFound(commands, aliases, line, name, error);
+			ReportNotFound(commands, aliases, line, name, redirection.Targets, output);
 
 			return ExternalProgram.NotFound;
 		}
 	}
 
 	/// <summary>
-	/// Runs a builtin with <see cref="Console.Out" /> and <see cref="Console.Error" /> pointed at
-	/// <paramref name="output" /> and <paramref name="error" /> when given, then puts the terminal back.
+	/// Finds the operator that keeps a command from running.
+	/// </summary>
+	/// <param name="words">The command's words.</param>
+	/// <param name="parts">Its stages, with their redirects taken out.</param>
+	/// <returns>
+	/// The first operator left in a stage, which is one Sharpie can't run or a redirect with nothing usable after it,
+	/// else a <c>|</c> with no command on one side. <see langword="null" /> when the command can run.
+	/// </returns>
+	/// <remarks>
+	/// A command of nothing but redirects can run on its own, as <c>&gt; f</c> does, but not as one stage of a
+	/// pipeline. Bash runs those too; this reports the <c>|</c> before them instead.
+	/// </remarks>
+	private static Word? Unusable(Word[] words, (Word[] Words, Redirect[] Redirects)[] parts)
+	{
+		if (parts.SelectMany(part => part.Words).FirstOrDefault(word => word.IsOperator) is { IsOperator: true } left)
+		{
+			return left;
+		}
+
+		var empty = parts.Length > 1 ? Array.FindIndex(parts, part => part.Words is []) : -1;
+
+		return empty < 0 ? null : Array.FindAll(words, word => word is { IsOperator: true, Text: "|" })[Math.Max(empty - 1, 0)];
+	}
+
+	/// <summary>
+	/// Runs a builtin with <see cref="Console.Out" /> and <see cref="Console.Error" /> pointed where its streams 1 and 2
+	/// go, then puts the terminal back.
 	/// </summary>
 	/// <param name="command">The builtin.</param>
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
 	/// <param name="arguments">The words after the builtin's name.</param>
 	/// <param name="assignments">The <c>NAME=VALUE</c> words typed in front of the builtin's name.</param>
-	/// <param name="output">Where the builtin's output goes, or <see langword="null" /> for the terminal.</param>
-	/// <param name="error">Where the builtin's errors go, or <see langword="null" /> for the terminal.</param>
+	/// <param name="output">Where the builtin's own output goes, or <see langword="null" /> for the terminal.</param>
+	/// <param name="targets">Where its streams go once its redirects are applied.</param>
 	/// <returns>
 	/// The builtin's status.
 	/// </returns>
@@ -837,58 +867,112 @@ internal static class Program
 	/// write where the builtin does.
 	/// </para>
 	/// </remarks>
-	private static int RunBuiltin(ICommand command, DeclareCommand declare, string[] arguments, string[] assignments, Stream? output, Stream? error)
+	private static int RunBuiltin(ICommand command, DeclareCommand declare, string[] arguments, string[] assignments, Stream? output, StreamTarget[] targets)
 	{
 		// Every old value is read before any is set, so A=1 A=2 still puts back the value from before both.
 		var saved = assignments.Select(assignment => assignment.Split('=', 2))
 			.Select(parts => (Name: parts[0], Value: parts[1], Old: Environment.GetEnvironmentVariable(parts[0])))
 			.ToArray();
-		var terminalOut = Console.Out;
-		var terminalError = Console.Error;
-		var terminalColor = ShellError.UseColor;
-		var outer = standardOutput;
 
-		using var outWriter = output is null ? null : new StreamWriter(output, leaveOpen: true);
-		using var errorWriter = error is null ? null : new StreamWriter(error, leaveOpen: true);
-
-		Console.SetOut(outWriter ?? terminalOut);
-		Console.SetError(errorWriter ?? terminalError);
-
-		// A report written into a 2> file shouldn't carry color codes.
-		ShellError.UseColor &= error is null;
-		standardOutput = output ?? standardOutput;
-
-		try
+		return WithStreams(targets, output, () =>
 		{
-			foreach (var (name, value, _) in saved)
-			{
-				Environment.SetEnvironmentVariable(name, value);
-			}
+			var outer = standardOutput;
 
-			return declare.RunWith(assignments, () => command.Run(arguments));
-		}
-		finally
-		{
-			foreach (var (name, _, old) in saved)
-			{
-				Environment.SetEnvironmentVariable(name, old);
-			}
+			standardOutput = targets[1].Opened ?? (targets[1] == StreamTarget.Own(1) ? output : standardOutput);
 
-			Console.SetOut(terminalOut);
-			Console.SetError(terminalError);
-			ShellError.UseColor = terminalColor;
-			standardOutput = outer;
-		}
+			try
+			{
+				foreach (var (name, value, _) in saved)
+				{
+					Environment.SetEnvironmentVariable(name, value);
+				}
+
+				return declare.RunWith(assignments, () => command.Run(arguments));
+			}
+			finally
+			{
+				foreach (var (name, _, old) in saved)
+				{
+					Environment.SetEnvironmentVariable(name, old);
+				}
+
+				standardOutput = outer;
+			}
+		});
 	}
 
 	/// <summary>
-	/// Gets where a command writes.
+	/// Runs <paramref name="run" /> inside the shell with <see cref="Console.Out" /> and <see cref="Console.Error" />
+	/// pointed where a command's streams 1 and 2 go, then puts the terminal back.
 	/// </summary>
-	/// <param name="redirect">The command's own <c>&gt;</c> file, or <see langword="null" />.</param>
+	/// <param name="targets">Where the command's streams go.</param>
+	/// <param name="output">The command's own output, or <see langword="null" /> for the terminal.</param>
+	/// <param name="run">What to run, which gives a status.</param>
 	/// <returns>
-	/// <paramref name="redirect" />, or else <see cref="standardOutput" />.
+	/// The status <paramref name="run" /> gives.
 	/// </returns>
-	private static Stream? OutputOf(FileStream? redirect) => redirect ?? standardOutput;
+	/// <remarks>
+	/// When both streams end up in the same place, as with <c>&gt;f 2&gt;&amp;1</c>, they share one writer, so the
+	/// lines keep the order they were written in. A closed stream, or one copied from stream 0, takes the text and
+	/// drops it; bash would report a write error there.
+	/// </remarks>
+	private static int WithStreams(StreamTarget[] targets, Stream? output, Func<int> run)
+	{
+		var terminalOut = Console.Out;
+		var terminalError = Console.Error;
+		var terminalColor = ShellError.UseColor;
+		var writers = new Dictionary<object, TextWriter>();
+		var created = new List<StreamWriter>();
+
+		Console.SetOut(Writer(targets[1]));
+		Console.SetError(Writer(targets[2]));
+
+		// A report written into a file or a pipe shouldn't carry color codes.
+		ShellError.UseColor &= targets[2] == StreamTarget.Own(2);
+
+		try
+		{
+			return run();
+		}
+		finally
+		{
+			Console.SetOut(terminalOut);
+			Console.SetError(terminalError);
+			ShellError.UseColor = terminalColor;
+
+			foreach (var writer in created)
+			{
+				writer.Dispose();
+			}
+		}
+
+		TextWriter Writer(StreamTarget target)
+		{
+			var key = target.Opened ?? (object)(target.Closed ? -1 : target.Inherited);
+
+			if (!writers.TryGetValue(key, out var writer))
+			{
+				var stream = target.Opened ?? (target is { Closed: false, Inherited: 1 } ? output : null);
+
+				writer = stream is not null ? Create(stream)
+					: target is { Closed: false, Inherited: 1 } ? terminalOut
+					: target is { Closed: false, Inherited: 2 } ? terminalError
+					: TextWriter.Null;
+				writers[key] = writer;
+			}
+
+			return writer;
+		}
+
+		StreamWriter Create(Stream stream)
+		{
+			var writer = new StreamWriter(stream, leaveOpen: true);
+
+			created.Add(writer);
+
+			return writer;
+		}
+	}
 
 	/// <summary>
 	/// Gives the status of a line of only <c>NAME=VALUE</c> words.
@@ -940,18 +1024,20 @@ internal static class Program
 	/// <summary>
 	/// Checks whether a command that ends in <c>&amp;</c> has to run in a copy of the shell.
 	/// </summary>
-	/// <param name="words">The command's words, without the <c>&amp;</c>.</param>
+	/// <param name="parts">The command's stages without the <c>&amp;</c>, with their redirects taken out.</param>
 	/// <param name="commands">The builtins, by name.</param>
 	/// <returns>
-	/// <see langword="true" /> for anything but one program, like <c>cd</c>, <c>A=1</c>, a pipeline or
-	/// <c>a &amp;&amp; b</c>, so it can't change this shell, as bash runs it in a subshell.
+	/// <see langword="true" /> for anything but one program, like <c>cd</c>, <c>A=1</c>, <c>&gt; f</c>, a pipeline or
+	/// <c>a &amp;&amp; b</c>, so it can't change this shell, as bash runs it in a subshell. A program's own redirects,
+	/// as in <c>cmd &gt; f &amp;</c>, don't need one.
 	/// </returns>
 	/// <remarks>
 	/// shortcut: the copy of the shell gets exported variables and the folder, not aliases or unexported shell
 	/// variables as a bash subshell does. Upgrade by passing those to the child if a background builtin needs them.
 	/// </remarks>
-	private static bool NeedsShellCopy(Word[] words, Dictionary<string, ICommand> commands) =>
-		Array.Exists(words, word => word.IsOperator)
+	private static bool NeedsShellCopy((Word[] Words, Redirect[] Redirects)[] parts, Dictionary<string, ICommand> commands) =>
+		parts is not [var (words, _)]
+		|| Array.Exists(words, word => word.IsOperator)
 		|| words.Select(word => word.Text).FirstOrDefault(text => !DeclareCommand.IsAssignment(text)) is not { } name
 		|| commands.ContainsKey(name);
 
@@ -963,19 +1049,20 @@ internal static class Program
 	/// <param name="settings">The <c>set</c> options, which tell <c>exec</c> whether the shell is interactive.</param>
 	/// <param name="arguments">The words after the builtin's name.</param>
 	/// <param name="assignments">The <c>NAME=VALUE</c> words typed in front of the builtin's name.</param>
-	/// <param name="output">The open <c>&gt;</c> file, or <see langword="null" /> for the terminal.</param>
-	/// <param name="error">The open <c>2&gt;</c> file, or <see langword="null" /> for the terminal.</param>
+	/// <param name="targets">Where the command's streams go once its redirects are applied.</param>
 	/// <returns>
 	/// The builtin's status.
 	/// </returns>
 	/// <remarks>
 	/// <c>exec</c> keeps the redirect files past its own run, which <see cref="RunBuiltin" /> would undo. Inside a
 	/// command substitution it can't replace the shell, so it runs the program and ends the substitution instead.
+	/// shortcut: <c>exec</c> only gets the files that streams 1 and 2 were pointed at, so <c>exec 2&gt;&amp;1</c> and
+	/// <c>exec &lt; f</c> change nothing; hand it the whole <see cref="Redirection" /> if those are needed.
 	/// </remarks>
-	private static int RunBuiltinOrExec(ICommand command, DeclareCommand declare, ShellSettings settings, string[] arguments, string[] assignments, FileStream? output, FileStream? error) =>
-		command is not ExecCommand exec ? RunBuiltin(command, declare, arguments, assignments, OutputOf(output), error)
-		: substitutionDepth > 0 ? ExecCommand.RunInSubstitution(arguments, assignments, OutputOf(output), error)
-		: exec.Run(arguments, assignments, output, error, settings.Interactive);
+	private static int RunBuiltinOrExec(ICommand command, DeclareCommand declare, ShellSettings settings, string[] arguments, string[] assignments, StreamTarget[] targets) =>
+		command is not ExecCommand exec ? RunBuiltin(command, declare, arguments, assignments, standardOutput, targets)
+		: substitutionDepth > 0 ? ExecCommand.RunInSubstitution(arguments, assignments, targets[1].Opened ?? standardOutput, targets[2].Opened)
+		: exec.Run(arguments, assignments, targets[1].Opened, targets[2].Opened, settings.Interactive);
 
 	/// <summary>
 	/// Prints each stage of a command to standard error before it runs, when <c>set -x</c> is on.
@@ -1011,42 +1098,26 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Reports the operator that keeps <paramref name="words" /> from running, pointing at where it was typed.
+	/// Reports the operator that keeps a command from running, pointing at where it was typed.
 	/// </summary>
 	/// <param name="line">The command as typed.</param>
-	/// <param name="words">
-	/// The command's words, which <see cref="CommandLine.SplitPipeline" /> refused. Either some operator other than
-	/// <c>|</c> is left in them, or a <c>|</c> has no command on one side.
-	/// </param>
-	private static void ReportUnusable(string line, Word[] words)
-	{
-		var index = Array.FindIndex(words, word => word is { IsOperator: true, Text: not "|" });
-
-		if (index < 0)
-		{
-			index = Array.FindIndex(words, word => word.IsOperator);
-
-			while (index > 0 && index < words.Length - 1 && !words[index + 1].IsOperator)
-			{
-				index = Array.FindIndex(words, index + 1, word => word.IsOperator);
-			}
-		}
-
-		var unusable = words[index];
-
+	/// <param name="unusable">The operator, from <see cref="Unusable" />.</param>
+	private static void ReportUnusable(string line, Word unusable) =>
 		new ShellError("sharpie::parser::unsupported_operator", $"`{unusable.Text}` can't be used here")
 		{
 			Source = line,
 			Start = unusable.Start,
 			End = unusable.End,
-			Label = unusable.Text switch
-			{
-				"|" => "needs a command on both sides",
-				">" or ">>" or "1>" or "1>>" or "2>" or "2>>" => "needs a file name after it",
-				_ => "Sharpie can't run this operator yet",
-			},
+			Label = unusable.Text == "|" ? "needs a command on both sides"
+				: CommandLine.RedirectKind(unusable.Text) is not null && CommandLine.StreamOf(unusable.Text) is null ? $"stream numbers go up to {CommandLine.MaxStream}"
+				: CommandLine.RedirectKind(unusable.Text) switch
+				{
+					TargetKind.File => "needs a file name after it",
+					TargetKind.Stream => "needs a stream number after it",
+					TargetKind.Text => "needs a delimiter after it",
+					_ => "Sharpie can't run this operator yet",
+				},
 		}.Write();
-	}
 
 	/// <summary>
 	/// Reports that a command is neither a builtin, an alias nor a program on <c>PATH</c>, suggesting a close name
@@ -1056,11 +1127,12 @@ internal static class Program
 	/// <param name="aliases">The <c>alias</c> builtin.</param>
 	/// <param name="line">The command as typed.</param>
 	/// <param name="name">The word the command name came from.</param>
-	/// <param name="error">
-	/// The command's <c>2&gt;</c> file, which gets the report as bash's does, or <see langword="null" /> for the
-	/// shell's standard error.
+	/// <param name="targets">
+	/// Where the command's streams go, so its stream 2 gets the report as bash's does, and <c>2&gt;/dev/null</c> hides
+	/// it.
 	/// </param>
-	private static void ReportNotFound(Dictionary<string, ICommand> commands, AliasCommand aliases, string line, Word name, Stream? error)
+	/// <param name="output">The command's own output, or <see langword="null" /> for the terminal.</param>
+	private static void ReportNotFound(Dictionary<string, ICommand> commands, AliasCommand aliases, string line, Word name, StreamTarget[] targets, Stream? output)
 	{
 		var suggestion = ShellError.DidYouMean(name.Text, commands.Keys.Concat(aliases.Aliases.Keys).Concat(PathFinder.FindFileNames()))
 			.FirstOrDefault(match => commands.ContainsKey(match) || aliases.Aliases.ContainsKey(match) || PathFinder.FindExecutable(match) is not null);
@@ -1074,16 +1146,12 @@ internal static class Program
 			Help = suggestion is null ? null : $"did you mean `{suggestion}`?",
 		};
 
-		if (error is null)
+		_ = WithStreams(targets, output, () =>
 		{
 			report.Write();
 
-			return;
-		}
-
-		using var writer = new StreamWriter(error, leaveOpen: true);
-
-		writer.Write(report.Render(color: false));
+			return 0;
+		});
 	}
 
 	/// <summary>
