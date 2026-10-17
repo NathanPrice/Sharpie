@@ -266,4 +266,54 @@ public sealed class DeclareCommandTests : IDisposable
 		_ = none.Should().BeEmpty();
 		_ = gaps.Should().Equal("", "b");
 	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.RunWith" /> sets the variables, an empty one included, only while the
+	/// builtin runs, and leaves the environment alone.
+	/// </summary>
+	[Fact]
+	public void RunWith_NewNames_SetsThemOnlyDuringRun()
+	{
+		// Arrange
+		Dictionary<string, string>? during = null;
+
+		// Act
+		var status = this.sut.RunWith([$"{SampleVariable}=", "other=a=b"], () =>
+		{
+			during = new Dictionary<string, string>(this.sut.Variables);
+
+			return 3;
+		});
+
+		// Assert
+		_ = status.Should().Be(3);
+		_ = during.Should().Contain(SampleVariable, string.Empty).And.Contain("other", "a=b");
+		_ = this.sut.Variables.Should().NotContainKey(SampleVariable).And.NotContainKey("other");
+		_ = Environment.GetEnvironmentVariable("other").Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that a name set before keeps its old value afterwards, even when it's assigned twice or the builtin
+	/// throws.
+	/// </summary>
+	[Fact]
+	public void RunWith_SetName_PutsOldValueBack()
+	{
+		// Arrange
+		_ = this.sut.Run(["name=old"]);
+		string? during = null;
+
+		// Act
+		var act = () => this.sut.RunWith(["name=one", "name=two"], () =>
+		{
+			during = this.sut.Variables["name"];
+
+			throw new InvalidOperationException();
+		});
+
+		// Assert
+		_ = act.Should().Throw<InvalidOperationException>();
+		_ = during.Should().Be("two");
+		_ = this.sut.Variables["name"].Should().Be("old");
+	}
 }

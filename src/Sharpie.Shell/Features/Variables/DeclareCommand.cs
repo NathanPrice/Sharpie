@@ -150,6 +150,55 @@ internal partial class DeclareCommand : ICommand
 	}
 
 	/// <summary>
+	/// Runs <paramref name="run" /> with <paramref name="assignments" /> set as shell variables, then puts the old
+	/// values back.
+	/// </summary>
+	/// <param name="assignments">The <c>NAME=VALUE</c> words typed in front of a builtin.</param>
+	/// <param name="run">Runs the builtin.</param>
+	/// <returns>
+	/// The status <paramref name="run" /> gives.
+	/// </returns>
+	/// <remarks>
+	/// POSIX makes these variables for the builtin's run. They're written straight to the variables, not through
+	/// <see cref="Set" />, which would also change the environment and leave the new value there. A name that wasn't
+	/// set before is removed again afterwards.
+	/// </remarks>
+	public int RunWith(IReadOnlyList<string> assignments, Func<int> run)
+	{
+		_ = run.ArgumentNotNull();
+
+		// Every old value is read before any is set, so A=1 A=2 still puts back the value from before both.
+		var saved = assignments.ArgumentNotNull()
+			.Select(assignment => assignment.Split('=', 2))
+			.Select(parts => (Name: parts[0], Value: parts[1], Found: this.variables.TryGetValue(parts[0], out var old), Old: old))
+			.ToArray();
+
+		foreach (var (name, value, _, _) in saved)
+		{
+			this.variables[name] = value;
+		}
+
+		try
+		{
+			return run();
+		}
+		finally
+		{
+			foreach (var (name, _, found, old) in saved)
+			{
+				if (found)
+				{
+					this.variables[name] = old!;
+				}
+				else
+				{
+					_ = this.variables.Remove(name);
+				}
+			}
+		}
+	}
+
+	/// <summary>
 	/// Replaces the positional parameters, as <c>set --</c> does.
 	/// </summary>
 	/// <param name="values">The new parameters, which become <c>$1</c> onwards.</param>

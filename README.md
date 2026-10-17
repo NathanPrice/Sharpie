@@ -49,8 +49,8 @@ and mouse reporting all work.
 - **Encrypted history.** History is saved encrypted, with the key kept in the operating system's secret store.
 
 **Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `dman`, `echo`, `eval`, `exec`,
-`exit`, `export`, `false`, `fg`, `history`, `jobs`, `pwd`, `set`, `shift`, `source` / `.`, `true`, `type`, `unalias`,
-`unset`.
+`exit`, `export`, `false`, `fg`, `history`, `jobs`, `pwd`, `read`, `set`, `shift`, `source` / `.`, `true`, `type`,
+`unalias`, `unset`.
 
 ## Getting started
 

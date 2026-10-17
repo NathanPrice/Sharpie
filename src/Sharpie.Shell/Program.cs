@@ -455,7 +455,7 @@ internal static class Program
 
 				try
 				{
-					return declare.Status = RunCommand(commands, aliases, declare.Variables, settings, command);
+					return declare.Status = RunCommand(commands, aliases, declare, settings, command);
 				}
 				finally
 				{
@@ -476,7 +476,7 @@ internal static class Program
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
-	/// <param name="variables">The shell variables that <c>$NAME</c> expands to.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables that <c>$NAME</c> expands to.</param>
 	/// <param name="settings">The <c>set</c> options, which <c>-u</c>, <c>-x</c> and pipefail change here.</param>
 	/// <param name="line">
 	/// The command, with no <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> left in it, which error reports show and point
@@ -490,10 +490,10 @@ internal static class Program
 	/// <remarks>
 	/// Under <c>set -u</c> a shell that isn't interactive exits with 127 at the first unset variable, as bash does.
 	/// </remarks>
-	private static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, IReadOnlyDictionary<string, string> variables, ShellSettings settings, string line)
+	private static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, string line)
 	{
 		Word? unset = null;
-		var split = CommandLine.Split(line, variables, settings.NoUnset ? name => unset ??= name : null);
+		var split = CommandLine.Split(line, declare.Variables, settings.NoUnset ? name => unset ??= name : null);
 
 		if (unset is { } name)
 		{
@@ -514,7 +514,7 @@ internal static class Program
 			return 1;
 		}
 
-		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(CommandCommand.Unwrap(aliases.Expand(split, variables)));
+		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(CommandCommand.Unwrap(aliases.Expand(split, declare.Variables)));
 
 		// A trailing & runs an external program in the background. Builtins still run in the foreground.
 		var background = words is [.., { IsOperator: true, Text: "&" }];
@@ -548,7 +548,7 @@ internal static class Program
 		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
 		if (stages is [var only] && Array.TrueForAll(only, DeclareCommand.IsAssignment))
 		{
-			return commands["declare"].Run(only);
+			return declare.Run(only);
 		}
 
 		// NAME=VALUE words in front of a command go into that command's environment only, as in POSIX. The last word
@@ -577,7 +577,7 @@ internal static class Program
 			: stages.Length > 1 ? RunPipeline(stages)
 			// exec keeps the redirect files past its own run, which RunBuiltin would undo.
 			: commands.TryGetValue(names[0].Text, out var command) ? command is ExecCommand exec ? exec.Run(arguments, assignments[0], output, error, settings.Interactive)
-				: RunBuiltin(command, arguments, assignments[0], output, error)
+				: RunBuiltin(command, declare, arguments, assignments[0], output, error)
 			: RunProgram(names[0], arguments, assignments[0], output, error, background);
 
 		// Opens the redirect file at path, or gives null when path is null. The file is created if missing, then
@@ -638,15 +638,15 @@ internal static class Program
 			if (rightBuiltin is not null)
 			{
 				var leftStatus = leftBuiltin is not null
-					? RunBuiltin(leftBuiltin, left[1..], assignments[0], Stream.Null, null)
+					? RunBuiltin(leftBuiltin, declare, left[1..], assignments[0], Stream.Null, null)
 					: RunProgram(names[0], left[1..], assignments[0], Stream.Null, null, background: false);
 
-				return ExternalProgram.PipelineStatus([leftStatus, RunBuiltin(rightBuiltin, right[1..], assignments[^1], null, null)], settings.PipeFail);
+				return ExternalProgram.PipelineStatus([leftStatus, RunBuiltin(rightBuiltin, declare, right[1..], assignments[^1], null, null)], settings.PipeFail);
 			}
 
 			using var buffer = new MemoryStream();
 
-			var builtinStatus = RunBuiltin(leftBuiltin!, left[1..], assignments[0], buffer, null);
+			var builtinStatus = RunBuiltin(leftBuiltin!, declare, left[1..], assignments[0], buffer, null);
 
 			buffer.Position = 0;
 
@@ -672,6 +672,7 @@ internal static class Program
 	/// <paramref name="output" /> and <paramref name="error" /> when given, then puts the terminal back.
 	/// </summary>
 	/// <param name="command">The builtin.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
 	/// <param name="arguments">The words after the builtin's name.</param>
 	/// <param name="assignments">The <c>NAME=VALUE</c> words typed in front of the builtin's name.</param>
 	/// <param name="output">Where the builtin's output goes, or <see langword="null" /> for the terminal.</param>
@@ -681,10 +682,11 @@ internal static class Program
 	/// </returns>
 	/// <remarks>
 	/// A builtin runs inside the shell, so <paramref name="assignments" /> are set in the shell's environment while it
-	/// runs, as bash does. That way <c>PATH=/opt/bin type tool</c> searches <c>/opt/bin</c>. An empty value unsets the
-	/// variable instead, because .NET can't hold an empty one, and no builtin tells the two apart.
+	/// runs, as bash does. That way <c>PATH=/opt/bin type tool</c> searches <c>/opt/bin</c>. They are shell variables
+	/// for the run too, as POSIX says. The shell reads its own variables before the environment, so otherwise an
+	/// earlier <c>IFS=:</c> would win over the <c>IFS=</c> in <c>IFS= read -r line</c>.
 	/// </remarks>
-	private static int RunBuiltin(ICommand command, string[] arguments, string[] assignments, Stream? output, Stream? error)
+	private static int RunBuiltin(ICommand command, DeclareCommand declare, string[] arguments, string[] assignments, Stream? output, Stream? error)
 	{
 		// Every old value is read before any is set, so A=1 A=2 still puts back the value from before both.
 		var saved = assignments.Select(assignment => assignment.Split('=', 2))
@@ -710,7 +712,7 @@ internal static class Program
 				Environment.SetEnvironmentVariable(name, value);
 			}
 
-			return command.Run(arguments);
+			return declare.RunWith(assignments, () => command.Run(arguments));
 		}
 		finally
 		{

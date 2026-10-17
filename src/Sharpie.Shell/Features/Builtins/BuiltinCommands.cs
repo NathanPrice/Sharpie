@@ -56,6 +56,7 @@ internal static class BuiltinCommands
 			new UnsetCommand(declare),
 			new SetCommand(declare, new ShellSettings()),
 			new ShiftCommand(declare),
+			new ReadCommand(declare, Console.IsInputRedirected ? null : () => Console.ReadKey(intercept: true)),
 			new SourceCommand(".", declare, runLine),
 			new SourceCommand("source", declare, runLine),
 			new EvalCommand(runLine),
