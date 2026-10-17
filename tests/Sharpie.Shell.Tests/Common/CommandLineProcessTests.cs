@@ -377,6 +377,40 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks that a second shell can redirect into a file, and into <c>/dev/null</c>, while another shell still has
+	/// them open through its own redirects, as bash allows.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithFileOpenInAnotherShell_StillRedirects()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var file = Path.Combine(folder, "shared.txt");
+		using var first = ShellProcess.Start(arguments: ["-c", $"sleep 5 > {file} 2>/dev/null"]);
+
+		try
+		{
+			for (var tries = 0; tries < 100 && !File.Exists(file); tries++)
+			{
+				await Task.Delay(50).ConfigureAwait(true);
+			}
+
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", $"echo second >> {file} 2>/dev/null"]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Error.Should().BeEmpty();
+			_ = run.ExitCode.Should().Be(0);
+			_ = (await File.ReadAllTextAsync(file).ConfigureAwait(true)).Should().Be("second\n");
+		}
+		finally
+		{
+			first.Kill(entireProcessTree: true);
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that quoted or escaped operators reach the command as plain arguments.
 	/// </summary>
 	[Fact]

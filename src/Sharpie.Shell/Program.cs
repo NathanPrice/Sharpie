@@ -602,7 +602,9 @@ internal static class Program
 
 			try
 			{
-				return append ? new FileStream(file.Text, FileMode.Append) : File.Create(file.Text);
+				// Shared, because .NET turns the share mode into a file lock on Linux and macOS. File.Create's exclusive
+				// lock made a second shell's > /dev/null fail while the first one's was open; bash takes no lock.
+				return new FileStream(file.Text, append ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
 			}
 			// A missing folder, a read-only file, or an empty name like > "" would otherwise end the whole shell.
 			catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
