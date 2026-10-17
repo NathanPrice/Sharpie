@@ -40,11 +40,17 @@ and mouse reporting all work.
   colored as you type, <kbd>Tab</kbd> completes, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and a gray suggestion
   from the history fills in as you type. <kbd>→</kbd> accepts it.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
-- **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines,
-  redirects and command lists joined by `;`, `&&` and `||`.
+- **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines and
+  command lists joined by `;`, `&&` and `||`.
 - **Expansions.** `$NAME`, `~`, wildcards like `*.tmp`, and command substitution with `$(...)` or backquotes, so
   `cd $(git rev-parse --show-toplevel)` and `export GPG_TTY=$(tty)` work. A substitution runs in the shell itself, and
   the folder, variables and aliases it changes are put back afterwards, as a subshell would leave them.
+- **Redirects.** Bash's redirects work on builtins, programs and every stage of a pipeline: `<`, `>`, `>>`, `>|`,
+  `&>`, `&>>`, any stream number as in `3> f`, copies and closes like `2>&1` and `2>&-`, here-documents
+  (`<<EOF` and `<<-EOF`) and here-strings (`<<< text`). `ls /nope 2>&1 | wc -l` counts the error line, and
+  `/dev/null` works on Windows too. A here-document's lines expand `$NAME` and `$(...)` unless the delimiter is
+  quoted, as in `<<'EOF'`. `set -C`, or starting with `Sharpie -C`, keeps `>` from replacing a file, and `>|`
+  replaces it anyway.
 - **Your existing setup.** The window copies the exported variables and aliases from your own `$SHELL`, so a `PATH`
   set in `~/.zshrc` works here too. After that it runs `~/.sharpierc`.
 - **Built-in pagers.** `man` pages open in a reader inside the window, and `dman` shows .NET API docs and C# or VB
@@ -116,6 +122,7 @@ The shell, `Sharpie`, reads its arguments the way POSIX `sh` and bash do. Single
 | `-i` | Interactive, even when not attached to a terminal |
 | `-l`, `--login` | Login shell: load `/etc/profile` and `~/.profile` first. A leading `-` in the program name does the same |
 | `--norc` | Skip `~/.sharpierc` |
+| `-C` | Start with `set -C` on, so `>` won't replace an existing file |
 
 ```sh
 Sharpie -c 'cd /tmp && pwd'
@@ -170,7 +177,6 @@ offline use. Inside the window the page opens in the built-in reader, in another
 > - **Arithmetic expansion, `$((...))`.** A line that uses it is refused with status 2 rather than run with the
 >   wrong arguments.
 > - **Builtins in pipelines of three or more stages.** Those stages only run programs found on `PATH`.
-> - **Redirects on a pipeline.** `>` and `2>` work on single commands only.
 
 ## Development
 
