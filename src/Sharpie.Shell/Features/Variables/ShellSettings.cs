@@ -9,7 +9,7 @@ internal sealed class ShellSettings
 	/// The option names <c>set -o</c> takes, sorted as <c>set -o</c> lists them, each with the letter <c>set -</c>
 	/// takes for it, if any.
 	/// </summary>
-	internal static readonly (string Name, char? Letter)[] Options = [("errexit", 'e'), ("nounset", 'u'), ("pipefail", null), ("xtrace", 'x')];
+	internal static readonly (string Name, char? Letter)[] Options = [("errexit", 'e'), ("noclobber", 'C'), ("nounset", 'u'), ("pipefail", null), ("xtrace", 'x')];
 
 	/// <summary>
 	/// The names of the options that are on.
@@ -23,6 +23,14 @@ internal sealed class ShellSettings
 	/// <see langword="true" /> when the shell exits after a command fails.
 	/// </value>
 	public bool ErrExit => this.on.Contains("errexit");
+
+	/// <summary>
+	/// Gets a value indicating whether <c>set -C</c> is on, so <c>&gt;</c> won't replace a file that's already there.
+	/// </summary>
+	/// <value>
+	/// <see langword="true" /> when only <c>&gt;|</c> may replace a regular file.
+	/// </value>
+	public bool NoClobber => this.on.Contains("noclobber");
 
 	/// <summary>
 	/// Gets a value indicating whether <c>set -u</c> is on, so expanding a variable that isn't set is an error.

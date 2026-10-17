@@ -10,9 +10,9 @@ namespace Sharpie.Shell.Features.Variables;
 /// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and positional parameters.</param>
 /// <param name="settings">The shell options this command changes.</param>
 /// <remarks>
-/// <c>-e</c>, <c>-u</c> and <c>-x</c> turn on errexit, nounset and xtrace, <c>-o NAME</c> turns on an option by name,
-/// pipefail included, and <c>+</c> in place of <c>-</c> turns it off. Letters can be joined, as in
-/// <c>set -euo pipefail</c>. <c>set -o</c> alone lists the options and <c>set +o</c> prints the commands that would
+/// <c>-e</c>, <c>-C</c>, <c>-u</c> and <c>-x</c> turn on errexit, noclobber, nounset and xtrace, <c>-o NAME</c> turns
+/// on an option by name, pipefail included, and <c>+</c> in place of <c>-</c> turns it off. Letters can be joined, as
+/// in <c>set -euo pipefail</c>. <c>set -o</c> alone lists the options and <c>set +o</c> prints the commands that would
 /// set them again. The words after the options, or after <c>--</c>, become the positional parameters, and
 /// <c>set --</c> alone clears them. <c>set</c> with no arguments prints every variable as <c>NAME=value</c>, sorted,
 /// with the value quoted only when it needs to be, as bash prints them.
@@ -111,7 +111,7 @@ internal sealed class SetCommand(DeclareCommand declare, ShellSettings settings)
 	/// </summary>
 	/// <param name="message">The message.</param>
 	private static void Report(string message) =>
-		new ShellError("sharpie::set::invalid_option", message) { Help = "set takes -e, -u, -x and -o with errexit, nounset, pipefail or xtrace" }.Write();
+		new ShellError("sharpie::set::invalid_option", message) { Help = "set takes -e, -C, -u, -x and -o with errexit, noclobber, nounset, pipefail or xtrace" }.Write();
 
 	/// <summary>
 	/// Prints every option and whether it's on.

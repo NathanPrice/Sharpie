@@ -174,7 +174,10 @@ internal static class Program
 		var aliases = (AliasCommand)commands["alias"];
 		var interactive = options.IsInteractive(terminal);
 
-		((SetCommand)commands["set"]).Settings.Interactive = interactive;
+		var settings = ((SetCommand)commands["set"]).Settings;
+
+		settings.Interactive = interactive;
+		_ = settings.Set("noclobber", options.NoClobber);
 
 		// -c takes $0 from the first word after the command, as sh does. The script file's arguments become its
 		// positional parameters through the . builtin below.
@@ -753,9 +756,12 @@ internal static class Program
 
 		if (background && NeedsShellCopy(parts, commands))
 		{
+			// The copy reads -C itself, since set -C would otherwise be lost there.
+			string[] noClobber = settings.NoClobber ? ["-C"] : [];
+
 			using var none = Redirection.Open([], line, noClobber: false)!;
 
-			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), ["-c", line.EndsWith('&') ? line[..^1] : line], [], standardOutput, background: true, none);
+			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), [.. noClobber, "-c", line.EndsWith('&') ? line[..^1] : line], [], standardOutput, background: true, none);
 		}
 
 		// Operators the shell can't run yet, like <>, are refused rather than passed on as arguments.
@@ -774,7 +780,7 @@ internal static class Program
 			// its own still creates f.
 			foreach (var (_, redirects) in parts)
 			{
-				if (Redirection.Open(redirects, line, noClobber: false) is not { } opened)
+				if (Redirection.Open(redirects, line, settings.NoClobber) is not { } opened)
 				{
 					return 1;
 				}

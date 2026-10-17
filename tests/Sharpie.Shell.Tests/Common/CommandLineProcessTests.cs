@@ -483,6 +483,66 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks that after <c>set -C</c>, or with the shell started as <c>sharpie -C</c>, <c>&gt;</c> won't replace a
+	/// file while <c>&gt;|</c> and <c>&gt;&gt;</c> still write to it, and that <c>set +C</c> turns it off again.
+	/// </summary>
+	/// <param name="startOption">Whether the shell is started with <c>-C</c> instead of running <c>set -C</c>.</param>
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task Shell_WithNoClobber_KeepsFiles(bool startOption)
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var setup = startOption ? string.Empty : "set -C\n";
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(
+				$"{setup}echo a > f\necho b > f\necho $?\ncat f\necho c >| f\necho d >> f\necho e > /dev/null\ncat f\nset +C\necho g > f\ncat f\nexit\n",
+				folder,
+				arguments: startOption ? ["-C"] : null).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be($"{(startOption ? string.Empty : "$ ")}$ $ $ 1\n$ a\n$ $ $ $ c\nd\n$ $ $ g\n$ ");
+			_ = run.Error.Should().StartWith("Error: sharpie::shell::redirect_failed\n\n  × Can't overwrite `f`\n");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Checks that <c>set -C</c> still holds for a command run in the background, both a builtin, which runs in a copy
+	/// of the shell, and a program, which the shell starts itself.
+	/// </summary>
+	/// <param name="command">The background command, without its redirect.</param>
+	[Theory]
+	[InlineData("echo b")]
+	[InlineData("env echo b")]
+	public async Task Shell_WithNoClobberAndBackgroundCommand_KeepsFile(string command)
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync($"set -C\necho a > f\n{command} > f &\nsleep 1\ncat f\nexit\n", folder).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().MatchRegex(@"(?m)^(\$ )*a$");
+			_ = run.Error.Should().Contain("Can't overwrite `f`");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that a background program's redirect still gets its output after the prompt comes back.
 	/// </summary>
 	[Fact]

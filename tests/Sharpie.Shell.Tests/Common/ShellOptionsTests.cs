@@ -69,6 +69,26 @@ public sealed class ShellOptionsTests
 	}
 
 	/// <summary>
+	/// Checks that <c>-C</c> turns noclobber on, alone or joined with other letters, and is off without it.
+	/// </summary>
+	/// <param name="args">The arguments.</param>
+	/// <param name="expected">Whether noclobber is expected.</param>
+	[Theory]
+	[InlineData(new[] { "-C" }, true)]
+	[InlineData(new[] { "-Cc", "ls" }, true)]
+	[InlineData(new[] { "-i", "-C", "script.sh" }, true)]
+	[InlineData(new[] { "-c", "ls" }, false)]
+	[InlineData(new[] { "--", "-C" }, false)]
+	public void Parse_WithNoClobberOption_ReadsIt(string[] args, bool expected)
+	{
+		// Act
+		var options = ShellOptions.Parse("Sharpie", args, out _);
+
+		// Assert
+		_ = options!.NoClobber.Should().Be(expected);
+	}
+
+	/// <summary>
 	/// Checks that an unknown option or a <c>-c</c> with nothing after it is refused with the reason.
 	/// </summary>
 	/// <param name="args">The arguments.</param>

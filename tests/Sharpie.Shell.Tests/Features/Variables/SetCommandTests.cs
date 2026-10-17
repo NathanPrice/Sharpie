@@ -76,7 +76,7 @@ public sealed class SetCommandTests : IDisposable
 		_ = this.declare.Positional.Should().Equal("a");
 		_ = this.environment.Error.Should().Be(new ShellError("sharpie::set::invalid_option", message)
 		{
-			Help = "set takes -e, -u, -x and -o with errexit, nounset, pipefail or xtrace",
+			Help = "set takes -e, -C, -u, -x and -o with errexit, noclobber, nounset, pipefail or xtrace",
 		}.Render(color: false));
 	}
 
@@ -93,6 +93,11 @@ public sealed class SetCommandTests : IDisposable
 	[InlineData(new[] { "-o", "errexit", "-o", "xtrace" }, new[] { "errexit", "xtrace" })]
 	[InlineData(new[] { "-eux", "+u" }, new[] { "errexit", "xtrace" })]
 	[InlineData(new[] { "-o", "pipefail", "+o", "pipefail" }, new string[0])]
+	[InlineData(new[] { "-C" }, new[] { "noclobber" })]
+	[InlineData(new[] { "-C", "+C" }, new string[0])]
+	[InlineData(new[] { "-o", "noclobber" }, new[] { "noclobber" })]
+	[InlineData(new[] { "-C", "+o", "noclobber" }, new string[0])]
+	[InlineData(new[] { "-eC" }, new[] { "errexit", "noclobber" })]
 	public void Run_WithOptions_TurnsThemOnAndOff(string[] args, string[] expected)
 	{
 		// Arrange
@@ -114,10 +119,11 @@ public sealed class SetCommandTests : IDisposable
 	public void Run_WithEveryOption_SetsEachProperty()
 	{
 		// Act
-		_ = this.sut.Run(["-eux", "-o", "pipefail"]);
+		_ = this.sut.Run(["-euxC", "-o", "pipefail"]);
 
 		// Assert
 		_ = this.settings.ErrExit.Should().BeTrue();
+		_ = this.settings.NoClobber.Should().BeTrue();
 		_ = this.settings.NoUnset.Should().BeTrue();
 		_ = this.settings.XTrace.Should().BeTrue();
 		_ = this.settings.PipeFail.Should().BeTrue();
@@ -168,8 +174,8 @@ public sealed class SetCommandTests : IDisposable
 	/// <param name="arg">The argument.</param>
 	/// <param name="expected">The lines it prints.</param>
 	[Theory]
-	[InlineData("-o", new[] { "errexit        \ton", "nounset        \toff", "pipefail       \ton", "xtrace         \toff" })]
-	[InlineData("+o", new[] { "set -o errexit", "set +o nounset", "set -o pipefail", "set +o xtrace" })]
+	[InlineData("-o", new[] { "errexit        \ton", "noclobber      \toff", "nounset        \toff", "pipefail       \ton", "xtrace         \toff" })]
+	[InlineData("+o", new[] { "set -o errexit", "set +o noclobber", "set +o nounset", "set -o pipefail", "set +o xtrace" })]
 	public void Run_WithBareO_ListsOptions(string arg, string[] expected)
 	{
 		// Arrange

@@ -16,7 +16,10 @@ namespace Sharpie.Shell.Common;
 /// The words after the command or script file. With <c>-c</c> the first sets <c>$0</c> and the rest are the positional
 /// parameters; with a script file they're all positional parameters.
 /// </param>
-internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, string? Command, string? ScriptFile, IReadOnlyList<string> Arguments)
+/// <param name="NoClobber">
+/// <see langword="true" /> when <c>-C</c> asked for <c>set -C</c> from the start, so <c>&gt;</c> won't replace a file.
+/// </param>
+internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, string? Command, string? ScriptFile, IReadOnlyList<string> Arguments, bool NoClobber = false)
 {
 	/// <summary>
 	/// Reads the options the way POSIX <c>sh</c> and bash do.
@@ -42,6 +45,7 @@ internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, str
 		var login = programName?.StartsWith('-') == true;
 		var interactive = false;
 		var noRc = false;
+		var noClobber = false;
 		var command = false;
 		var index = 0;
 
@@ -95,6 +99,10 @@ internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, str
 						login = true;
 
 						break;
+					case 'C':
+						noClobber = true;
+
+						break;
 					default:
 						error = $"-{letter}: invalid option";
 
@@ -112,7 +120,7 @@ internal sealed record ShellOptions(bool Login, bool Interactive, bool NoRc, str
 			return null;
 		}
 
-		return new ShellOptions(login, interactive, noRc, command ? operand : null, command ? null : operand, [.. args.Skip(index + 1)]);
+		return new ShellOptions(login, interactive, noRc, command ? operand : null, command ? null : operand, [.. args.Skip(index + 1)], noClobber);
 	}
 
 	/// <summary>
