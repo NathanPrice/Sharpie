@@ -30,10 +30,12 @@ internal static class BuiltinCommands
 	/// <returns>
 	/// The builtins, not yet added to <paramref name="commands" />.
 	/// </returns>
+	/// <remarks>
+	/// Built in groups, since the build also caps how many types one method may use.
+	/// </remarks>
 	internal static ICommand[] Create(Dictionary<string, ICommand> commands, Func<string, int> runLine)
 	{
 		var alias = new AliasCommand();
-		var declare = new DeclareCommand();
 
 		// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
 		var type = new TypeCommand(commands, alias.Aliases);
@@ -41,20 +43,41 @@ internal static class BuiltinCommands
 		return
 		[
 			alias,
+			new UnaliasCommand(alias),
 			new EchoCommand(),
-			new ExitCommand(declare),
-			new PwdCommand(),
-			new CdCommand(),
 			new ClearCommand(),
 			new CompleteCommand(),
-			new JobsCommand(),
-			new FgCommand(),
-			new BgCommand(),
-			new WaitCommand(),
-			new KillCommand(),
-			new DisownCommand(),
 			new HistoryCommand(),
+			new StatusCommand(":", 0, "Does nothing and succeeds"),
+			new StatusCommand("true", 0, "Does nothing and succeeds"),
+			new StatusCommand("false", 1, "Does nothing and fails"),
+			new DmanCommand(),
+			new UmaskCommand(NativeMethods.SetFileMask),
+			new UlimitCommand(),
+			.. CreateVariableCommands(runLine),
+			.. CreateFolderCommands(),
+			.. CreateJobCommands(),
+			new CommandCommand(type),
+			new ExecCommand(),
+			type
+		];
+	}
+
+	/// <summary>
+	/// Creates the builtins that work on shell variables, and the ones that run lines, which share them.
+	/// </summary>
+	/// <param name="runLine">Runs one command line the way the shell runs a typed one and gives its status.</param>
+	/// <returns>
+	/// <c>declare</c> and the builtins built around it.
+	/// </returns>
+	private static ICommand[] CreateVariableCommands(Func<string, int> runLine)
+	{
+		var declare = new DeclareCommand();
+
+		return
+		[
 			declare,
+			new ExitCommand(declare),
 			new ExportCommand(declare),
 			new UnsetCommand(declare),
 			new SetCommand(declare, new ShellSettings()),
@@ -62,17 +85,24 @@ internal static class BuiltinCommands
 			new ReadCommand(declare, Console.IsInputRedirected ? null : () => Console.ReadKey(intercept: true)),
 			new SourceCommand(".", declare, runLine),
 			new SourceCommand("source", declare, runLine),
-			new EvalCommand(runLine),
-			new StatusCommand(":", 0, "Does nothing and succeeds"),
-			new StatusCommand("true", 0, "Does nothing and succeeds"),
-			new StatusCommand("false", 1, "Does nothing and fails"),
-			new UnaliasCommand(alias),
-			new DmanCommand(),
-			new UmaskCommand(NativeMethods.SetFileMask),
-			new UlimitCommand(),
-			new CommandCommand(type),
-			new ExecCommand(),
-			type
+			new EvalCommand(runLine)
 		];
 	}
+
+	/// <summary>
+	/// Creates the builtins that show or change the current folder.
+	/// </summary>
+	/// <returns>
+	/// <c>pwd</c> and <c>cd</c>.
+	/// </returns>
+	private static ICommand[] CreateFolderCommands() => [new PwdCommand(), new CdCommand()];
+
+	/// <summary>
+	/// Creates the builtins that list and control jobs.
+	/// </summary>
+	/// <returns>
+	/// The job builtins.
+	/// </returns>
+	private static ICommand[] CreateJobCommands() =>
+		[new JobsCommand(), new FgCommand(), new BgCommand(), new WaitCommand(), new KillCommand(), new DisownCommand()];
 }
