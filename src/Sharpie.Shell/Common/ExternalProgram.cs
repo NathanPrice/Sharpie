@@ -39,6 +39,22 @@ internal static partial class ExternalProgram
 	// signal to the program itself.
 	private static volatile int sRunningId;
 
+	// Bumped by the signal handler's thread, read by the main thread.
+	private static int sInterruptCount;
+
+	/// <summary>
+	/// Gets how many times the shell has caught Ctrl+C.
+	/// </summary>
+	/// <value>
+	/// The count since the shell started. <c>wait</c> ends when it changes.
+	/// </value>
+	internal static int InterruptCount => Volatile.Read(ref sInterruptCount);
+
+	/// <summary>
+	/// Adds one to <see cref="InterruptCount" />, from the shell's SIGINT handler.
+	/// </summary>
+	internal static void CountInterrupt() => Interlocked.Increment(ref sInterruptCount);
+
 	/// <summary>
 	/// Runs <paramref name="commandName" /> as a child process if an executable with that name is on <c>PATH</c>.
 	/// </summary>

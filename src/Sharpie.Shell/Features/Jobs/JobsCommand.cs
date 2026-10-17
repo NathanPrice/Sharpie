@@ -1,3 +1,4 @@
+using System.Globalization;
 using Sharpie.Shell.Common;
 
 namespace Sharpie.Shell.Features.Jobs;
@@ -119,5 +120,55 @@ internal class JobsCommand : ICommand
 		new ShellError($"sharpie::{command}::no_such_job", $"No job `{args[0]}`") { Help = "jobs lists the running and stopped jobs" }.Write();
 
 		return null;
+	}
+
+	/// <summary>
+	/// Reads a job or process id the way <c>wait</c>, <c>kill</c> and <c>disown</c> take one, which works with job
+	/// control off too.
+	/// </summary>
+	/// <param name="command">The builtin's name, which starts the error code.</param>
+	/// <param name="target"><c>%n</c> for job <c>n</c>, or a process id.</param>
+	/// <param name="pid">The process id, or 0 for <c>%n</c>.</param>
+	/// <param name="job">
+	/// The job numbered <c>n</c>, or the one the process belongs to, or <see langword="null" /> when there's none.
+	/// </param>
+	/// <returns>
+	/// <see langword="false" /> after printing why, when <paramref name="target" /> is neither a <c>%n</c> nor a
+	/// whole number.
+	/// </returns>
+	/// <remarks>
+	/// Unlike <see cref="Find" />, a plain number is a process id here, as bash reads it for these three builtins.
+	/// </remarks>
+	internal static bool TryFindTarget(string command, string target, out int pid, out Job? job)
+	{
+		pid = 0;
+		job = null;
+
+		var number = 0;
+		// Stryker disable once all : a mutant here can hand kill process id 0, the test run's own process group, which would end the mutation run.
+		var valid = target.StartsWith('%')
+			? int.TryParse(target[1..], NumberStyles.None, CultureInfo.InvariantCulture, out number)
+			: int.TryParse(target, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out pid);
+
+		// Stryker disable once all : a mutant here can hand kill process id 0, the test run's own process group, which would end the mutation run.
+		if (!valid)
+		{
+			new ShellError($"sharpie::{command}::invalid_target", $"`{target}` isn't a job or a process id") { Help = "use %n for job n, or a process id" }.Write();
+
+			return false;
+		}
+
+		if (target.StartsWith('%'))
+		{
+			job = ExternalProgram.Jobs.Find(found => found.Number == number);
+
+			return true;
+		}
+
+		var id = pid;
+
+		job = ExternalProgram.Jobs.Find(found => found.ProcessId == id || found.Members.Contains(id));
+
+		return true;
 	}
 }

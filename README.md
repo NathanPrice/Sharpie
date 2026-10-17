@@ -40,17 +40,17 @@ and mouse reporting all work.
   colored as you type, <kbd>Tab</kbd> completes, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and a gray suggestion
   from the history fills in as you type. <kbd>→</kbd> accepts it.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
-- **Job control.** POSIX job control with `&`, `jobs`, `fg` and `bg`, plus pipelines, redirects and command lists
-  joined by `;`, `&&` and `||`.
+- **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines,
+  redirects and command lists joined by `;`, `&&` and `||`.
 - **Your existing setup.** The window copies the exported variables and aliases from your own `$SHELL`, so a `PATH`
   set in `~/.zshrc` works here too. After that it runs `~/.sharpierc`.
 - **Built-in pagers.** `man` pages open in a reader inside the window, and `dman` shows .NET API docs and C# or VB
   keyword docs as man pages.
 - **Encrypted history.** History is saved encrypted, with the key kept in the operating system's secret store.
 
-**Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `dman`, `echo`, `eval`, `exec`,
-`exit`, `export`, `false`, `fg`, `history`, `jobs`, `pwd`, `read`, `set`, `shift`, `source` / `.`, `true`, `type`,
-`ulimit`, `umask`, `unalias`, `unset`.
+**Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `disown`, `dman`, `echo`, `eval`,
+`exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `pwd`, `read`, `set`, `shift`, `source` / `.`,
+`true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`.
 
 ## Getting started
 

@@ -139,6 +139,7 @@ internal static class Program
 		using var interrupt = PosixSignalRegistration.Create(PosixSignal.SIGINT, context =>
 		{
 			context.Cancel = true;
+			ExternalProgram.CountInterrupt();
 
 			if (!terminal)
 			{
