@@ -111,4 +111,24 @@ public sealed class JobTests
 		// Assert
 		_ = (this.sut.State, this.sut.ExitCode).Should().Be((JobState.Done, 2));
 	}
+
+	/// <summary>
+	/// Checks that every stage's exit code is kept in pipeline order whatever order they end in, a signal giving 128
+	/// plus its number and a stage still running giving 0.
+	/// </summary>
+	[Fact]
+	public void Record_StagesEndInAnyOrder_KeepsEachExitCodeInOrder()
+	{
+		// Arrange
+		this.sut.Add(101);
+		this.sut.Add(102);
+		this.sut.Add(103);
+
+		// Act
+		this.sut.Record(103, 0x0300);
+		this.sut.Record(101, 13);
+
+		// Assert
+		_ = this.sut.ExitCodes.Should().Equal(141, 0, 3);
+	}
 }

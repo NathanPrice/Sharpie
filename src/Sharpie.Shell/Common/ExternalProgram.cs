@@ -92,15 +92,19 @@ internal static partial class ExternalProgram
 	/// Each stage's <c>NAME=VALUE</c> words, in the same order, which only that stage's program gets as <see cref="Run" />
 	/// describes, or <see langword="null" /> for none.
 	/// </param>
+	/// <param name="pipeFail">
+	/// <see langword="true" /> for <c>set -o pipefail</c>, which gives the status of the last program that failed.
+	/// </param>
 	/// <remarks>
 	/// If any program isn't on <c>PATH</c>, <paramref name="notFound" /> is called for it and none of them run. Bash
 	/// would still start the others.
 	/// </remarks>
 	/// <returns>
-	/// The last program's status as <see cref="Run" /> gives it, 127 when a program isn't on <c>PATH</c>, or 126 when
-	/// one couldn't start.
+	/// The last program's status as <see cref="Run" /> gives it, or with <paramref name="pipeFail" /> the status of
+	/// the rightmost program that didn't give 0. 127 when a program isn't on <c>PATH</c>, or 126 when one couldn't
+	/// start.
 	/// </returns>
-	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null)
+	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null, bool pipeFail = false)
 	{
 		_ = stages.ArgumentNotNull();
 		_ = notFound.ArgumentNotNull();
@@ -123,8 +127,19 @@ internal static partial class ExternalProgram
 		}
 
 		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
-		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments) : RunPipelineWithSpawn(stages, paths!, assignments);
+		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments, pipeFail) : RunPipelineWithSpawn(stages, paths!, assignments, pipeFail);
 	}
+
+	/// <summary>
+	/// Works out a pipeline's status from its programs' statuses.
+	/// </summary>
+	/// <param name="codes">Each program's status, in pipeline order.</param>
+	/// <param name="pipeFail"><see langword="true" /> for <c>set -o pipefail</c>.</param>
+	/// <returns>
+	/// The last status, or with <paramref name="pipeFail" /> the rightmost one that isn't 0, and 0 when all are.
+	/// </returns>
+	internal static int PipelineStatus(IReadOnlyList<int> codes, bool pipeFail) =>
+		pipeFail ? codes.LastOrDefault(code => code != 0) : codes[^1];
 
 	/// <summary>
 	/// Gets the value of the last <c>PATH=</c> word in <paramref name="assignments" />.

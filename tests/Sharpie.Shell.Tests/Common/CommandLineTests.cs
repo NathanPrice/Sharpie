@@ -148,6 +148,27 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
+	/// Checks that the unset callback gets every variable that's set in neither the shell nor the environment, with
+	/// where it was typed, and none of the ones that always count as set.
+	/// </summary>
+	[Fact]
+	public void Split_WithUnsetCallback_ReportsUnsetNames()
+	{
+		// Arrange
+		var declare = new DeclareCommand();
+		var unset = new List<Word>();
+
+		declare.Set("A", "one");
+
+		// Act
+		var words = CommandLine.Split("echo $A $nope \"${gone}\" $1 $? $# $@ \"$*\" $PATH '$quoted'", declare.Variables, unset.Add);
+
+		// Assert
+		_ = unset.Should().Equal(new Word("nope", false, 8, 13), new Word("gone", false, 15, 22), new Word("1", false, 24, 26));
+		_ = words.Select(word => word.Text).Should().StartWith(["echo", "one", ""]);
+	}
+
+	/// <summary>
 	/// Checks that the words <c>$@</c> gives all point at the expansion, so an error can show where they came from.
 	/// </summary>
 	[Fact]

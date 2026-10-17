@@ -43,9 +43,12 @@ internal sealed class Job(int number, int processId, string command, Process? pr
 	// The ids of the programs still running, for jobs started with posix_spawn. Empty for the others.
 	private readonly List<int> members = [];
 
-	// The pipeline's last program, whose exit code is the job's, as in bash. Kept apart from members, which it leaves
-	// when it exits, possibly before the others.
-	private int lastStage;
+	// Every program in pipeline order, kept apart from members, which a program leaves when it exits. The last one's
+	// exit code is the job's, as in bash.
+	private readonly List<int> stages = [];
+
+	// The exit codes of the programs that have exited, by id.
+	private readonly Dictionary<int, int> codes = [];
 
 	/// <summary>
 	/// Gets or sets the job number.
@@ -143,13 +146,22 @@ internal sealed class Job(int number, int processId, string command, Process? pr
 	internal IReadOnlyList<int> Members => this.members;
 
 	/// <summary>
+	/// Gets the exit code of every program in the job, in pipeline order.
+	/// </summary>
+	/// <value>
+	/// Each code as <see cref="ExitCode" /> gives it, or 0 for a program that hasn't exited, which <c>pipefail</c>
+	/// reads.
+	/// </value>
+	internal IReadOnlyList<int> ExitCodes => [.. this.stages.Select(pid => this.codes.GetValueOrDefault(pid))];
+
+	/// <summary>
 	/// Adds a program started with <c>posix_spawn</c> to the job.
 	/// </summary>
 	/// <param name="pid">The program's process id.</param>
 	internal void Add(int pid)
 	{
 		this.members.Add(pid);
-		this.lastStage = pid;
+		this.stages.Add(pid);
 	}
 
 	/// <summary>
@@ -180,10 +192,11 @@ internal sealed class Job(int number, int processId, string command, Process? pr
 		}
 
 		_ = this.members.Remove(pid);
+		this.codes[pid] = low == 0 ? high : 128 + low;
 
-		if (pid == this.lastStage)
+		if (pid == this.stages.LastOrDefault())
 		{
-			this.ExitCode = low == 0 ? high : 128 + low;
+			this.ExitCode = this.codes[pid];
 		}
 
 		if (this.members.Count == 0)

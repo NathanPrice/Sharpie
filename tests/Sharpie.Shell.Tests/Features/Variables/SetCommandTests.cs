@@ -17,12 +17,13 @@ public sealed class SetCommandTests : IDisposable
 
 	private readonly ShellEnvironment environment = new();
 	private readonly DeclareCommand declare = new();
+	private readonly ShellSettings settings = new();
 	private readonly SetCommand sut;
 
 	/// <summary>
 	/// Initializes a new instance of the <see cref="SetCommandTests" /> class.
 	/// </summary>
-	public SetCommandTests() => this.sut = new SetCommand(this.declare);
+	public SetCommandTests() => this.sut = new SetCommand(this.declare, this.settings);
 
 	/// <summary>
 	/// Checks that words after <c>--</c> or <c>-</c>, or with neither, become the positional parameters, and that
@@ -54,21 +55,133 @@ public sealed class SetCommandTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that an option is refused with status 2 and the parameters are left alone.
+	/// Checks that a letter or name that isn't an option is refused with status 2, and the parameters are left alone.
 	/// </summary>
-	[Fact]
-	public void Run_WithOption_ReportsItAndGivesTwo()
+	/// <param name="args">The arguments.</param>
+	/// <param name="message">The message.</param>
+	[Theory]
+	[InlineData(new[] { "-q", "b" }, "`-q` isn't an option of set")]
+	[InlineData(new[] { "+eq", "b" }, "`+q` isn't an option of set")]
+	[InlineData(new[] { "-o", "nosuch", "b" }, "`nosuch` isn't an option name of set")]
+	public void Run_WithUnknownOption_ReportsItAndGivesTwo(string[] args, string message)
 	{
 		// Arrange
 		this.declare.SetPositional(["a"]);
 
 		// Act
-		var status = this.sut.Run(["-q", "b"]);
+		var status = this.sut.Run(args);
 
 		// Assert
 		_ = status.Should().Be(2);
 		_ = this.declare.Positional.Should().Equal("a");
-		_ = this.environment.Error.Should().Be(new ShellError("sharpie::set::invalid_option", "`-q` isn't an option of set").Render(color: false));
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::set::invalid_option", message)
+		{
+			Help = "set takes -e, -u, -x and -o with errexit, nounset, pipefail or xtrace",
+		}.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that letters, joined letters and <c>-o NAME</c> turn options on, and the same with <c>+</c> turns them
+	/// off, leaving the parameters alone.
+	/// </summary>
+	/// <param name="args">The arguments.</param>
+	/// <param name="expected">The options on afterwards.</param>
+	[Theory]
+	[InlineData(new[] { "-e" }, new[] { "errexit" })]
+	[InlineData(new[] { "-u", "-x" }, new[] { "nounset", "xtrace" })]
+	[InlineData(new[] { "-euo", "pipefail" }, new[] { "errexit", "nounset", "pipefail" })]
+	[InlineData(new[] { "-o", "errexit", "-o", "xtrace" }, new[] { "errexit", "xtrace" })]
+	[InlineData(new[] { "-eux", "+u" }, new[] { "errexit", "xtrace" })]
+	[InlineData(new[] { "-o", "pipefail", "+o", "pipefail" }, new string[0])]
+	public void Run_WithOptions_TurnsThemOnAndOff(string[] args, string[] expected)
+	{
+		// Arrange
+		this.declare.SetPositional(["a"]);
+
+		// Act
+		var status = this.sut.Run(args);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = ShellSettings.Options.Select(option => option.Name).Where(this.settings.IsOn).Should().Equal(expected);
+		_ = this.declare.Positional.Should().Equal("a");
+	}
+
+	/// <summary>
+	/// Checks that the properties the shell reads follow their options.
+	/// </summary>
+	[Fact]
+	public void Run_WithEveryOption_SetsEachProperty()
+	{
+		// Act
+		_ = this.sut.Run(["-eux", "-o", "pipefail"]);
+
+		// Assert
+		_ = this.settings.ErrExit.Should().BeTrue();
+		_ = this.settings.NoUnset.Should().BeTrue();
+		_ = this.settings.XTrace.Should().BeTrue();
+		_ = this.settings.PipeFail.Should().BeTrue();
+	}
+
+	/// <summary>
+	/// Checks that words after the options become the positional parameters, with or without <c>--</c>.
+	/// </summary>
+	/// <param name="option">The option that should be on.</param>
+	/// <param name="args">The arguments.</param>
+	[Theory]
+	[InlineData("errexit", new[] { "-e", "a", "b" })]
+	[InlineData("pipefail", new[] { "-o", "pipefail", "--", "a", "b" })]
+	public void Run_WithOptionsThenWords_SetsBoth(string option, string[] args)
+	{
+		// Act
+		_ = this.sut.Run(args);
+
+		// Assert
+		_ = this.declare.Positional.Should().Equal("a", "b");
+		_ = this.settings.IsOn(option).Should().BeTrue();
+	}
+
+	/// <summary>
+	/// Checks that a lone <c>-</c> turns tracing off and a lone <c>+</c> leaves it on.
+	/// </summary>
+	/// <param name="arg">The lone sign.</param>
+	/// <param name="expected">Whether tracing is on afterwards.</param>
+	[Theory]
+	[InlineData("-", false)]
+	[InlineData("+", true)]
+	public void Run_WithLoneSign_TurnsTracingOffOnlyForDash(string arg, bool expected)
+	{
+		// Arrange
+		_ = this.settings.Set("xtrace", true);
+
+		// Act
+		_ = this.sut.Run([arg]);
+
+		// Assert
+		_ = this.settings.XTrace.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>set -o</c> alone lists every option as bash does, and <c>set +o</c> prints the commands that set
+	/// them again.
+	/// </summary>
+	/// <param name="arg">The argument.</param>
+	/// <param name="expected">The lines it prints.</param>
+	[Theory]
+	[InlineData("-o", new[] { "errexit        \ton", "nounset        \toff", "pipefail       \ton", "xtrace         \toff" })]
+	[InlineData("+o", new[] { "set -o errexit", "set +o nounset", "set -o pipefail", "set +o xtrace" })]
+	public void Run_WithBareO_ListsOptions(string arg, string[] expected)
+	{
+		// Arrange
+		_ = this.settings.Set("errexit", true);
+		_ = this.settings.Set("pipefail", true);
+
+		// Act
+		var status = this.sut.Run([arg]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = this.environment.Output.Should().Be(string.Concat(expected.Select(line => line + Environment.NewLine)));
 	}
 
 	/// <summary>

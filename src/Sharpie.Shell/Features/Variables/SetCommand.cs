@@ -5,25 +5,37 @@ using Sharpie.Shell.Common;
 namespace Sharpie.Shell.Features.Variables;
 
 /// <summary>
-/// Sets the positional parameters, or lists the shell variables.
+/// Turns shell options on and off, sets the positional parameters, or lists the shell variables.
 /// </summary>
 /// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and positional parameters.</param>
+/// <param name="settings">The shell options this command changes.</param>
 /// <remarks>
-/// <c>set -- a b</c> or <c>set a b</c> makes <c>a</c> and <c>b</c> the positional parameters, and <c>set --</c> alone
-/// clears them. <c>set</c> with no arguments prints every variable as <c>NAME=value</c>, sorted, with the value quoted
-/// only when it needs to be, as bash prints them.
+/// <c>-e</c>, <c>-u</c> and <c>-x</c> turn on errexit, nounset and xtrace, <c>-o NAME</c> turns on an option by name,
+/// pipefail included, and <c>+</c> in place of <c>-</c> turns it off. Letters can be joined, as in
+/// <c>set -euo pipefail</c>. <c>set -o</c> alone lists the options and <c>set +o</c> prints the commands that would
+/// set them again. The words after the options, or after <c>--</c>, become the positional parameters, and
+/// <c>set --</c> alone clears them. <c>set</c> with no arguments prints every variable as <c>NAME=value</c>, sorted,
+/// with the value quoted only when it needs to be, as bash prints them.
 /// </remarks>
-internal sealed class SetCommand(DeclareCommand declare) : ICommand
+internal sealed class SetCommand(DeclareCommand declare, ShellSettings settings) : ICommand
 {
+	/// <summary>
+	/// Gets the shell options this command changes.
+	/// </summary>
+	/// <value>
+	/// The one set of options the shell reads before each command.
+	/// </value>
+	public ShellSettings Settings => settings;
+
 	/// <inheritdoc />
 	public string Name => "set";
 
 	/// <inheritdoc />
-	public string Description => "Sets the positional parameters or lists variables";
+	public string Description => "Sets shell options and positional parameters, or lists variables";
 
 	/// <inheritdoc />
 	/// <remarks>
-	/// The status is 0, or 2 for an option, since none is supported yet.
+	/// The status is 0, or 2 for an option that doesn't exist, as in bash. Options before the bad one stay changed.
 	/// </remarks>
 	public int Run(string[] args)
 	{
@@ -36,34 +48,87 @@ internal sealed class SetCommand(DeclareCommand declare) : ICommand
 			return 0;
 		}
 
-		if (args is ["--", .. var rest])
+		for (var index = 0; index < args.Length; index++)
 		{
-			declare.SetPositional(rest);
+			var arg = args[index];
 
-			return 0;
-		}
-
-		// A lone - or + also ends the options, the older spelling, but with nothing after it bash keeps the parameters.
-		if (args is ["-" or "+", .. var words])
-		{
-			if (words.Length > 0)
+			if (arg == "--")
 			{
-				declare.SetPositional(words);
+				declare.SetPositional(args[(index + 1)..]);
+
+				return 0;
 			}
 
-			return 0;
+			// A lone - or + also ends the options, the older spelling, but with nothing after it bash keeps the
+			// parameters. The - also turns tracing off.
+			if (arg is "-" or "+")
+			{
+				if (arg == "-")
+				{
+					_ = settings.Set("xtrace", false);
+				}
+
+				if (index + 1 < args.Length)
+				{
+					declare.SetPositional(args[(index + 1)..]);
+				}
+
+				return 0;
+			}
+
+			if (arg is not ['-' or '+', ..])
+			{
+				declare.SetPositional(args[index..]);
+
+				return 0;
+			}
+
+			foreach (var letter in arg[1..])
+			{
+				if (letter == 'o' && index + 1 == args.Length)
+				{
+					PrintOptions(settings, arg[0] == '-');
+
+					return 0;
+				}
+
+				var name = letter == 'o' ? args[++index] : ShellSettings.NameOf(letter);
+
+				if (name is null || !settings.Set(name, arg[0] == '-'))
+				{
+					Report(letter == 'o' ? $"`{name}` isn't an option name of set" : $"`{arg[0]}{letter}` isn't an option of set");
+
+					return 2;
+				}
+			}
 		}
-
-		if (args[0] is ['-' or '+', ..])
-		{
-			new ShellError("sharpie::set::invalid_option", $"`{args[0]}` isn't an option of set").Write();
-
-			return 2;
-		}
-
-		declare.SetPositional(args);
 
 		return 0;
+	}
+
+	/// <summary>
+	/// Reports an option <c>set</c> doesn't have, with the ones it does have as a hint.
+	/// </summary>
+	/// <param name="message">The message.</param>
+	private static void Report(string message) =>
+		new ShellError("sharpie::set::invalid_option", message) { Help = "set takes -e, -u, -x and -o with errexit, nounset, pipefail or xtrace" }.Write();
+
+	/// <summary>
+	/// Prints every option and whether it's on.
+	/// </summary>
+	/// <param name="settings">The options.</param>
+	/// <param name="asTable">
+	/// <see langword="true" /> for <c>set -o</c>'s table of names and <c>on</c> or <c>off</c>, or
+	/// <see langword="false" /> for <c>set +o</c>'s commands that set each option the way it is now.
+	/// </param>
+	private static void PrintOptions(ShellSettings settings, bool asTable)
+	{
+		foreach (var (name, _) in ShellSettings.Options)
+		{
+			var on = settings.IsOn(name);
+
+			Console.WriteLine(asTable ? $"{name,-15}\t{(on ? "on" : "off")}" : $"set {(on ? '-' : '+')}o {name}");
+		}
 	}
 
 	/// <summary>

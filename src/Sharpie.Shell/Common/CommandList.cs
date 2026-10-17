@@ -176,15 +176,21 @@ internal static class CommandList
 	/// <param name="line">The line.</param>
 	/// <param name="status">The status before the line, which a line with no commands gives back unchanged.</param>
 	/// <param name="run">Runs one command and gives its status.</param>
+	/// <param name="failed">
+	/// Called with the status when a command that ran fails and is the last of its <c>&amp;&amp;</c> and <c>||</c>
+	/// chain, which is when <c>set -e</c> ends the shell, or <see langword="null" /> for nothing.
+	/// </param>
 	/// <returns>
 	/// The status of the last command that ran, or <see cref="UnsupportedStatus" /> after printing an error when
 	/// <see cref="Split" /> refuses the line.
 	/// </returns>
 	/// <remarks>
 	/// POSIX gives <c>&amp;&amp;</c> and <c>||</c> the same precedence, read from the left, so in
-	/// <c>false &amp;&amp; a || b</c> the skipped <c>a</c> keeps the status at 1 and <c>b</c> runs.
+	/// <c>false &amp;&amp; a || b</c> the skipped <c>a</c> keeps the status at 1 and <c>b</c> runs. POSIX doesn't let
+	/// <c>set -e</c> act on a command followed by <c>&amp;&amp;</c> or <c>||</c>, so <c>false || b</c> is a test, not a
+	/// failure.
 	/// </remarks>
-	public static int Run(string line, int status, Func<string, int> run)
+	public static int Run(string line, int status, Func<string, int> run, Action<int>? failed = null)
 	{
 		_ = run.ArgumentNotNull();
 
@@ -202,11 +208,20 @@ internal static class CommandList
 			return UnsupportedStatus;
 		}
 
-		foreach (var (before, command) in commands)
+		for (var index = 0; index < commands.Count; index++)
 		{
-			if (before == Sequence || before == (status == 0 ? And : Or))
+			var (before, command) = commands[index];
+
+			if (before != Sequence && before != (status == 0 ? And : Or))
 			{
-				status = run(command);
+				continue;
+			}
+
+			status = run(command);
+
+			if (status != 0 && (index + 1 == commands.Count || commands[index + 1].Operator == Sequence))
+			{
+				failed?.Invoke(status);
 			}
 		}
 

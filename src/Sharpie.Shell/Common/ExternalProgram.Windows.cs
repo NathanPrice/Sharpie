@@ -116,6 +116,10 @@ internal static partial class ExternalProgram
 	/// <param name="stages">Each program's name followed by its arguments, in pipeline order.</param>
 	/// <param name="paths">Where each program was found, in the same order.</param>
 	/// <param name="assignments">Each stage's <c>NAME=VALUE</c> words, in the same order.</param>
+	/// <param name="pipeFail">
+	/// <see langword="true" /> for <c>set -o pipefail</c>. An earlier program killed because the last one exited
+	/// counts as failed.
+	/// </param>
 	/// <returns>
 	/// The status as <see cref="RunPipeline" /> gives it.
 	/// </returns>
@@ -135,7 +139,7 @@ internal static partial class ExternalProgram
 	/// </para>
 	/// </remarks>
 	[SupportedOSPlatform("windows")]
-	private static int RunPipelineWithProcesses(string[][] stages, string[] paths, string[][] assignments)
+	private static int RunPipelineWithProcesses(string[][] stages, string[] paths, string[][] assignments, bool pipeFail)
 	{
 		var processes = new List<Process>();
 
@@ -170,7 +174,7 @@ internal static partial class ExternalProgram
 
 			Task.WaitAll(relays);
 
-			return processes[^1].ExitCode;
+			return PipelineStatus([.. processes.Select(process => process.ExitCode)], pipeFail);
 		}
 		catch (Win32Exception exception)
 		{

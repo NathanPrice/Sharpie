@@ -99,7 +99,7 @@ internal static class Program
 			declare,
 			new ExportCommand(declare),
 			new UnsetCommand(declare),
-			new SetCommand(declare),
+			new SetCommand(declare, new ShellSettings()),
 			new ShiftCommand(declare),
 			new SourceCommand(".", declare, line => RunLine(commands, alias, declare, line)),
 			new SourceCommand("source", declare, line => RunLine(commands, alias, declare, line)),
@@ -180,6 +180,8 @@ internal static class Program
 		var declare = (DeclareCommand)commands["declare"];
 		var aliases = (AliasCommand)commands["alias"];
 		var interactive = options.IsInteractive(terminal);
+
+		((SetCommand)commands["set"]).Settings.Interactive = interactive;
 
 		// -c takes $0 from the first word after the command, as sh does. The script file's arguments become its
 		// positional parameters through the . builtin below.
@@ -459,10 +461,25 @@ internal static class Program
 	/// </returns>
 	/// <remarks>
 	/// The status is stored after each command, so <c>false; echo $?</c> prints 1, and again after the line, for one
-	/// that <see cref="CommandList" /> refuses.
+	/// that <see cref="CommandList" /> refuses. With <c>set -e</c>, a failed command ends the shell with its status
+	/// through <see cref="Environment.Exit" />, so the history is still saved.
 	/// </remarks>
-	private static int RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line) =>
-		declare.Status = CommandList.Run(line, declare.Status, command => declare.Status = RunCommand(commands, aliases, declare.Variables, command));
+	private static int RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line)
+	{
+		var settings = ((SetCommand)commands["set"]).Settings;
+
+		return declare.Status = CommandList.Run(
+			line,
+			declare.Status,
+			command => declare.Status = RunCommand(commands, aliases, declare.Variables, settings, command),
+			status =>
+			{
+				if (settings.ErrExit)
+				{
+					Environment.Exit(status);
+				}
+			});
+	}
 
 	/// <summary>
 	/// Splits one command and runs it as a pipeline, a builtin, or a program on <c>PATH</c>.
@@ -470,17 +487,44 @@ internal static class Program
 	/// <param name="commands">The builtins, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
 	/// <param name="variables">The shell variables that <c>$NAME</c> expands to.</param>
+	/// <param name="settings">The <c>set</c> options, which <c>-u</c>, <c>-x</c> and pipefail change here.</param>
 	/// <param name="line">
 	/// The command, with no <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> left in it, which error reports show and point
 	/// into.
 	/// </param>
 	/// <returns>
 	/// The command's status: <see cref="ExternalProgram.NotFound" /> when it isn't found, 1 when a redirect file
-	/// can't be opened, and <see cref="CommandList.UnsupportedStatus" /> when it holds an operator the shell can't run.
+	/// can't be opened or a variable isn't set under <c>set -u</c>, and <see cref="CommandList.UnsupportedStatus" />
+	/// when it holds an operator the shell can't run.
 	/// </returns>
-	private static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, IReadOnlyDictionary<string, string> variables, string line)
+	/// <remarks>
+	/// Under <c>set -u</c> a shell that isn't interactive exits with 127 at the first unset variable, as bash does.
+	/// </remarks>
+	private static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, IReadOnlyDictionary<string, string> variables, ShellSettings settings, string line)
 	{
-		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(aliases.Expand(CommandLine.Split(line, variables), variables));
+		Word? unset = null;
+		var split = CommandLine.Split(line, variables, settings.NoUnset ? name => unset ??= name : null);
+
+		if (unset is { } name)
+		{
+			new ShellError("sharpie::shell::unset_variable", $"`{name.Text}` isn't set")
+			{
+				Source = line,
+				Start = name.Start,
+				End = name.End,
+				Label = "set -u makes this an error",
+				Help = "set it first, or turn the check off with set +u",
+			}.Write();
+
+			if (!settings.Interactive)
+			{
+				Environment.Exit(127);
+			}
+
+			return 1;
+		}
+
+		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(aliases.Expand(split, variables));
 
 		// A trailing & runs an external program in the background. Builtins still run in the foreground.
 		var background = words is [.., { IsOperator: true, Text: "&" }];
@@ -504,6 +548,11 @@ internal static class Program
 			ReportUnusable(line, words);
 
 			return CommandList.UnsupportedStatus;
+		}
+
+		if (settings.XTrace)
+		{
+			Trace(stages);
 		}
 
 		// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
@@ -579,7 +628,7 @@ internal static class Program
 		// hangs a pipeline into a builtin, because bash relies on the broken pipe to stop it. With three or more
 		// stages builtins aren't looked up, so echo runs the program on PATH and type isn't found. Handling them
 		// there means running the stages before the last builtin into Stream.Null.
-		// The status is the last stage's, as in bash without pipefail.
+		// The status is the last stage's, as in bash, or with pipefail the last failing stage's.
 		int RunPipeline(string[][] stages)
 		{
 			var left = stages[0];
@@ -589,24 +638,25 @@ internal static class Program
 
 			if (leftBuiltin is null && rightBuiltin is null)
 			{
-				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], null), assignments);
+				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], null), assignments, settings.PipeFail);
 			}
 
 			if (rightBuiltin is not null)
 			{
-				_ = leftBuiltin is not null
+				var leftStatus = leftBuiltin is not null
 					? RunBuiltin(leftBuiltin, left[1..], assignments[0], Stream.Null, null)
 					: RunProgram(names[0], left[1..], assignments[0], Stream.Null, null, background: false);
 
-				return RunBuiltin(rightBuiltin, right[1..], assignments[^1], null, null);
+				return ExternalProgram.PipelineStatus([leftStatus, RunBuiltin(rightBuiltin, right[1..], assignments[^1], null, null)], settings.PipeFail);
 			}
 
 			using var buffer = new MemoryStream();
 
-			_ = RunBuiltin(leftBuiltin!, left[1..], assignments[0], buffer, null);
+			var builtinStatus = RunBuiltin(leftBuiltin!, left[1..], assignments[0], buffer, null);
+
 			buffer.Position = 0;
 
-			return RunProgram(names[^1], right[1..], assignments[^1], null, null, background: false, buffer);
+			return ExternalProgram.PipelineStatus([builtinStatus, RunProgram(names[^1], right[1..], assignments[^1], null, null, background: false, buffer)], settings.PipeFail);
 		}
 
 		// Runs a program on PATH with its NAME=VALUE words in its environment, or reports that it isn't there.
@@ -678,6 +728,33 @@ internal static class Program
 			Console.SetOut(terminalOut);
 			Console.SetError(terminalError);
 			ShellError.UseColor = terminalColor;
+		}
+	}
+
+	/// <summary>
+	/// Prints each stage of a command to standard error before it runs, as <c>set -x</c> does.
+	/// </summary>
+	/// <param name="stages">The stages, each starting with its <c>NAME=VALUE</c> words.</param>
+	/// <remarks>
+	/// Each <c>NAME=VALUE</c> word gets a line of its own, then the command, every line after <c>+ </c>, with the
+	/// words quoted only where needed, the way bash prints them. Redirects aren't shown.
+	/// </remarks>
+	private static void Trace(string[][] stages)
+	{
+		foreach (var stage in stages)
+		{
+			var count = stage.TakeWhile(DeclareCommand.IsAssignment).Count();
+
+			foreach (var parts in stage[..count].Select(assignment => assignment.Split('=', 2)))
+			{
+				// bash leaves an empty value as NAME= here, though an empty argument shows as ''.
+				Console.Error.WriteLine($"+ {parts[0]}={(parts[1].Length == 0 ? string.Empty : CommandLine.QuoteIfNeeded(parts[1]))}");
+			}
+
+			if (count < stage.Length)
+			{
+				Console.Error.WriteLine($"+ {string.Join(' ', stage[count..].Select(CommandLine.QuoteIfNeeded))}");
+			}
 		}
 	}
 

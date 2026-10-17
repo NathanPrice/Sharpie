@@ -46,6 +46,11 @@ internal static class CommandLine
 	/// <param name="variables">
 	/// The shell variables that <c>$NAME</c> expands from, or <see langword="null" /> to leave every <c>$</c> as typed.
 	/// </param>
+	/// <param name="unset">
+	/// Called with the name and place of each variable that's set in neither the shell nor the environment, for
+	/// <c>set -u</c>, or <see langword="null" /> to let it expand to nothing. <c>$@</c>, <c>$*</c>, <c>$?</c> and
+	/// <c>$#</c> are always set.
+	/// </param>
 	/// <returns>
 	/// The command name followed by its arguments, with the quote characters removed, and each operator as its own
 	/// <see cref="Word" />. Quoted and unquoted text that touch with no space between join into one word. An empty
@@ -97,7 +102,7 @@ internal static class CommandLine
 	/// matches nothing stays as typed, which is bash's default.
 	/// </para>
 	/// </remarks>
-	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null)
+	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null, Action<Word>? unset = null)
 	{
 		_ = line.ArgumentNotNull();
 
@@ -149,7 +154,7 @@ internal static class CommandLine
 						hasWord = true;
 
 						break;
-					case null or '"' when TryExpand(line, index, variables, quote is not null, out var parts, out var end):
+					case null or '"' when TryExpand(line, index, variables, quote is not null, unset, out var parts, out var end):
 						AppendParts(parts, quoted: quote is not null, end);
 						index = end;
 
@@ -374,6 +379,7 @@ internal static class CommandLine
 	/// The shell variables, positional parameters included, or <see langword="null" /> to leave every <c>$</c> as typed.
 	/// </param>
 	/// <param name="quoted"><see langword="true" /> inside double quotes, where <c>$*</c> joins its parameters.</param>
+	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
 	/// <param name="parts">
 	/// The words the expansion gives: one for a variable, one per parameter for <c>$@</c> and <c>$*</c>, and one for
 	/// <c>"$*"</c>.
@@ -382,7 +388,7 @@ internal static class CommandLine
 	/// <returns>
 	/// <see langword="false" /> when no form follows the <c>$</c>, so it stays as typed.
 	/// </returns>
-	private static bool TryExpand(string line, int index, IReadOnlyDictionary<string, string>? variables, bool quoted, out string[] parts, out int end)
+	private static bool TryExpand(string line, int index, IReadOnlyDictionary<string, string>? variables, bool quoted, Action<Word>? unset, out string[] parts, out int end)
 	{
 		parts = [];
 		end = index;
@@ -401,11 +407,20 @@ internal static class CommandLine
 			return true;
 		}
 
-		var found = TryExpandVariable(line, index, variables, out var value, out end);
+		if (!TryReadVariableName(line, index, out var name, out end))
+		{
+			return false;
+		}
 
-		parts = [value];
+		// $? is always set, though it isn't stored until the first command has run.
+		if (unset is not null && name != "?" && !variables.ContainsKey(name) && Environment.GetEnvironmentVariable(name) is null)
+		{
+			unset(new Word(name, IsOperator: false, index, end + 1));
+		}
 
-		return found;
+		parts = [Lookup(variables, name)];
+
+		return true;
 	}
 
 	/// <summary>
@@ -431,25 +446,22 @@ internal static class CommandLine
 	}
 
 	/// <summary>
-	/// Reads the <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c>, <c>$#</c> or <c>$0</c> to <c>$9</c> that starts at the
-	/// <c>$</c> at <paramref name="index" />.
+	/// Reads the variable name of the <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c>, <c>$#</c> or <c>$0</c> to <c>$9</c>
+	/// that starts at the <c>$</c> at <paramref name="index" />.
 	/// </summary>
 	/// <param name="line">The command line being split.</param>
 	/// <param name="index">The position of the <c>$</c>.</param>
-	/// <param name="variables">
-	/// The shell variables. A name in neither them nor the environment expands to an empty string.
-	/// </param>
-	/// <param name="value">The variable's value, or an empty string when no name follows.</param>
+	/// <param name="name">The variable's name, or an empty string when no name follows.</param>
 	/// <param name="end">The position of the last character the expansion used.</param>
 	/// <returns>
 	/// <see langword="false" /> when no form follows the <c>$</c>, so it stays as typed.
 	/// </returns>
-	private static bool TryExpandVariable(string line, int index, IReadOnlyDictionary<string, string> variables, out string value, out int end)
+	private static bool TryReadVariableName(string line, int index, out string name, out int end)
 	{
 		// Only one digit counts, so $10 is $1 followed by 0, as in POSIX. ${10} goes through the braces below.
 		if (index + 1 < line.Length && (line[index + 1] is '?' or '#' || char.IsAsciiDigit(line[index + 1])))
 		{
-			value = Lookup(variables, line[index + 1].ToString());
+			name = line[index + 1].ToString();
 			end = index + 1;
 
 			return true;
@@ -457,7 +469,7 @@ internal static class CommandLine
 
 		if (index + 1 < line.Length && line[index + 1] == '{' && line.IndexOf('}', index + 2) is var close and > 0)
 		{
-			value = Lookup(variables, line[(index + 2)..close]);
+			name = line[(index + 2)..close];
 			end = close;
 
 			return true;
@@ -472,12 +484,12 @@ internal static class CommandLine
 				end++;
 			}
 
-			value = Lookup(variables, line[(index + 1)..(end + 1)]);
+			name = line[(index + 1)..(end + 1)];
 
 			return true;
 		}
 
-		value = string.Empty;
+		name = string.Empty;
 		end = index;
 
 		return false;

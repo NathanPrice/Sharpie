@@ -186,6 +186,35 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a failure is reported only for a command that ran and ends its <c>&amp;&amp;</c> and <c>||</c>
+	/// chain, the commands <c>set -e</c> acts on.
+	/// </summary>
+	/// <param name="line">The line, where each command's status is its length minus one.</param>
+	/// <param name="expected">The statuses reported as failures.</param>
+	[Theory]
+	[InlineData("a; bb", new[] { 1 })]
+	[InlineData("bb; a", new[] { 1 })]
+	[InlineData("bb && a", new int[0])]
+	[InlineData("a && bb", new[] { 1 })]
+	[InlineData("bb || a", new int[0])]
+	[InlineData("bb || ccc", new[] { 2 })]
+	[InlineData("bb && ccc; a", new int[0])]
+	[InlineData("a && bb; ccc", new[] { 1, 2 })]
+	[InlineData("bb && ccc || dddd", new[] { 3 })]
+	[InlineData("a", new int[0])]
+	public void Run_WithFailedCommands_ReportsOnlyChainEnds(string line, int[] expected)
+	{
+		// Arrange
+		var failures = new List<int>();
+
+		// Act
+		_ = CommandList.Run(line, 0, command => command.Length - 1, failures.Add);
+
+		// Assert
+		_ = failures.Should().Equal(expected);
+	}
+
+	/// <summary>
 	/// Restores the console after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();

@@ -234,6 +234,52 @@ public sealed partial class ExternalProgramTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that with pipefail a pipeline gives the status of its rightmost failing program, and 0 when none fails.
+	/// </summary>
+	/// <param name="first">The status the first program exits with.</param>
+	/// <param name="middle">The status the middle program exits with.</param>
+	/// <param name="last">The status the last program exits with.</param>
+	/// <param name="expected">The pipeline's status.</param>
+	[Theory]
+	[InlineData(3, 4, 0, 4)]
+	[InlineData(3, 0, 0, 3)]
+	[InlineData(0, 0, 5, 5)]
+	[InlineData(0, 0, 0, 0)]
+	public void RunPipeline_WithPipeFail_ReturnsRightmostFailure(int first, int middle, int last, int expected)
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "first", executable: true, $"#!/bin/sh\nexit {first}\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "middle", executable: true, $"#!/bin/sh\nexit {middle}\n");
+		_ = ShellEnvironment.CreateFile(this.folder, "last", executable: true, $"#!/bin/sh\nexit {last}\n");
+
+		// Act
+		var result = ExternalProgram.RunPipeline([["first"], ["middle"], ["last"]], _ => { }, pipeFail: true);
+
+		// Assert
+		_ = result.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks the status rule on its own: the last status, or with pipefail the rightmost one that isn't 0.
+	/// </summary>
+	/// <param name="codes">The statuses in pipeline order.</param>
+	/// <param name="pipeFail">Whether pipefail is on.</param>
+	/// <param name="expected">The pipeline's status.</param>
+	[Theory]
+	[InlineData(new[] { 1, 0 }, false, 0)]
+	[InlineData(new[] { 1, 0 }, true, 1)]
+	[InlineData(new[] { 1, 2 }, true, 2)]
+	[InlineData(new[] { 0, 0 }, true, 0)]
+	public void PipelineStatus_WithCodes_FollowsPipeFail(int[] codes, bool pipeFail, int expected)
+	{
+		// Act
+		var status = ExternalProgram.PipelineStatus(codes, pipeFail);
+
+		// Assert
+		_ = status.Should().Be(expected);
+	}
+
+	/// <summary>
 	/// Checks that a pipeline whose later program can't start returns <see cref="ExternalProgram.CannotRun" />.
 	/// </summary>
 	[Fact]
