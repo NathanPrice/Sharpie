@@ -431,7 +431,7 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Runs the commands of one line, joined by <c>;</c>, <c>&amp;&amp;</c> and <c>||</c>, as
+	/// Runs the commands of one line, joined by <c>;</c>, <c>&amp;</c>, <c>&amp;&amp;</c> and <c>||</c>, as
 	/// <see cref="CommandList.Run" /> describes.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
@@ -455,8 +455,9 @@ internal static class Program
 	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
 	/// <param name="variables">The shell variables that <c>$NAME</c> expands to.</param>
 	/// <param name="line">
-	/// The command, with no <c>;</c>, <c>&amp;&amp;</c> or <c>||</c> left in it, which error reports show and point
-	/// into.
+	/// The command, with no <c>;</c> left in it, which error reports show and point into. It may end with
+	/// <c>&amp;</c>, and then it may also hold <c>&amp;&amp;</c> or <c>||</c>, for the whole and-or list to run in the
+	/// background.
 	/// </param>
 	/// <returns>
 	/// The command's status: <see cref="ExternalProgram.NotFound" /> when it isn't found, 1 when a redirect file
@@ -466,7 +467,7 @@ internal static class Program
 	{
 		var (words, outputPath, appendOutput, errorPath, appendError) = CommandLine.SplitRedirect(aliases.Expand(CommandLine.Split(line, variables), variables));
 
-		// A trailing & runs an external program in the background. Builtins still run in the foreground.
+		// A trailing & runs the command in the background.
 		var background = words is [.., { IsOperator: true, Text: "&" }];
 
 		if (background)
@@ -479,7 +480,18 @@ internal static class Program
 			return 0;
 		}
 
-		// Redirects and & aren't applied to a pipeline.
+		// Anything but one program, like cd, A=1, a pipeline or a && b, runs in a copy of the shell, so it can't
+		// change this one, as bash runs it in a subshell.
+		// shortcut: the copy of the shell gets exported variables and the folder, not aliases or unexported shell
+		// variables as a bash subshell does. Upgrade by passing those to the child if a background builtin needs them.
+		if (background && (Array.Exists(words, word => word.IsOperator)
+			|| words.Select(word => word.Text).FirstOrDefault(text => !DeclareCommand.IsAssignment(text)) is not { } name
+			|| commands.ContainsKey(name)))
+		{
+			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), ["-c", line.EndsWith('&') ? line[..^1] : line], [], null, null, background: true);
+		}
+
+		// Redirects aren't applied to a pipeline.
 		var stages = CommandLine.SplitPipeline(words);
 
 		// Operators the shell can't run yet, like < or 2>&1, are refused rather than passed on as arguments.

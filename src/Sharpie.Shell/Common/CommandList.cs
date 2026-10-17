@@ -4,8 +4,8 @@ using DotNetTips.Spargine.Core;
 namespace Sharpie.Shell.Common;
 
 /// <summary>
-/// Splits a line into the commands of a POSIX list, joined by <c>;</c>, newlines, <c>&amp;&amp;</c> and <c>||</c>,
-/// and runs them in order.
+/// Splits a line into the commands of a POSIX list, joined by <c>;</c>, newlines, <c>&amp;</c>, <c>&amp;&amp;</c>
+/// and <c>||</c>, and runs them in order.
 /// </summary>
 internal static class CommandList
 {
@@ -25,13 +25,19 @@ internal static class CommandList
 	internal const string Or = "||";
 
 	/// <summary>
+	/// The operator that ends a command to run in the background. It stays at the end of that command's text, and the
+	/// next command always runs, as after <c>;</c>.
+	/// </summary>
+	internal const string Background = "&";
+
+	/// <summary>
 	/// The status of a line that uses syntax <see cref="Split" /> refuses, which bash also gives a syntax error.
 	/// </summary>
 	internal const int UnsupportedStatus = 2;
 
 	/// <summary>
-	/// Cuts <paramref name="line" /> into its commands at every <c>;</c>, newline, <c>&amp;&amp;</c> and <c>||</c>
-	/// outside quotes.
+	/// Cuts <paramref name="line" /> into its commands at every <c>;</c>, newline, <c>&amp;</c>, <c>&amp;&amp;</c> and
+	/// <c>||</c> outside quotes.
 	/// </summary>
 	/// <param name="line">The line, which may hold several lines when it came from <c>-c</c>.</param>
 	/// <returns>
@@ -41,7 +47,10 @@ internal static class CommandList
 	/// </returns>
 	/// <remarks>
 	/// Quotes and backslashes work as in <see cref="CommandLine.Split" />, so a quoted or escaped <c>;</c> stays in its
-	/// command. A single <c>|</c> or <c>&amp;</c> also stays, for the command to read as a pipe or a background job.
+	/// command. A single <c>|</c> also stays, for the command to read as a pipe, and so does an <c>&amp;</c> that's part
+	/// of a redirect like <c>2&gt;&amp;1</c> or <c>&amp;&gt;</c>. A command cut at <c>&amp;</c> keeps it at its end; when
+	/// it ends an and-or list, as in <c>a &amp;&amp; b &amp;</c>, the whole list becomes that one command, which bash
+	/// also runs in the background as a whole.
 	/// An operator at the end of a line carries over a newline, so <c>a &amp;&amp;</c> on one line and <c>b</c> on the
 	/// next run as <c>a &amp;&amp; b</c>, as POSIX allows. Command substitution is refused, not passed on as text, so
 	/// a command meant to get the output of another never runs with the wrong arguments.
@@ -69,6 +78,9 @@ internal static class CommandList
 		var commands = new List<(string Operator, string Command)>();
 		var command = new StringBuilder();
 		var before = Sequence;
+
+		// Where the and-or list being read starts in commands, for a & at its end to join it into one command.
+		var listStart = 0;
 		char? quote = null;
 		var escaped = false;
 
@@ -104,7 +116,12 @@ internal static class CommandList
 
 			if (quote is null && OperatorAt(line, index) is { } typed)
 			{
-				Cut(typed == "\n" ? Sequence : typed);
+				if (typed == Background)
+				{
+					_ = command.Append('&');
+				}
+
+				Cut(typed);
 				index += typed.Length - 1;
 
 				continue;
@@ -133,7 +150,8 @@ internal static class CommandList
 		return commands;
 
 		// Ends the command being read. A blank one is dropped, and its operator only replaces the one before it when
-		// it's && or ||, which keeps "a &&" followed by a newline joined to the next line.
+		// it's && or ||, which keeps "a &&" followed by a newline joined to the next line. After a &, the commands of
+		// the and-or list it ends are joined into one, and the next command always runs.
 		void Cut(string after)
 		{
 			var text = command.ToString().Trim();
@@ -142,6 +160,20 @@ internal static class CommandList
 			{
 				commands.Add((before, text));
 				before = after;
+
+				if (after == Background)
+				{
+					var list = commands[listStart..];
+
+					commands.RemoveRange(listStart, list.Count);
+					commands.Add((list[0].Operator, list[0].Command + string.Concat(list.Skip(1).Select(next => $" {next.Operator} {next.Command}"))));
+					before = Sequence;
+				}
+
+				if (before == Sequence)
+				{
+					listStart = commands.Count;
+				}
 			}
 			else if (after != Sequence)
 			{
@@ -159,14 +191,15 @@ internal static class CommandList
 	/// <param name="line">The line.</param>
 	/// <param name="index">The position to look at.</param>
 	/// <returns>
-	/// <c>;</c>, a newline, <see cref="And" /> or <see cref="Or" /> as typed, or <see langword="null" /> when none
-	/// starts there. A single <c>&amp;</c> or <c>|</c> isn't one.
+	/// <see cref="Sequence" /> for <c>;</c> or a newline, <see cref="Background" />, <see cref="And" /> or
+	/// <see cref="Or" />, or <see langword="null" /> when none starts there. A single <c>|</c> isn't one, and neither is an <c>&amp;</c> in
+	/// <c>&amp;&gt;</c>, <c>&gt;&amp;</c>, <c>&lt;&amp;</c> or <c>|&amp;</c>, which <see cref="CommandLine.Split" /> reads.
 	/// </returns>
 	private static string? OperatorAt(string line, int index) => line[index] switch
 	{
-		';' => Sequence,
-		'\n' => "\n",
+		';' or '\n' => Sequence,
 		'&' or '|' when index + 1 < line.Length && line[index + 1] == line[index] => line[index] == '&' ? And : Or,
+		'&' when (index + 1 == line.Length || line[index + 1] != '>') && (index == 0 || line[index - 1] is not ('>' or '<' or '|')) => Background,
 		_ => null,
 	};
 
