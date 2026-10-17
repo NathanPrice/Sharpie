@@ -215,6 +215,27 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that each command that runs is told whether <c>&amp;&amp;</c> or <c>||</c> follows it.
+	/// </summary>
+	[Fact]
+	public void Run_WithTestedCommands_TellsRunWhichAreTested()
+	{
+		// Arrange
+		var ran = new List<(string Command, bool Tested)>();
+
+		// Act
+		_ = CommandList.Run("a && b; c || d; e", 0, (command, tested) =>
+		{
+			ran.Add((command, tested));
+
+			return 0;
+		});
+
+		// Assert
+		_ = ran.Should().Equal(("a", true), ("b", false), ("c", true), ("e", false));
+	}
+
+	/// <summary>
 	/// Restores the console after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();

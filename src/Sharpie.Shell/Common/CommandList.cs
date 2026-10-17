@@ -194,6 +194,28 @@ internal static class CommandList
 	{
 		_ = run.ArgumentNotNull();
 
+		return Run(line, status, (command, _) => run(command), failed);
+	}
+
+	/// <summary>
+	/// Runs the commands of <paramref name="line" /> in order, as the other overload does, telling
+	/// <paramref name="run" /> which commands are tested.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="status">The status before the line.</param>
+	/// <param name="run">
+	/// Runs one command and gives its status. Its second argument is <see langword="true" /> when the command is
+	/// followed by <c>&amp;&amp;</c> or <c>||</c>, so a failure is a test, and <c>set -e</c> ignores it even inside a
+	/// line that <c>eval</c> or <c>.</c> runs for the command.
+	/// </param>
+	/// <param name="failed">Called with the status of a failed command that isn't tested, or <see langword="null" />.</param>
+	/// <returns>
+	/// The status of the last command that ran, or <see cref="UnsupportedStatus" /> when the line is refused.
+	/// </returns>
+	public static int Run(string line, int status, Func<string, bool, int> run, Action<int>? failed = null)
+	{
+		_ = run.ArgumentNotNull();
+
 		if (SplitOrRefuse(line, out var refused) is not { } commands)
 		{
 			new ShellError("sharpie::parser::command_substitution", "Command substitution isn't supported")
@@ -217,9 +239,11 @@ internal static class CommandList
 				continue;
 			}
 
-			status = run(command);
+			var tested = index + 1 < commands.Count && commands[index + 1].Operator != Sequence;
 
-			if (status != 0 && (index + 1 == commands.Count || commands[index + 1].Operator == Sequence))
+			status = run(command, tested);
+
+			if (status != 0 && !tested)
 			{
 				failed?.Invoke(status);
 			}

@@ -57,6 +57,15 @@ internal sealed class ShellSettings
 	public bool Interactive { get; set; }
 
 	/// <summary>
+	/// Gets or sets how many commands the shell is running right now whose status <c>&amp;&amp;</c> or <c>||</c>
+	/// tests, one inside another through <c>eval</c> or <c>.</c>.
+	/// </summary>
+	/// <value>
+	/// 0 when no such command is running. <c>set -e</c> ignores failures while it's above 0, as POSIX says.
+	/// </value>
+	public int TestDepth { get; set; }
+
+	/// <summary>
 	/// Gets the option that <c>set -</c> takes <paramref name="letter" /> for.
 	/// </summary>
 	/// <param name="letter">The letter after <c>-</c> or <c>+</c>.</param>

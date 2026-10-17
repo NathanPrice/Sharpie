@@ -33,6 +33,39 @@ public sealed class SetOptionsProcessTests
 	}
 
 	/// <summary>
+	/// Checks that <c>set -e</c> ignores a failure inside a file that <c>.</c> runs on the left of <c>||</c>, and
+	/// still exits for one run as the last command of its chain, as bash does.
+	/// </summary>
+	/// <param name="command">The command string, where FILE is a file holding <c>false</c>.</param>
+	/// <param name="output">What it should print.</param>
+	/// <param name="expected">The shell's exit code.</param>
+	[Theory]
+	[InlineData("set -e; . FILE || echo ok; echo after", "ok\nafter\n", 0)]
+	[InlineData("set -e; . FILE && echo no; echo after", "after\n", 0)]
+	[InlineData("set -e; true && . FILE; echo after", "", 1)]
+	[InlineData("set -e; . FILE || true; false; echo after", "", 1)]
+	public async Task Shell_WithErrExitInsideTestedSource_IgnoresFailure(string command, string output, int expected)
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var file = ShellEnvironment.CreateFile(folder, "fails.sh", executable: false, "false\n");
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", command.Replace("FILE", file, StringComparison.Ordinal)]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be(output);
+			_ = run.ExitCode.Should().Be(expected);
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that <c>set -u</c> reports an unset variable, pointing at it, and ends a shell that isn't interactive
 	/// with 127, as bash does, while <c>$@</c>, <c>$#</c> and <c>$?</c> stay usable.
 	/// </summary>

@@ -450,7 +450,7 @@ internal static class Program
 
 	/// <summary>
 	/// Runs the commands of one line, joined by <c>;</c>, <c>&amp;&amp;</c> and <c>||</c>, as
-	/// <see cref="CommandList.Run" /> describes.
+	/// <see cref="CommandList.Run(string, int, Func{string, int}, Action{int})" /> describes.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
@@ -462,7 +462,8 @@ internal static class Program
 	/// <remarks>
 	/// The status is stored after each command, so <c>false; echo $?</c> prints 1, and again after the line, for one
 	/// that <see cref="CommandList" /> refuses. With <c>set -e</c>, a failed command ends the shell with its status
-	/// through <see cref="Environment.Exit" />, so the history is still saved.
+	/// through <see cref="Environment.Exit" />, so the history is still saved. A failure anywhere inside a command
+	/// that <c>&amp;&amp;</c> or <c>||</c> tests doesn't, so <c>eval false || echo ok</c> prints ok, as in bash.
 	/// </remarks>
 	private static int RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line)
 	{
@@ -471,10 +472,22 @@ internal static class Program
 		return declare.Status = CommandList.Run(
 			line,
 			declare.Status,
-			command => declare.Status = RunCommand(commands, aliases, declare.Variables, settings, command),
+			(command, tested) =>
+			{
+				settings.TestDepth += tested ? 1 : 0;
+
+				try
+				{
+					return declare.Status = RunCommand(commands, aliases, declare.Variables, settings, command);
+				}
+				finally
+				{
+					settings.TestDepth -= tested ? 1 : 0;
+				}
+			},
 			status =>
 			{
-				if (settings.ErrExit)
+				if (settings.ErrExit && settings.TestDepth == 0)
 				{
 					Environment.Exit(status);
 				}
