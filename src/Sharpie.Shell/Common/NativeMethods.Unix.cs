@@ -112,6 +112,60 @@ internal static unsafe partial class NativeMethods
 	internal static int Continued => OperatingSystem.IsMacOS() ? 0x10 : 8;
 
 	/// <summary>
+	/// Gets <c>RLIM_INFINITY</c>, the resource limit value that means no limit.
+	/// </summary>
+	/// <value>
+	/// The value for the current OS: every bit set on Linux, the largest signed 64-bit number on macOS.
+	/// </value>
+	internal static ulong ResourceUnlimited => OperatingSystem.IsMacOS() ? long.MaxValue : nuint.MaxValue;
+
+	/// <summary>
+	/// Gets <c>PIPE_BUF</c>, the most bytes one write to a pipe carries without mixing with other writers.
+	/// </summary>
+	/// <value>
+	/// The value for the current OS.
+	/// </value>
+	internal static int PipeBufferSize => OperatingSystem.IsMacOS() ? 512 : 4096;
+
+	/// <summary>
+	/// Sets the file mode creation mask and gives back the old one.
+	/// </summary>
+	/// <param name="mask">The new mask.</param>
+	/// <returns>
+	/// The old mask. <c>mode_t</c> is 16 bits on macOS and 32 on Linux, so callers keep only the low 9 bits.
+	/// </returns>
+	/// <remarks>
+	/// There is no call that only reads the mask, so reading it means setting it and putting it back.
+	/// </remarks>
+	[LibraryImport("libc", EntryPoint = "umask")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int SetFileMask(int mask);
+
+	/// <summary>
+	/// Reads a resource limit of this process.
+	/// </summary>
+	/// <param name="resource">The <c>RLIMIT_*</c> number, which differs between Linux and macOS.</param>
+	/// <param name="limit">Receives the soft and hard limits.</param>
+	/// <returns>
+	/// 0, or -1 with the reason in the last error.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "getrlimit", SetLastError = true)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int GetResourceLimit(int resource, out ResourceLimit limit);
+
+	/// <summary>
+	/// Changes a resource limit of this process, which the programs it starts afterwards inherit.
+	/// </summary>
+	/// <param name="resource">The <c>RLIMIT_*</c> number, which differs between Linux and macOS.</param>
+	/// <param name="limit">The new soft and hard limits.</param>
+	/// <returns>
+	/// 0, or -1 with the reason in the last error.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "setrlimit", SetLastError = true)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int SetResourceLimit(int resource, in ResourceLimit limit);
+
+	/// <summary>
 	/// Gets sigprocmask's <c>SIG_SETMASK</c>, which replaces the blocked signals with the given set.
 	/// </summary>
 	/// <value>
@@ -486,6 +540,34 @@ internal static unsafe partial class NativeMethods
 	[LibraryImport("libc", EntryPoint = "getpwnam", StringMarshalling = StringMarshalling.Utf8)]
 	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
 	private static partial void* GetPasswordEntry(string name);
+
+	/// <summary>
+	/// A <c>struct rlimit</c>: the soft limit the system enforces, and the hard limit the soft one can be raised to.
+	/// </summary>
+	/// <param name="current">The soft limit.</param>
+	/// <param name="maximum">The hard limit.</param>
+	/// <remarks>
+	/// <c>rlim_t</c> is pointer-sized on glibc and 64 bits on macOS, which only runs 64-bit.
+	/// </remarks>
+	[StructLayout(LayoutKind.Sequential)]
+	internal readonly struct ResourceLimit(nuint current, nuint maximum)
+	{
+		/// <summary>
+		/// Gets the soft limit.
+		/// </summary>
+		/// <value>
+		/// The limit, or <see cref="ResourceUnlimited" />.
+		/// </value>
+		public nuint Current { get; } = current;
+
+		/// <summary>
+		/// Gets the hard limit.
+		/// </summary>
+		/// <value>
+		/// The limit, or <see cref="ResourceUnlimited" />.
+		/// </value>
+		public nuint Maximum { get; } = maximum;
+	}
 
 	/// <summary>
 	/// The start of glibc's and musl's <c>struct passwd</c>, up to <c>pw_dir</c>.

@@ -50,7 +50,7 @@ and mouse reporting all work.
 
 **Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `dman`, `echo`, `eval`, `exec`,
 `exit`, `export`, `false`, `fg`, `history`, `jobs`, `pwd`, `read`, `set`, `shift`, `source` / `.`, `true`, `type`,
-`unalias`, `unset`.
+`ulimit`, `umask`, `unalias`, `unset`.
 
 ## Getting started
 

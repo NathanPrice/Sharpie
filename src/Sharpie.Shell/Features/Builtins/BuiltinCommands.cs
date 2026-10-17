@@ -65,6 +65,8 @@ internal static class BuiltinCommands
 			new StatusCommand("false", 1, "Does nothing and fails"),
 			new UnaliasCommand(alias),
 			new DmanCommand(),
+			new UmaskCommand(NativeMethods.SetFileMask),
+			new UlimitCommand(),
 			new CommandCommand(type),
 			new ExecCommand(),
 			type
