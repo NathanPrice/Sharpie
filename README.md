@@ -56,6 +56,10 @@ and mouse reporting all work.
 - **Conditions.** `test` and `[` are builtins, so `[ -f file ]` works on Windows too, and `[[ ... ]]` works as in
   bash: `&&`, `||`, `!` and parentheses inside it, `==` and `!=` against a pattern as in `[[ $x == *.txt ]]`, `=~`
   against a regular expression, and no word splitting, so `[[ -n $x ]]` needs no quotes.
+- **Functions.** `name() { ...; }` and `function name { ...; }` define a function, on one line or many. Its arguments
+  are `$1`, `$#` and `"$@"` while it runs, `local` keeps a variable's change inside it, and `return` ends it or a
+  sourced file. A function takes over a builtin of the same name, and `command name` still runs the builtin, so
+  `cd() { command cd "$@" && ls; }` works.
 - **Your existing setup.** The window copies the exported variables and aliases from your own `$SHELL`, so a `PATH`
   set in `~/.zshrc` works here too. After that it runs `~/.sharpierc`.
 - **Built-in pagers.** `man` pages open in a reader inside the window, and `dman` shows .NET API docs and C# or VB
@@ -63,8 +67,8 @@ and mouse reporting all work.
 - **Encrypted history.** History is saved encrypted, with the key kept in the operating system's secret store.
 
 **Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `dirs`, `disown`, `dman`, `echo`,
-`eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `popd`, `pushd`, `pwd`, `read`, `set`,
-`shift`, `source` / `.`, `test` / `[`, `true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`.
+`eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `local`, `popd`, `pushd`, `pwd`, `read`,
+`return`, `set`, `shift`, `source` / `.`, `test` / `[`, `true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`.
 
 ## Getting started
 
@@ -149,7 +153,8 @@ HISTFILE=$HOME/.sharpie_history
 . $HOME/.sharpie_aliases
 ```
 
-A line ending in `\` continues on the next one. `Sharpie --norc` skips the file, and `. file` or `source file`
+A line ending in `\` continues on the next one, and a function's body runs on until its closing `}`.
+`Sharpie --norc` skips the file, and `. file` or `source file`
 runs another one at any time.
 
 ### History

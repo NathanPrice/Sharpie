@@ -57,6 +57,20 @@ public sealed class ExitCommandTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that the error for an argument that isn't a number names the builtin it's for.
+	/// </summary>
+	[Fact]
+	public void Code_WithNameAndNonNumber_NamesIt()
+	{
+		// Act
+		var code = ExitCommand.Code(["x"], 0, "samplename");
+
+		// Assert
+		_ = code.Should().Be(2);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::samplename::not_a_number", "`x` isn't a number") { Help = "samplename takes a whole number as its status" }.Render(color: false));
+	}
+
+	/// <summary>
 	/// Checks that inside a command substitution <c>exit</c> ends only the substitution, with its status.
 	/// </summary>
 	[Fact]

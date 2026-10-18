@@ -654,4 +654,174 @@ public sealed class DeclareCommandTests : IDisposable
 			Environment.SetEnvironmentVariable("SHLVL", saved);
 		}
 	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.RunFunction" /> gives the arguments as the positional parameters while
+	/// the body runs, counts the call, and puts the caller's back even when the body throws.
+	/// </summary>
+	[Fact]
+	public void RunFunction_WithArguments_PutsCallersBack()
+	{
+		// Arrange
+		this.sut.SetPositional(["a", "b", "c"]);
+		this.sut.Set("0", "sampleshell");
+		string? during = null;
+
+		// Act
+		var act = () => this.sut.RunFunction(["x"], () =>
+		{
+			during = $"{string.Join(',', this.sut.Positional)}|{this.sut.Variables["0"]}|{this.sut.FunctionDepth}";
+
+			throw new InvalidOperationException();
+		});
+
+		// Assert
+		_ = act.Should().Throw<InvalidOperationException>();
+		_ = during.Should().Be("x|sampleshell|1");
+		_ = this.sut.Positional.Should().Equal("a", "b", "c");
+		_ = this.sut.FunctionDepth.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that the variables <see cref="DeclareCommand.Localize" /> saved get their old shell and environment
+	/// values back when the function returns, and one that wasn't set before is removed again.
+	/// </summary>
+	[Fact]
+	public void RunFunction_WithLocals_PutsOldValuesBack()
+	{
+		// Arrange
+		this.sut.Export(SampleVariable, "outer");
+		this.sut.Set("plain", "outer");
+
+		// Act
+		var status = this.sut.RunFunction([], () =>
+		{
+			_ = this.sut.Localize(SampleVariable);
+			_ = this.sut.Localize("plain");
+			_ = this.sut.Localize("fresh");
+			this.sut.Set(SampleVariable, "inner");
+			this.sut.Remove("plain");
+			this.sut.Export("fresh", "inner");
+
+			return 3;
+		});
+
+		// Assert
+		_ = status.Should().Be(3);
+		_ = this.sut.Variables.Should().Contain(SampleVariable, "outer").And.Contain("plain", "outer").And.NotContainKey("fresh");
+		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().Be("outer");
+		_ = Environment.GetEnvironmentVariable("plain").Should().BeNull();
+		_ = Environment.GetEnvironmentVariable("fresh").Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that each call has its own scope, so an inner function's local comes back to the outer function's
+	/// value, and a name made local twice in one call is saved once.
+	/// </summary>
+	[Fact]
+	public void Localize_InNestedCalls_KeepsEachScope()
+	{
+		// Arrange
+		this.sut.Set("samplevar", "top");
+		var seen = new List<string>();
+
+		// Act
+		_ = this.sut.RunFunction([], () =>
+		{
+			seen.Add(this.sut.Localize("samplevar").ToString());
+			this.sut.Set("samplevar", "outer");
+			seen.Add(this.sut.Localize("samplevar").ToString());
+
+			_ = this.sut.RunFunction([], () =>
+			{
+				seen.Add(this.sut.Localize("samplevar").ToString());
+				this.sut.Set("samplevar", "inner");
+
+				return 0;
+			});
+
+			seen.Add(this.sut.Variables["samplevar"]);
+
+			return 0;
+		});
+
+		// Assert
+		_ = seen.Should().Equal("True", "False", "True", "outer");
+		_ = this.sut.Variables["samplevar"].Should().Be("top");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.Restore" /> with a local count forgets the names made local since, so the
+	/// function's later change stays when it returns, and that without one every local is kept.
+	/// </summary>
+	[Fact]
+	public void Restore_WithLocalCount_ForgetsLocalsMadeSince()
+	{
+		// Arrange
+		this.sut.Set("kept", "top");
+		this.sut.Set("forgotten", "top");
+		var counts = new List<int>();
+
+		// Act
+		_ = this.sut.RunFunction([], () =>
+		{
+			_ = this.sut.Localize("kept");
+			counts.Add(this.sut.LocalCount);
+
+			var saved = this.sut.Variables.ToDictionary();
+
+			_ = this.sut.Localize("forgotten");
+			this.sut.Restore(saved, counts[0]);
+			counts.Add(this.sut.LocalCount);
+			_ = this.sut.Localize("forgotten");
+			this.sut.Restore(saved);
+			counts.Add(this.sut.LocalCount);
+			this.sut.Restore(saved, counts[0]);
+			this.sut.Set("kept", "inner");
+			this.sut.Set("forgotten", "inner");
+
+			return 0;
+		});
+
+		// Assert
+		_ = counts.Should().Equal(1, 1, 2);
+		_ = this.sut.Variables["kept"].Should().Be("top");
+		_ = this.sut.Variables["forgotten"].Should().Be("inner");
+		_ = this.sut.LocalCount.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.Restore" /> with a local count outside any function only puts the
+	/// variables back.
+	/// </summary>
+	[Fact]
+	public void Restore_WithLocalCountOutsideFunction_PutsVariablesBack()
+	{
+		// Arrange
+		this.sut.Set("kept", "old");
+		var saved = this.sut.Variables.ToDictionary();
+
+		this.sut.Set("kept", "new");
+		this.sut.Set("added", "x");
+
+		// Act
+		this.sut.Restore(saved, 0);
+
+		// Assert
+		_ = this.sut.Variables.Should().Contain("kept", "old").And.NotContainKey("added");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.Localize" /> outside a function throws, since there's no scope to save
+	/// into.
+	/// </summary>
+	[Fact]
+	public void Localize_OutsideFunction_Throws()
+	{
+		// Act
+		var act = () => this.sut.Localize("samplevar");
+
+		// Assert
+		_ = act.Should().Throw<InvalidOperationException>();
+	}
 }

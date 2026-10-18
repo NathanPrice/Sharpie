@@ -1,6 +1,7 @@
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Aliases;
+using Sharpie.Shell.Features.Functions;
 using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Features.Builtins;
@@ -60,6 +61,27 @@ internal sealed class CommandCommand(TypeCommand type) : ICommand
 
 		return [.. result];
 	}
+
+	/// <summary>
+	/// Finds the function or builtin a command name runs.
+	/// </summary>
+	/// <param name="commands">The builtins and functions, by name.</param>
+	/// <param name="words">The command's words before <see cref="Unwrap" /> dropped any <c>command</c> word.</param>
+	/// <param name="name">The command name, one of <paramref name="words" />.</param>
+	/// <returns>
+	/// The function or builtin, or <see langword="null" /> when the name is a program's. When <c>command</c> came right
+	/// before the name, a function gives way to the builtin it hides, or to the program when it hides none.
+	/// </returns>
+	/// <remarks>
+	/// Skipping the function is what lets <c>cd() { command cd "$@" &amp;&amp; ls; }</c> run the builtin rather than
+	/// call itself forever. A <c>command</c> word right before a command name is always one that
+	/// <see cref="Unwrap" /> dropped, since the name couldn't be in command position otherwise.
+	/// </remarks>
+	internal static ICommand? Find(IReadOnlyDictionary<string, ICommand> commands, Word[] words, Word name) =>
+		commands.ArgumentNotNull().GetValueOrDefault(name.Text) is FunctionCommand function
+		&& Array.IndexOf(words.ArgumentNotNull(), name) is > 0 and var index && words[index - 1] is { IsOperator: false, Text: "command" }
+			? function.Shadowed
+			: commands.GetValueOrDefault(name.Text);
 
 	/// <inheritdoc />
 	/// <remarks>

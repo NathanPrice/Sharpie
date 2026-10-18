@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Functions;
 using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
@@ -30,6 +31,36 @@ public sealed class SourceCommandTests : IDisposable
 
 			return line.Length;
 		});
+	}
+
+	/// <summary>
+	/// Checks that <c>return</c> in a file ends it with its status, and that the builtin says it's running only while
+	/// the file's lines run.
+	/// </summary>
+	[Fact]
+	public void Run_WithReturnInFile_EndsFileWithItsStatus()
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.folder, "sample.rc", executable: false, "a\nreturn\nb\n");
+		var running = new List<bool>();
+		SourceCommand? sut = null;
+
+		sut = new SourceCommand(".", this.declare, line =>
+		{
+			this.ran.Add(line);
+			running.Add(sut!.Running);
+
+			return line == "return" ? throw new ReturnCommand.Signal(4) : 0;
+		});
+
+		// Act
+		var status = sut.Run([path]);
+
+		// Assert
+		_ = status.Should().Be(4);
+		_ = this.ran.Should().Equal("a", "return");
+		_ = running.Should().Equal(true, true);
+		_ = sut.Running.Should().BeFalse();
 	}
 
 	/// <summary>
@@ -374,6 +405,25 @@ public sealed class SourceCommandTests : IDisposable
 
 		// Assert
 		_ = seen.Should().Equal(1, 2, 4, 5);
+	}
+
+	/// <summary>
+	/// Checks that a function's body is joined to its <c>}</c>, a trailing backslash in it still joins, and one in a
+	/// here-document's body inside it stays for the here-document's rules.
+	/// </summary>
+	/// <param name="lines">The lines of the file.</param>
+	/// <param name="expected">The command lines.</param>
+	[Theory]
+	[InlineData(new[] { "samplefn() {", "echo a \\", "b", "}", "c" }, new[] { "samplefn() {\necho a b\n}", "c" })]
+	[InlineData(new[] { "samplefn() {", "cat <<'EOF'", "a\\", "b", "EOF", "}" }, new[] { "samplefn() {\ncat <<'EOF'\na\\\nb\nEOF\n}" })]
+	[InlineData(new[] { "samplefn() {", "cat <<EOF \\", "x", "a", "EOF", "}" }, new[] { "samplefn() {\ncat <<EOF x\na\nEOF\n}" })]
+	public void JoinContinuedLines_WithFunctionBody_JoinsToItsEnd(string[] lines, string[] expected)
+	{
+		// Act
+		var joined = SourceCommand.JoinContinuedLines(lines);
+
+		// Assert
+		_ = joined.Select(command => command.Text).Should().Equal(expected);
 	}
 
 	/// <summary>

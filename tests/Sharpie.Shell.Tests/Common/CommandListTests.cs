@@ -448,4 +448,113 @@ public sealed class CommandListTests : IDisposable
 	/// Restores the console after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();
+
+	/// <summary>
+	/// Checks that a function definition comes back as one command from its header to the <c>}</c> that closes it,
+	/// joined by a newline where <c>;</c> or a newline cut it and by the operator otherwise.
+	/// </summary>
+	/// <param name="line">The line to split.</param>
+	/// <param name="expected">The operator and command pairs, flattened.</param>
+	[Theory]
+	[InlineData("samplefn() { a; b; }", new[] { ";", "samplefn() { a\nb\n}" })]
+	[InlineData("samplefn() {\n  a\n  b\n}\nc", new[] { ";", "samplefn() {\na\nb\n}", ";", "c" })]
+	[InlineData("samplefn() { a && b || c; }", new[] { ";", "samplefn() { a && b || c\n}" })]
+	[InlineData("samplefn() { { a; }; b; }; c", new[] { ";", "samplefn() { { a\n}\nb\n}", ";", "c" })]
+	[InlineData("samplefn() { a & }", new[] { ";", "samplefn() { a &\n}" })]
+	[InlineData("samplefn()\n{\na\n}", new[] { ";", "samplefn()\n{\na\n}" })]
+	[InlineData("samplefn()\necho a", new[] { ";", "samplefn()", ";", "echo a" })]
+	[InlineData("samplefn() { a; } && b", new[] { ";", "samplefn() { a\n}", "&&", "b" })]
+	[InlineData("x && samplefn() { a; }", new[] { ";", "x", "&&", "samplefn() { a\n}" })]
+	[InlineData("samplefn() { a; }; }", new[] { ";", "samplefn() { a\n}", ";", "}" })]
+	[InlineData("{ a; }", new[] { ";", "{ a", ";", "}" })]
+	[InlineData("samplefn() { echo }; }", new[] { ";", "samplefn() { echo }\n}" })]
+	[InlineData("samplefn() { cat <<EOF; }\nhi\nEOF", new[] { ";", "samplefn() { cat <<EOF\nhi\nEOF\n}" })]
+	[InlineData("samplefn() {\ncat <<EOF\n}\nEOF\n}", new[] { ";", "samplefn() {\ncat <<EOF\n}\nEOF\n}" })]
+	public void Split_WithFunctionDefinition_JoinsItIntoOneCommand(string line, string[] expected)
+	{
+		// Act
+		var commands = CommandList.Split(line);
+
+		// Assert
+		_ = commands.Should().NotBeNull();
+		_ = commands!.SelectMany(command => new[] { command.Operator, command.Command }).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that a definition whose body is never closed, or whose header ends the line, is left open as <c>{</c>,
+	/// so a reader goes on to the next line, and that a quote inside it wins.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="expected">What's left open, or <c>'\0'</c> for nothing.</param>
+	[Theory]
+	[InlineData("samplefn() {", '{')]
+	[InlineData("samplefn() { a", '{')]
+	[InlineData("samplefn() {\na\n{ b; }", '{')]
+	[InlineData("samplefn()", '{')]
+	[InlineData("function samplefn", '{')]
+	[InlineData("samplefn() { echo 'a", '\'')]
+	[InlineData("samplefn() { a; }", '\0')]
+	[InlineData("{ a", '\0')]
+	[InlineData("samplefn() x", '\0')]
+	public void Unfinished_WithOpenDefinition_GivesBrace(string line, char expected)
+	{
+		// Act
+		var open = CommandList.Unfinished(line);
+
+		// Assert
+		_ = open.Should().Be(expected == '\0' ? null : expected);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandList.IsDefinitionOpen" /> says a definition is open even while a quote inside it
+	/// is, so a reader keeps going to the body's end.
+	/// </summary>
+	/// <param name="text">The lines read so far.</param>
+	/// <param name="expected">Whether a definition is open.</param>
+	[Theory]
+	[InlineData("samplefn() {", true)]
+	[InlineData("samplefn() {\necho \"a", true)]
+	[InlineData("samplefn() {\necho \"a\n\"", true)]
+	[InlineData("samplefn()", true)]
+	[InlineData("samplefn() {\necho \"a\n\"\n}", false)]
+	[InlineData("echo \"a", false)]
+	[InlineData("{ a", false)]
+	public void IsDefinitionOpen_WithText_SaysWhetherBodyIsOpen(string text, bool expected)
+	{
+		// Act
+		var open = CommandList.IsDefinitionOpen(text);
+
+		// Assert
+		_ = open.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that a line whose function body is never closed runs nothing, prints why, and gives
+	/// <see cref="CommandList.UnsupportedStatus" />, also when a quote inside the body is still open.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	[Theory]
+	[InlineData("echo a; samplefn() { echo b")]
+	[InlineData("echo a; samplefn() { echo 'b")]
+	public void Run_WithUnclosedFunction_RunsNothingAndReports(string line)
+	{
+		// Arrange
+		var ran = new List<string>();
+
+		// Act
+		var status = CommandList.Run(line, 0, command =>
+		{
+			ran.Add(command);
+
+			return 0;
+		});
+
+		// Assert
+		_ = ran.Should().BeEmpty();
+		_ = status.Should().Be(CommandList.UnsupportedStatus);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::unclosed_function", "The function's body is never closed")
+		{
+			Help = "end it with a line holding only }",
+		}.Render(color: false));
+	}
 }

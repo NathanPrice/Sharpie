@@ -1,5 +1,6 @@
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Functions;
 using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Features.Builtins;
@@ -33,6 +34,14 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 	/// </summary>
 	private int depth;
 
+	/// <summary>
+	/// Gets a value indicating whether this builtin is running a file, which <c>return</c> may end.
+	/// </summary>
+	/// <value>
+	/// <see langword="true" /> from the file's first line to its last.
+	/// </value>
+	internal bool Running => this.depth > 0;
+
 	/// <inheritdoc />
 	public string Name => name;
 
@@ -43,6 +52,7 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 	/// <remarks>
 	/// The status is the last line's, 0 for a file with no commands, or 1 when the file can't be run. A quote still
 	/// open at the end of the file is reported with status 2, and that last command doesn't run, as in bash.
+	/// <c>return</c> ends the file early with its own status.
 	/// </remarks>
 	public int Run(string[] args)
 	{
@@ -89,25 +99,28 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 
 		try
 		{
-			var status = 0;
-
-			foreach (var (number, line) in JoinContinuedLines(lines))
+			return ReturnCommand.Catch(() =>
 			{
-				if (CommandList.Unfinished(line) is var quote and ('\'' or '"'))
-				{
-					new ShellError("sharpie::source::unclosed_quote", $"`{quote}` is never closed in `{args[0]}`")
-					{
-						Help = $"add the closing {quote}",
-					}.Write();
+				var status = 0;
 
-					return CommandList.UnsupportedStatus;
+				foreach (var (number, line) in JoinContinuedLines(lines))
+				{
+					if (CommandList.Unfinished(line) is var quote and ('\'' or '"'))
+					{
+						new ShellError("sharpie::source::unclosed_quote", $"`{quote}` is never closed in `{args[0]}`")
+						{
+							Help = $"add the closing {quote}",
+						}.Write();
+
+						return CommandList.UnsupportedStatus;
+					}
+
+					declare.LineNumber = number;
+					status = runLine(line);
 				}
 
-				declare.LineNumber = number;
-				status = runLine(line);
-			}
-
-			return status;
+				return status;
+			});
 		}
 		finally
 		{
@@ -148,8 +161,8 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 
 	/// <summary>
 	/// Joins each line that ends in an unescaped backslash to the line after it, each line that leaves a quote,
-	/// <c>$(</c> or backquote open to the lines that close it, as POSIX does, and a line that starts a here-document to
-	/// the lines of its body.
+	/// <c>$(</c>, backquote or function body open to the lines that close it, as POSIX does, and a line that starts a
+	/// here-document to the lines of its body.
 	/// </summary>
 	/// <param name="lines">The lines of the file.</param>
 	/// <returns>
@@ -191,8 +204,9 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 				var joined = pending + line;
 				var open = CommandList.Unfinished(joined);
 
-				// The run of backslashes the line ends with.
-				if (open != '\'' && joined[joined.TrimEnd('\\').Length..].Length % 2 == 1)
+				// The run of backslashes the line ends with. A here-document's body inside a function that's still open
+				// keeps them, for CommandLine.Split to read by the here-document's rules.
+				if (open != '\'' && joined[joined.TrimEnd('\\').Length..].Length % 2 == 1 && !CommandList.IsHereDocumentOpen(pending))
 				{
 					pending = joined[..^1];
 

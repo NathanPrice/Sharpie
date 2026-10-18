@@ -58,6 +58,10 @@ internal static class CommandList
 	/// never runs with the wrong arguments. Between a <c>[[</c> that starts a command and its <c>]]</c>,
 	/// <c>&amp;&amp;</c> and <c>||</c> join tests, so they stay in the command, as in bash.
 	/// <para>
+	/// A function definition comes back as one command, from its header to the <c>}</c> that closes its body, for
+	/// <see cref="FunctionDefinition.Parse" /> to read.
+	/// </para>
+	/// <para>
 	/// At a newline, the lines after it up to each delimiter line are the bodies of the here-documents the commands
 	/// since the last newline start. They're added, newlines and delimiter lines included, to the end of the command
 	/// that owns them, for <see cref="CommandLine.Split" /> to read, and skip the quote, comment, substitution and
@@ -65,7 +69,7 @@ internal static class CommandList
 	/// </para>
 	/// </remarks>
 	public static IReadOnlyList<(string Operator, string Command)>? Split(string line) =>
-		SplitOrRefuse(line, out _, out _, out _)?.Select(command => (command.Operator, command.Command)).ToArray();
+		SplitOrRefuse(line, out _, out _, out _, out _)?.Select(command => (command.Operator, command.Command)).ToArray();
 
 	/// <summary>
 	/// Finds what <paramref name="line" /> leaves open at its end, which the next line of a file goes on with, as
@@ -73,14 +77,31 @@ internal static class CommandList
 	/// </summary>
 	/// <param name="line">The line, or several joined by newlines.</param>
 	/// <returns>
-	/// The quote that's still open, <c>(</c> for a <c>$(</c> or <c>`</c> for a backquote that's never closed, or
-	/// <see langword="null" /> when nothing is. Arithmetic expansion gives <see langword="null" />, since it's refused
-	/// however it ends. A quote inside a comment doesn't count, so <c># don't</c> is complete.
+	/// The quote that's still open, <c>(</c> for a <c>$(</c> or <c>`</c> for a backquote that's never closed, else
+	/// <c>{</c> for a function whose body is never closed, or <see langword="null" /> when nothing is. Arithmetic
+	/// expansion gives <see langword="null" />, since it's refused however it ends. A quote inside a comment doesn't
+	/// count, so <c># don't</c> is complete.
 	/// </returns>
 	internal static char? Unfinished(string line) =>
-		SplitOrRefuse(line, out var refused, out var quote, out _) is not null ? quote
+		SplitOrRefuse(line, out var refused, out var quote, out _, out var definition) is not null ? quote ?? (definition ? '{' : null)
 		: line.AsSpan(refused).StartsWith("$((", StringComparison.Ordinal) ? null
 		: line[refused] == '`' ? '`' : '(';
+
+	/// <summary>
+	/// Checks whether <paramref name="text" /> ends inside a function definition, so a reader should add the next
+	/// line before running it.
+	/// </summary>
+	/// <param name="text">The lines read so far, joined by newlines.</param>
+	/// <returns>
+	/// <see langword="true" /> when the last definition's body isn't closed, even when a quote inside it is open too,
+	/// or its header ends the text.
+	/// </returns>
+	public static bool IsDefinitionOpen(string text)
+	{
+		_ = SplitOrRefuse(text, out _, out _, out _, out var open);
+
+		return open;
+	}
 
 	/// <summary>
 	/// Checks whether <paramref name="text" /> ends inside a here-document's body, so a reader should add the next
@@ -92,7 +113,7 @@ internal static class CommandList
 	/// </returns>
 	public static bool IsHereDocumentOpen(string text)
 	{
-		_ = SplitOrRefuse(text, out _, out _, out var unclosed);
+		_ = SplitOrRefuse(text, out _, out _, out var unclosed, out _);
 
 		return unclosed is not null;
 	}
@@ -112,17 +133,22 @@ internal static class CommandList
 	/// The delimiter of a here-document whose body runs to the end of <paramref name="line" />, or
 	/// <see langword="null" /> when every body was closed.
 	/// </param>
+	/// <param name="definitionOpen">
+	/// When this method returns the commands, contains <see langword="true" /> when the line ends inside a function
+	/// definition.
+	/// </param>
 	/// <returns>
 	/// The commands, each with where it starts in <paramref name="line" />, or <see langword="null" /> when the line is
 	/// refused. A list joined at its <c>&amp;</c> starts where its first command does.
 	/// </returns>
-	private static List<(string Operator, string Command, int Start)>? SplitOrRefuse(string line, out int refused, out char? openQuote, out string? unclosed)
+	private static List<(string Operator, string Command, int Start)>? SplitOrRefuse(string line, out int refused, out char? openQuote, out string? unclosed, out bool definitionOpen)
 	{
 		_ = line.ArgumentNotNull();
 
 		// Stryker disable once Unary : refused is only read when the line is refused, and every refusal sets it.
 		refused = -1;
 		openQuote = null;
+		definitionOpen = false;
 		unclosed = null;
 
 		// The first command since the last newline, whose here-documents' bodies start after the next one.
@@ -229,7 +255,7 @@ internal static class CommandList
 		// At the end there are no lines left, so this only marks the here-documents of the last line as unclosed.
 		_ = ReadBodies(line, line.Length, commands, lineStart, ref unclosed);
 
-		return commands;
+		return JoinDefinitions(commands, out definitionOpen);
 
 		// Ends the command being read. A blank one is dropped, and its operator only replaces the one before it when
 		// it's && or ||, which keeps "a &&" followed by a newline joined to the next line. After a &, the commands of
@@ -289,6 +315,51 @@ internal static class CommandList
 		&& (inCondition || string.IsNullOrWhiteSpace(command.ToString()))
 			? !inCondition
 			: inCondition;
+
+	/// <summary>
+	/// Joins the commands of each function definition back into one command, from its header to the <c>}</c> that
+	/// closes its body.
+	/// </summary>
+	/// <param name="commands">The commands, cut at every operator.</param>
+	/// <param name="open">
+	/// Set to <see langword="true" /> when the last definition's body is still open at the end, or its header is the
+	/// last command and the <c>{</c> hasn't come yet.
+	/// </param>
+	/// <returns>
+	/// The commands, with each definition as one that starts where its header does.
+	/// </returns>
+	/// <remarks>
+	/// The commands are joined by a newline where a <c>;</c> or newline cut them, so a here-document's body still ends
+	/// on its own line, and by the operator otherwise. A header alone, as in <c>f()</c>, takes the next command when it
+	/// starts with <c>{</c>, as bash allows.
+	/// </remarks>
+	private static List<(string Operator, string Command, int Start)> JoinDefinitions(List<(string Operator, string Command, int Start)> commands, out bool open)
+	{
+		var joined = new List<(string Operator, string Command, int Start)>();
+
+		// The braces the definition being joined still has open, 0 after a header alone, or -1 outside a definition.
+		var depth = -1;
+
+		foreach (var (before, command, start) in commands)
+		{
+			var braces = FunctionDefinition.Braces(command);
+
+			if (depth > 0 || (depth == 0 && braces > 0))
+			{
+				joined[^1] = joined[^1] with { Command = joined[^1].Command + (before == Sequence ? "\n" : $" {before} ") + command };
+				depth = depth + braces > 0 ? depth + braces : -1;
+			}
+			else
+			{
+				joined.Add((before, command, start));
+				depth = FunctionDefinition.IsHeader(command) ? braces : -1;
+			}
+		}
+
+		open = depth >= 0;
+
+		return joined;
+	}
 
 	/// <summary>
 	/// Reads the bodies of the here-documents that the commands since the last newline start, and adds each to the end
@@ -359,7 +430,7 @@ internal static class CommandList
 	/// </param>
 	/// <returns>
 	/// The status of the last command that ran, or <see cref="UnsupportedStatus" /> after printing an error when
-	/// <see cref="Split" /> refuses the line, before any of it runs.
+	/// <see cref="Split" /> refuses the line or a function's body is never closed, before any of it runs.
 	/// </returns>
 	/// <remarks>
 	/// POSIX gives <c>&amp;&amp;</c> and <c>||</c> the same precedence, read from the left, so in
@@ -398,7 +469,7 @@ internal static class CommandList
 	{
 		_ = run.ArgumentNotNull();
 
-		if (SplitOrRefuse(line, out var refused, out _, out var unclosed) is not { } commands)
+		if (SplitOrRefuse(line, out var refused, out _, out var unclosed, out var definitionOpen) is not { } commands)
 		{
 			var arithmetic = line.AsSpan(refused).StartsWith("$((", StringComparison.Ordinal);
 			var backquote = line[refused] == '`';
@@ -418,6 +489,16 @@ internal static class CommandList
 				};
 
 			(report with { Source = line, Start = refused }).Write();
+
+			return UnsupportedStatus;
+		}
+
+		if (definitionOpen)
+		{
+			new ShellError("sharpie::parser::unclosed_function", "The function's body is never closed")
+			{
+				Help = "end it with a line holding only }",
+			}.Write();
 
 			return UnsupportedStatus;
 		}

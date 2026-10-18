@@ -211,7 +211,7 @@ internal static class Program
 
 			if (options.Command is null)
 			{
-				return commands["."].Run([options.ScriptFile!, .. options.Arguments]);
+				return BuiltinCommands.CreateScriptRunner(declare, line => RunLine(commands, aliases, declare, line)).Run([options.ScriptFile!, .. options.Arguments]);
 			}
 
 			declare.LineNumber = 1;
@@ -399,7 +399,7 @@ internal static class Program
 
 	/// <summary>
 	/// Reads the bodies of the here-documents <paramref name="line" /> starts, a line at a time after a <c>&gt; </c>
-	/// prompt, until every delimiter line has come.
+	/// prompt, until every delimiter line has come, and the lines of a function definition until its body is closed.
 	/// </summary>
 	/// <param name="line">The line just read.</param>
 	/// <param name="editor">The line editor, or <see langword="null" /> for plain lines from standard input.</param>
@@ -410,7 +410,7 @@ internal static class Program
 	[SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters", Justification = "bash's PS2 prompt, the same in every language, like the $ prompt.")]
 	private static string? ReadBodies(string line, LineEditor? editor)
 	{
-		while (CommandList.IsHereDocumentOpen(line))
+		while (CommandList.IsHereDocumentOpen(line) || CommandList.IsDefinitionOpen(line))
 		{
 			if (editor is null)
 			{
@@ -571,7 +571,9 @@ internal static class Program
 
 					try
 					{
-						return declare.Status = RunCommand(commands, aliases, declare, settings, command);
+						// Before the command is split, so a function's body isn't expanded until it runs.
+						return declare.Status = BuiltinCommands.DefineFunction(commands, command, declare, body => RunLine(commands, aliases, declare, body))
+							?? RunCommand(commands, aliases, declare, settings, command);
 					}
 					finally
 					{
@@ -601,10 +603,11 @@ internal static class Program
 
 	/// <summary>
 	/// Runs the command list of a <c>$(...)</c> or backquotes with its output captured, then puts back the folder,
-	/// the shell variables and positional parameters, <c>$!</c>, <c>RANDOM</c> and <c>SECONDS</c>, the environment, the
-	/// aliases, the <c>set</c> options, the <c>pushd</c> stack and the umask, as bash's subshell would leave them.
+	/// the shell variables, locals and positional parameters, <c>$!</c>, <c>RANDOM</c> and <c>SECONDS</c>, the
+	/// environment, the aliases, the functions, the <c>set</c> options, the <c>pushd</c> stack and the umask, as bash's
+	/// subshell would leave them.
 	/// </summary>
-	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="commands">The builtins and functions, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin.</param>
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and the last status.</param>
 	/// <param name="settings">The <c>set</c> options. <c>set -e</c> starts off inside, as bash doesn't pass it on.</param>
@@ -623,7 +626,9 @@ internal static class Program
 		var folder = Directory.GetCurrentDirectory();
 		var variables = declare.Variables.ToDictionary();
 		var restoreDynamic = declare.SaveDynamic();
+		var locals = declare.LocalCount;
 		var aliasValues = aliases.Aliases.ToDictionary();
+		var functions = commands.ToDictionary();
 		var environment = Environment.GetEnvironmentVariables();
 		var options = ShellSettings.Options.Where(option => settings.IsOn(option.Name)).Select(option => option.Name).ToHashSet();
 		var stack = ((DirsCommand)commands["dirs"]).Stack;
@@ -668,8 +673,15 @@ internal static class Program
 			}
 
 			restoreDynamic();
-			declare.Restore(variables);
+			declare.Restore(variables, locals);
 			aliases.Restore(aliasValues);
+			commands.Clear();
+
+			foreach (var (name, command) in functions)
+			{
+				commands[name] = command;
+			}
+
 			stack.Clear();
 			stack.AddRange(folders);
 
@@ -712,7 +724,7 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Splits one command and runs it as a pipeline, a builtin, or a program on <c>PATH</c>.
+	/// Splits one command and runs it as a pipeline, a function or builtin, or a program on <c>PATH</c>.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin, whose aliases are expanded first.</param>
@@ -753,7 +765,8 @@ internal static class Program
 			return ReportUnset(line, missing, settings.Interactive);
 		}
 
-		var words = CommandCommand.Unwrap(aliases.Expand(split, declare.Variables, Substitution));
+		var expanded = aliases.Expand(split, declare.Variables, Substitution);
+		var words = CommandCommand.Unwrap(expanded);
 
 		// A trailing & runs the command in the background.
 		var background = words is [.., { IsOperator: true, Text: "&" }];
@@ -842,7 +855,7 @@ internal static class Program
 			var arguments = stages[0][1..];
 
 			return stages.Length > 1 ? RunPipeline(stages, assignments, names, redirections)
-				: commands.TryGetValue(names[0].Text, out var command) ? RunBuiltinOrExec(command, declare, settings, arguments, assignments[0], redirections[0].Targets)
+				: Find(names[0]) is { } command ? RunBuiltinOrExec(command, declare, settings, arguments, assignments[0], redirections[0].Targets)
 				: RunProgram(names[0], arguments, assignments[0], standardOutput, background, redirections[0]);
 		}
 
@@ -859,8 +872,8 @@ internal static class Program
 		{
 			var left = stages[0];
 			var right = stages[^1];
-			var leftBuiltin = stages.Length == 2 ? commands.GetValueOrDefault(left[0]) : null;
-			var rightBuiltin = stages.Length == 2 ? commands.GetValueOrDefault(right[0]) : null;
+			var leftBuiltin = stages.Length == 2 ? Find(names[0]) : null;
+			var rightBuiltin = stages.Length == 2 ? Find(names[^1]) : null;
 
 			if (leftBuiltin is null && rightBuiltin is null)
 			{
@@ -884,6 +897,9 @@ internal static class Program
 
 			return ExternalProgram.PipelineStatus([builtinStatus, RunProgram(names[^1], right[1..], assignments[^1], standardOutput, background: false, redirections[^1], buffer)], settings.PipeFail);
 		}
+
+		// The function or builtin a stage's name runs, past a function when command came before it, or null for a program.
+		ICommand? Find(Word name) => CommandCommand.Find(commands, expanded, name);
 
 		// Runs a program on PATH with its NAME=VALUE words in its environment, or reports that it isn't there.
 		int RunProgram(Word name, string[] arguments, string[] assignments, Stream? output, bool background, Redirection redirection, Stream? input = null)

@@ -3,6 +3,7 @@ using Sharpie.Shell.Features.Aliases;
 using Sharpie.Shell.Features.Completion;
 using Sharpie.Shell.Features.Conditions;
 using Sharpie.Shell.Features.DotNetDocs;
+using Sharpie.Shell.Features.Functions;
 using Sharpie.Shell.Features.History;
 using Sharpie.Shell.Features.Jobs;
 using Sharpie.Shell.Features.Variables;
@@ -78,7 +79,12 @@ internal static class BuiltinCommands
 	/// <c>declare</c> and the builtins built around it, <c>test</c> and <c>[</c> among them, whose <c>-v</c> reads its
 	/// variables.
 	/// </returns>
-	private static ICommand[] CreateVariableCommands(DeclareCommand declare, ShellSettings settings, Func<string, int> runLine, Func<bool>? inSubshell) =>
+	private static ICommand[] CreateVariableCommands(DeclareCommand declare, ShellSettings settings, Func<string, int> runLine, Func<bool>? inSubshell)
+	{
+		var dot = new SourceCommand(".", declare, runLine);
+		var source = new SourceCommand("source", declare, runLine);
+
+		return
 		[
 			declare,
 			new ExitCommand(declare, inSubshell),
@@ -87,12 +93,45 @@ internal static class BuiltinCommands
 			new SetCommand(declare, settings),
 			new ShiftCommand(declare),
 			new ReadCommand(declare, Console.IsInputRedirected ? null : () => Console.ReadKey(intercept: true)),
-			new SourceCommand(".", declare, runLine),
-			new SourceCommand("source", declare, runLine),
+			dot,
+			source,
 			new EvalCommand(runLine),
 			new TestCommand("test", declare),
-			new TestCommand("[", declare)
+			new TestCommand("[", declare),
+			new ReturnCommand(declare, () => dot.Running || source.Running),
+			new LocalCommand(declare)
 		];
+	}
+
+	/// <summary>
+	/// Defines the function that <paramref name="command" /> holds, as <see cref="FunctionCommand.Define" /> does.
+	/// </summary>
+	/// <param name="commands">The builtins and functions, by name, which get the new function.</param>
+	/// <param name="command">One command, as <see cref="CommandList" /> gives it.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which the function's calls use.</param>
+	/// <param name="runLine">Runs the function's body.</param>
+	/// <returns>
+	/// <see langword="null" /> when <paramref name="command" /> isn't a definition, otherwise its status.
+	/// </returns>
+	/// <remarks>
+	/// Here rather than called straight from <see cref="Program" />, for the same cap on what it depends on.
+	/// </remarks>
+	internal static int? DefineFunction(Dictionary<string, ICommand> commands, string command, DeclareCommand declare, Func<string, int> runLine) =>
+		FunctionCommand.Define(commands, command, declare, runLine);
+
+	/// <summary>
+	/// Creates what runs a script file the shell was started with, as in <c>Sharpie FILE</c>.
+	/// </summary>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the positional parameters.</param>
+	/// <param name="runLine">Runs one command line the way the shell runs a typed one and gives its status.</param>
+	/// <returns>
+	/// A <c>.</c> builtin of its own.
+	/// </returns>
+	/// <remarks>
+	/// Kept apart from the <c>.</c> the user types, so <c>return</c> at the script's top level is an error, as in bash,
+	/// rather than the end of a sourced file.
+	/// </remarks>
+	internal static ICommand CreateScriptRunner(DeclareCommand declare, Func<string, int> runLine) => new SourceCommand(".", declare, runLine);
 
 	/// <summary>
 	/// Creates the builtins that show or change the current folder.

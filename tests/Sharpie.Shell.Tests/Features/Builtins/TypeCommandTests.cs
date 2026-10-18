@@ -1,6 +1,8 @@
 using FluentAssertions;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Builtins;
+using Sharpie.Shell.Features.Functions;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
 
@@ -183,4 +185,26 @@ public sealed class TypeCommandTests : IDisposable
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();
+
+	/// <summary>
+	/// Checks that a function is reported as one, over a builtin or program of the same name, and that
+	/// <c>command -v</c> prints its name.
+	/// </summary>
+	[Fact]
+	public void Run_WithFunctionName_ReportsFunction()
+	{
+		// Arrange
+		_ = ShellEnvironment.CreateFile(this.folder, "samplefn", executable: true);
+		this.builtins["samplefn"] = new FunctionCommand("samplefn", string.Empty, null, new DeclareCommand(new ShellSettings()), _ => 0);
+		this.builtins["echo"] = new FunctionCommand("echo", string.Empty, this.builtins["echo"], new DeclareCommand(new ShellSettings()), _ => 0);
+
+		// Act
+		var status = this.sut.Run(["samplefn", "echo"]);
+		var commandStatus = new CommandCommand(this.sut).Run(["-v", "samplefn"]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = commandStatus.Should().Be(0);
+		_ = this.environment.Output.Should().Be($"samplefn is a function{Environment.NewLine}echo is a function{Environment.NewLine}samplefn{Environment.NewLine}");
+	}
 }

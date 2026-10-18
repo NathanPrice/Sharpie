@@ -1,6 +1,8 @@
 using FluentAssertions;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Builtins;
+using Sharpie.Shell.Features.Functions;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Features.Builtins;
 
@@ -188,4 +190,43 @@ public sealed class CommandCommandTests : IDisposable
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();
+
+	/// <summary>
+	/// Checks that a function is found by its name, and that <c>command</c> right before the name skips it for the
+	/// builtin it hides, or for a program when it hides none.
+	/// </summary>
+	/// <param name="line">The command as typed.</param>
+	/// <param name="nameIndex">Which word is the command name.</param>
+	/// <param name="expected">What is found: function, builtin or none.</param>
+	[Theory]
+	[InlineData("echo hi", 0, "function")]
+	[InlineData("command echo hi", 1, "builtin")]
+	[InlineData("command command echo", 2, "builtin")]
+	[InlineData("x | command echo", 3, "builtin")]
+	[InlineData("samplefn", 0, "function")]
+	[InlineData("command samplefn", 1, "none")]
+	[InlineData("cd", 0, "builtin")]
+	[InlineData("command cd", 1, "builtin")]
+	[InlineData("ls", 0, "none")]
+	public void Find_WithName_SkipsFunctionAfterCommand(string line, int nameIndex, string expected)
+	{
+		// Arrange
+		var cd = new EchoCommand();
+
+		this.builtins["cd"] = cd;
+		this.builtins["echo"] = new FunctionCommand("echo", string.Empty, this.builtins["echo"], new DeclareCommand(new ShellSettings()), _ => 0);
+		this.builtins["samplefn"] = new FunctionCommand("samplefn", string.Empty, null, new DeclareCommand(new ShellSettings()), _ => 0);
+		var words = CommandLine.Split(line);
+
+		// Act
+		var found = CommandCommand.Find(this.builtins, words, words[nameIndex]);
+
+		// Assert
+		_ = (found switch
+		{
+			FunctionCommand => "function",
+			null => "none",
+			_ => "builtin",
+		}).Should().Be(expected);
+	}
 }

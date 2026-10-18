@@ -25,6 +25,7 @@ internal class ExitCommand(DeclareCommand declare, Func<bool>? inSubshell = null
 	/// </summary>
 	/// <param name="args">The words after <c>exit</c>.</param>
 	/// <param name="status">The last command's status.</param>
+	/// <param name="name">The builtin the status is for, <c>exit</c> or <c>return</c>, which the error names.</param>
 	/// <returns>
 	/// <paramref name="status" /> with no argument, the number's low eight bits with one, or 2 after printing an error
 	/// when the argument isn't a number.
@@ -32,7 +33,7 @@ internal class ExitCommand(DeclareCommand declare, Func<bool>? inSubshell = null
 	/// <remarks>
 	/// A process can only report eight bits, so <c>exit 256</c> gives 0 and <c>exit -1</c> gives 255, as in bash.
 	/// </remarks>
-	internal static int Code(string[] args, int status)
+	internal static int Code(string[] args, int status, string name = "exit")
 	{
 		_ = args.ArgumentNotNull();
 
@@ -46,7 +47,7 @@ internal class ExitCommand(DeclareCommand declare, Func<bool>? inSubshell = null
 			return code & 0xFF;
 		}
 
-		new ShellError("sharpie::exit::not_a_number", $"`{args[0]}` isn't a number") { Help = "exit takes a whole number as its status" }.Write();
+		new ShellError($"sharpie::{name}::not_a_number", $"`{args[0]}` isn't a number") { Help = $"{name} takes a whole number as its status" }.Write();
 
 		return 2;
 	}
@@ -72,8 +73,11 @@ internal class ExitCommand(DeclareCommand declare, Func<bool>? inSubshell = null
 	/// Ends the command substitution that ran <c>exit</c>, the way a subshell's process would end in bash.
 	/// </summary>
 	/// <param name="status">The status the substitution ends with.</param>
-	[SuppressMessage("Design", "CA1032:Implement standard exception constructors", Justification = "Only exit throws it, and always with a status.")]
-	internal sealed class SubshellExit(int status) : Exception
+	/// <remarks>
+	/// <c>return</c>'s signal derives from it, so a substitution that a <c>return</c> reaches ends with its status too.
+	/// </remarks>
+	[SuppressMessage("Design", "CA1032:Implement standard exception constructors", Justification = "Only exit and return throw it, and always with a status.")]
+	internal class SubshellExit(int status) : Exception
 	{
 		/// <summary>
 		/// Gets the status the substitution ends with.

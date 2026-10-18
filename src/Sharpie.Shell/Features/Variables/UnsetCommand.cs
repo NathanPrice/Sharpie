@@ -9,7 +9,7 @@ namespace Sharpie.Shell.Features.Variables;
 /// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
 /// <remarks>
 /// <c>unset NAME...</c> removes each name, and a name that isn't set is skipped quietly, as POSIX requires. A leading
-/// <c>-v</c>, POSIX's flag for variables, is accepted. Sharpie has no functions, so <c>-f</c> isn't.
+/// <c>-v</c>, POSIX's flag for variables, is accepted. <c>-f</c>, which removes a function, isn't supported yet.
 /// </remarks>
 internal sealed class UnsetCommand(DeclareCommand declare) : ICommand
 {

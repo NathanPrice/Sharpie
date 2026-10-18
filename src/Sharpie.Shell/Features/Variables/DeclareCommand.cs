@@ -26,6 +26,28 @@ internal partial class DeclareCommand : ICommand
 	private readonly Dictionary<string, string> variables = new() { ["#"] = "0" };
 
 	/// <summary>
+	/// One scope for each function that's running, innermost on top, holding each name <c>local</c> made in it, in
+	/// order, with its shell value and environment value from before, <see langword="null" /> where it had none.
+	/// </summary>
+	private readonly Stack<List<(string Name, string? Value, string? Exported)>> scopes = new();
+
+	/// <summary>
+	/// Gets how many functions are running, one inside another.
+	/// </summary>
+	/// <value>
+	/// 0 outside any function.
+	/// </value>
+	public int FunctionDepth => this.scopes.Count;
+
+	/// <summary>
+	/// Gets how many names the innermost running function has made local so far.
+	/// </summary>
+	/// <value>
+	/// 0 outside any function. A command substitution reads it first and hands it to <see cref="Restore" />.
+	/// </value>
+	public int LocalCount => this.scopes.TryPeek(out var scope) ? scope.Count : 0;
+
+	/// <summary>
 	/// Gets or sets the last command's exit status.
 	/// </summary>
 	/// <value>
@@ -192,6 +214,83 @@ internal partial class DeclareCommand : ICommand
 	}
 
 	/// <summary>
+	/// Runs a function's body with <paramref name="arguments" /> as the positional parameters, then puts back the
+	/// caller's and every variable <see cref="Localize" /> saved.
+	/// </summary>
+	/// <param name="arguments">The words after the function's name, which become <c>$1</c> onwards.</param>
+	/// <param name="run">Runs the body.</param>
+	/// <returns>
+	/// The status <paramref name="run" /> gives.
+	/// </returns>
+	/// <remarks>
+	/// <c>$0</c> stays the shell's, as in bash. A local's old value goes back into the environment too, so an
+	/// exported variable the function made local is exported again with its old value.
+	/// </remarks>
+	public int RunFunction(IReadOnlyList<string> arguments, Func<int> run)
+	{
+		_ = run.ArgumentNotNull();
+
+		var caller = this.Positional;
+		var scope = new List<(string Name, string? Value, string? Exported)>();
+
+		this.SetPositional(arguments);
+		this.scopes.Push(scope);
+
+		try
+		{
+			return run();
+		}
+		finally
+		{
+			_ = this.scopes.Pop();
+
+			foreach (var (name, value, exported) in scope)
+			{
+				if (value is null)
+				{
+					_ = this.variables.Remove(name);
+				}
+				else
+				{
+					this.variables[name] = value;
+				}
+
+				// Only when it changed, since setting an empty value would take the variable out of the environment.
+				if (Environment.GetEnvironmentVariable(name) != exported)
+				{
+					Environment.SetEnvironmentVariable(name, exported);
+				}
+			}
+
+			this.SetPositional(caller);
+		}
+	}
+
+	/// <summary>
+	/// Saves the variable <paramref name="name" />, for the function that's running to put back when it returns.
+	/// </summary>
+	/// <param name="name">A valid variable name.</param>
+	/// <returns>
+	/// <see langword="true" /> when it was saved, or <see langword="false" /> when this function already made it local.
+	/// </returns>
+	/// <exception cref="InvalidOperationException">No function is running.</exception>
+	public bool Localize(string name)
+	{
+		_ = name.ArgumentNotNull();
+
+		var scope = this.scopes.Peek();
+
+		if (scope.Exists(local => local.Name == name))
+		{
+			return false;
+		}
+
+		scope.Add((name, this.variables.GetValueOrDefault(name), Environment.GetEnvironmentVariable(name)));
+
+		return true;
+	}
+
+	/// <summary>
 	/// Replaces the positional parameters, as <c>set --</c> does.
 	/// </summary>
 	/// <param name="values">The new parameters, which become <c>$1</c> onwards.</param>
@@ -258,16 +357,28 @@ internal partial class DeclareCommand : ICommand
 	/// Replaces every shell variable with the ones in <paramref name="saved" />.
 	/// </summary>
 	/// <param name="saved">A copy of <see cref="Variables" /> taken earlier.</param>
+	/// <param name="locals">
+	/// <see cref="LocalCount" /> from when <paramref name="saved" /> was taken, or <see langword="null" /> to keep every
+	/// local.
+	/// </param>
 	/// <remarks>
-	/// The environment is left alone, so a caller that wants it back puts it back itself.
+	/// The environment is left alone, so a caller that wants it back puts it back itself. With
+	/// <paramref name="locals" />, the names made local since are forgotten too. A command substitution passes it, so
+	/// a <c>local</c> inside <c>$(...)</c> doesn't make the variable local to the function around it, whose later
+	/// changes then stay when it returns, as in bash.
 	/// </remarks>
-	public void Restore(IReadOnlyDictionary<string, string> saved)
+	public void Restore(IReadOnlyDictionary<string, string> saved, int? locals = null)
 	{
 		this.variables.Clear();
 
 		foreach (var (name, value) in saved.ArgumentNotNull())
 		{
 			this.variables[name] = value;
+		}
+
+		if (locals is { } count && this.scopes.TryPeek(out var scope))
+		{
+			scope.RemoveRange(count, scope.Count - count);
 		}
 	}
 
