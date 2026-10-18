@@ -53,6 +53,9 @@ and mouse reporting all work.
   `/dev/null` works on Windows too. A here-document's lines expand `$NAME` and `$(...)` unless the delimiter is
   quoted, as in `<<'EOF'`. `set -C`, or starting with `Sharpie -C`, keeps `>` from replacing a file, and `>|`
   replaces it anyway.
+- **Conditions.** `test` and `[` are builtins, so `[ -f file ]` works on Windows too, and `[[ ... ]]` works as in
+  bash: `&&`, `||`, `!` and parentheses inside it, `==` and `!=` against a pattern as in `[[ $x == *.txt ]]`, `=~`
+  against a regular expression, and no word splitting, so `[[ -n $x ]]` needs no quotes.
 - **Your existing setup.** The window copies the exported variables and aliases from your own `$SHELL`, so a `PATH`
   set in `~/.zshrc` works here too. After that it runs `~/.sharpierc`.
 - **Built-in pagers.** `man` pages open in a reader inside the window, and `dman` shows .NET API docs and C# or VB
@@ -61,7 +64,7 @@ and mouse reporting all work.
 
 **Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `dirs`, `disown`, `dman`, `echo`,
 `eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `popd`, `pushd`, `pwd`, `read`, `set`,
-`shift`, `source` / `.`, `true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`.
+`shift`, `source` / `.`, `test` / `[`, `true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`.
 
 ## Getting started
 
