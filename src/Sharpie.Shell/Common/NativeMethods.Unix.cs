@@ -549,6 +549,19 @@ internal static unsafe partial class NativeMethods
 	internal static partial uint EffectiveGroup();
 
 	/// <summary>
+	/// Moves or reads the system's position in an open file, as <c>lseek</c> does, through .NET's own native library.
+	/// </summary>
+	/// <param name="file">The open file.</param>
+	/// <param name="offset">The position, counted from where <paramref name="whence" /> says.</param>
+	/// <param name="whence">0 for the start of the file, 1 for the current position, 2 for the end.</param>
+	/// <returns>
+	/// The new position from the start of the file, or -1 with the reason in the last error.
+	/// </returns>
+	[LibraryImport("libSystem.Native", EntryPoint = "SystemNative_LSeek", SetLastError = true)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial long Seek(SafeHandle file, long offset, int whence);
+
+	/// <summary>
 	/// Waits for a child process to change state.
 	/// </summary>
 	/// <param name="pid">A process id, or minus a process group id to wait for any process in that group.</param>

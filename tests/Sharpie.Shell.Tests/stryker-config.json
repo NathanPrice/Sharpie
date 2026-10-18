@@ -5,6 +5,7 @@
     "mutate": [
       "**/*.cs",
       "!**/Program.cs",
+      "!**/CompoundCommands.cs",
       "!**/Common/NativeMethods*.cs",
       "!**/Common/PosixSpawn.cs",
       "!**/Common/ExternalProgram.Unix.cs",

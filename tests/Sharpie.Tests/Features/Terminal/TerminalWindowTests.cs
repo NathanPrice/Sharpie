@@ -128,7 +128,8 @@ public sealed class TerminalWindowTests : IDisposable
 		// Act
 		this.Type("bash -c 'read -p \"Proceed? [Y/n] \" a; echo answer=$a'");
 		this.Press(Key.Enter, PhysicalKey.Enter, null);
-		WaitFor(() => this.ScreenText.Contains("Proceed? [Y/n] ", StringComparison.Ordinal), "the prompt should have shown");
+		// The typed command holds the prompt text too, so only the end of the screen shows that bash printed it.
+		WaitFor(() => this.ScreenText.TrimEnd().EndsWith("Proceed? [Y/n]", StringComparison.Ordinal), "the prompt should have shown");
 		this.Enter("y");
 
 		// Assert
@@ -148,7 +149,7 @@ public sealed class TerminalWindowTests : IDisposable
 		// Act
 		this.Type("bash -c 'read -s -p \"pw: \" a; echo; echo len=${#a}'");
 		this.Press(Key.Enter, PhysicalKey.Enter, null);
-		WaitFor(() => this.ScreenText.Contains("pw: ", StringComparison.Ordinal), "the password prompt should have shown");
+		WaitFor(() => this.ScreenText.TrimEnd().EndsWith("pw:", StringComparison.Ordinal), "the password prompt should have shown");
 		this.Enter("secret");
 
 		// Assert

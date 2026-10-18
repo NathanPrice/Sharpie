@@ -59,7 +59,7 @@ internal static class BuiltinCommands
 			new DmanCommand(),
 			new UmaskCommand(NativeMethods.SetFileMask),
 			new UlimitCommand(),
-			.. CreateVariableCommands(declare, settings, runLine, inSubshell),
+			.. CreateVariableCommands(commands, declare, settings, runLine, inSubshell),
 			.. CreateFolderCommands(declare),
 			.. CreateJobCommands(),
 			new CommandCommand(type),
@@ -71,6 +71,7 @@ internal static class BuiltinCommands
 	/// <summary>
 	/// Creates the builtins that work on shell variables, and the ones that run lines, which share them.
 	/// </summary>
+	/// <param name="commands">The builtins and functions, by name, which <c>unset -f</c> removes functions from.</param>
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
 	/// <param name="settings">The shell options, which <c>set</c> changes and <c>$-</c> lists.</param>
 	/// <param name="runLine">Runs one command line the way the shell runs a typed one and gives its status.</param>
@@ -79,7 +80,7 @@ internal static class BuiltinCommands
 	/// <c>declare</c> and the builtins built around it, <c>test</c> and <c>[</c> among them, whose <c>-v</c> reads its
 	/// variables.
 	/// </returns>
-	private static ICommand[] CreateVariableCommands(DeclareCommand declare, ShellSettings settings, Func<string, int> runLine, Func<bool>? inSubshell)
+	private static ICommand[] CreateVariableCommands(Dictionary<string, ICommand> commands, DeclareCommand declare, ShellSettings settings, Func<string, int> runLine, Func<bool>? inSubshell)
 	{
 		var dot = new SourceCommand(".", declare, runLine);
 		var source = new SourceCommand("source", declare, runLine);
@@ -89,7 +90,7 @@ internal static class BuiltinCommands
 			declare,
 			new ExitCommand(declare, inSubshell),
 			new ExportCommand(declare),
-			new UnsetCommand(declare),
+			new UnsetCommand(declare, commands),
 			new SetCommand(declare, settings),
 			new ShiftCommand(declare),
 			new ReadCommand(declare, Console.IsInputRedirected ? null : () => Console.ReadKey(intercept: true)),
@@ -99,25 +100,24 @@ internal static class BuiltinCommands
 			new TestCommand("test", declare),
 			new TestCommand("[", declare),
 			new ReturnCommand(declare, () => dot.Running || source.Running),
-			new LocalCommand(declare)
+			new LocalCommand(declare),
+			new LoopControlCommand("break", declare),
+			new LoopControlCommand("continue", declare)
 		];
 	}
 
 	/// <summary>
-	/// Defines the function that <paramref name="command" /> holds, as <see cref="FunctionCommand.Define" /> does.
+	/// Defines a function, as <see cref="FunctionCommand.Define" /> does.
 	/// </summary>
 	/// <param name="commands">The builtins and functions, by name, which get the new function.</param>
-	/// <param name="command">One command, as <see cref="CommandList" /> gives it.</param>
+	/// <param name="definition">The definition the parser read.</param>
 	/// <param name="declare">The <c>declare</c> builtin, which the function's calls use.</param>
 	/// <param name="runLine">Runs the function's body.</param>
-	/// <returns>
-	/// <see langword="null" /> when <paramref name="command" /> isn't a definition, otherwise its status.
-	/// </returns>
 	/// <remarks>
 	/// Here rather than called straight from <see cref="Program" />, for the same cap on what it depends on.
 	/// </remarks>
-	internal static int? DefineFunction(Dictionary<string, ICommand> commands, string command, DeclareCommand declare, Func<string, int> runLine) =>
-		FunctionCommand.Define(commands, command, declare, runLine);
+	internal static void DefineFunction(Dictionary<string, ICommand> commands, FunctionDefinition definition, DeclareCommand declare, Func<string, int> runLine) =>
+		FunctionCommand.Define(commands, definition, declare, runLine);
 
 	/// <summary>
 	/// Creates what runs a script file the shell was started with, as in <c>Sharpie FILE</c>.

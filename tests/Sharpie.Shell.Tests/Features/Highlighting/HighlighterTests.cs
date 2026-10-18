@@ -224,7 +224,11 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("echo a2>out.txt", "0,4,Command;7,1,Redirect")]
 	[InlineData("echo hi>nope/x", "0,4,Command;7,1,Redirect;8,6,MissingPath")]
 	[InlineData("echo '>' x", "0,4,Command;5,3,Quoted")]
-	[InlineData("prog|prog", "0,4,Command")]
+	[InlineData("prog|prog", "0,4,Command;5,4,Command")]
+	[InlineData("nope; prog", "0,4,UnknownCommand;6,4,Command")]
+	[InlineData("if prog; then nope; fi", "0,2,Command;3,4,Command;9,4,Command;14,4,UnknownCommand;20,2,Command")]
+	[InlineData("echo if", "0,4,Command")]
+	[InlineData("\"if\" x", "0,4,UnknownCommand")]
 	[InlineData("2>out.txt", "0,2,Redirect")]
 	public void Highlight_EdgeCaseLine_GivesExactTokens(string line, string expected)
 	{

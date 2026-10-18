@@ -42,6 +42,11 @@ and mouse reporting all work.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
 - **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines and
   command lists joined by `;`, `&&` and `||`.
+- **Control flow.** `if`/`elif`/`else`, `while`, `until`, `for`, `case`, `{ ...; }` groups, `( ... )` subshells,
+  `!`, and `break`/`continue`, at the prompt, in `-c` strings and in scripts. A compound
+  command can span lines, and the prompt asks for the rest with `> `. Redirects after one apply to everything inside,
+  so `{ echo a; ls; } > f` and `while read l; do ...; done < f` work, and a compound stage of a pipeline runs in a
+  copy of the shell with real pipes, so `tail -f log | while read l; do ...; done` streams.
 - **Expansions.** `$NAME`, `~`, wildcards like `*.tmp`, and command substitution with `$(...)` or backquotes, so
   `cd $(git rev-parse --show-toplevel)` and `export GPG_TTY=$(tty)` work. A substitution runs in the shell itself, and
   the folder, variables and aliases it changes are put back afterwards, as a subshell would leave them. The special
@@ -59,16 +64,18 @@ and mouse reporting all work.
 - **Functions.** `name() { ...; }` and `function name { ...; }` define a function, on one line or many. Its arguments
   are `$1`, `$#` and `"$@"` while it runs, `local` keeps a variable's change inside it, and `return` ends it or a
   sourced file. A function takes over a builtin of the same name, and `command name` still runs the builtin, so
-  `cd() { command cd "$@" && ls; }` works.
+  `cd() { command cd "$@" && ls; }` works. A redirect after the body, as in `f() { ...; } > log`, applies to every
+  call, and a function in a pipeline runs in a copy of the shell like any compound stage.
 - **Your existing setup.** The window copies the exported variables and aliases from your own `$SHELL`, so a `PATH`
   set in `~/.zshrc` works here too. After that it runs `~/.sharpierc`.
 - **Built-in pagers.** `man` pages open in a reader inside the window, and `dman` shows .NET API docs and C# or VB
   keyword docs as man pages.
 - **Encrypted history.** History is saved encrypted, with the key kept in the operating system's secret store.
 
-**Builtins:** `:`, `alias`, `bg`, `cd`, `clear`, `command`, `complete`, `declare`, `dirs`, `disown`, `dman`, `echo`,
-`eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `local`, `popd`, `pushd`, `pwd`, `read`,
-`return`, `set`, `shift`, `source` / `.`, `test` / `[`, `true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`.
+**Builtins:** `:`, `alias`, `bg`, `break`, `cd`, `clear`, `command`, `complete`, `continue`, `declare`, `dirs`,
+`disown`, `dman`, `echo`, `eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `local`, `popd`,
+`pushd`, `pwd`, `read`, `return`, `set`, `shift`, `source` / `.`, `test` / `[`, `true`, `type`, `ulimit`, `umask`,
+`unalias`, `unset`, `wait`.
 
 ## Getting started
 
@@ -153,7 +160,8 @@ HISTFILE=$HOME/.sharpie_history
 . $HOME/.sharpie_aliases
 ```
 
-A line ending in `\` continues on the next one, and a function's body runs on until its closing `}`.
+A line ending in `\` continues on the next one, and a compound command or function runs on until its closing word,
+like `fi`, `done` or `}`.
 `Sharpie --norc` skips the file, and `. file` or `source file`
 runs another one at any time.
 
@@ -184,8 +192,9 @@ offline use. Inside the window the page opens in the built-in reader, in another
 > [!WARNING]
 > Some of the POSIX shell language is still missing:
 >
-> - **Arithmetic expansion, `$((...))`.** A line that uses it is refused with status 2 rather than run with the
+> - **Arithmetic, `$((...))` and `(( ))`.** A line that uses it is refused with status 2 rather than run with the
 >   wrong arguments.
+> - **`;&` and `;;&` in `case`, and `select`.** A `case` item has to end with `;;`.
 > - **Builtins in pipelines of three or more stages.** Those stages only run programs found on `PATH`.
 
 ## Development

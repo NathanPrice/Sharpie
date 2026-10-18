@@ -29,7 +29,7 @@ public sealed class CommandListTests : IDisposable
 	[InlineData(@"echo a\; b\&\& c", new[] { ";", @"echo a\; b\&\& c" })]
 	[InlineData("a &&\nb", new[] { ";", "a", "&&", "b" })]
 	[InlineData("a ||\n\nb", new[] { ";", "a", "||", "b" })]
-	[InlineData(";; a ;;", new[] { ";", "a" })]
+	[InlineData("a ;\n\n b ;", new[] { ";", "a", ";", "b" })]
 	[InlineData("echo a # b; c\necho d", new[] { ";", "echo a", ";", "echo d" })]
 	[InlineData("echo a#b; c", new[] { ";", "echo a#b", ";", "c" })]
 	[InlineData(@"echo \#b; c", new[] { ";", @"echo \#b", ";", "c" })]
@@ -38,7 +38,7 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("# only a comment", new string[0])]
 	[InlineData("   ", new string[0])]
 	[InlineData("echo '$(x)' '`y`'", new[] { ";", "echo '$(x)' '`y`'" })]
-	[InlineData(@"echo \$(x) \`y", new[] { ";", @"echo \$(x) \`y" })]
+	[InlineData(@"echo \$x \`y", new[] { ";", @"echo \$x \`y" })]
 	[InlineData("echo \"it's\"; b", new[] { ";", "echo \"it's\"", ";", "b" })]
 	[InlineData("a;#x\nb", new[] { ";", "a", ";", "b" })]
 	[InlineData("sleep 1 &", new[] { ";", "sleep 1 &" })]
@@ -50,9 +50,7 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("a 2>&1 & b", new[] { ";", "a 2>&1 &", ";", "b" })]
 	[InlineData("a &> f", new[] { ";", "a &> f" })]
 	[InlineData("a |& b", new[] { ";", "a |& b" })]
-	[InlineData("a |", new[] { ";", "a |" })]
 	[InlineData("echo $", new[] { ";", "echo $" })]
-	[InlineData("echo ($HOME) (x)", new[] { ";", "echo ($HOME) (x)" })]
 	[InlineData("echo \"a #\" b", new[] { ";", "echo \"a #\" b" })]
 	[InlineData("echo 'say \"hi\"'; b", new[] { ";", "echo 'say \"hi\"'", ";", "b" })]
 	[InlineData("[[ a && b ]] && c", new[] { ";", "[[ a && b ]]", "&&", "c" })]
@@ -66,6 +64,8 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("[[a && b", new[] { ";", "[[a", "&&", "b" })]
 	[InlineData("[[ a ]]x && b ]]", new[] { ";", "[[ a ]]x && b ]]" })]
 	[InlineData("[[ a]] && b ]]", new[] { ";", "[[ a]] && b ]]" })]
+	[InlineData("a[[ x && b", new[] { ";", "a[[ x", "&&", "b" })]
+	[InlineData("[[ a &&", new[] { ";", "[[ a &&" })]
 	public void Split_WithLine_CutsAtUnquotedOperators(string line, string[] expected)
 	{
 		// Act
@@ -112,6 +112,8 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("echo $(a", '(')]
 	[InlineData("echo \"$(a", '(')]
 	[InlineData("echo `a", '`')]
+	[InlineData("`a", '`')]
+	[InlineData("$(a", '(')]
 	[InlineData("echo a", '\0')]
 	[InlineData("echo $((1", '\0')]
 	[InlineData("# don't", '\0')]
@@ -192,9 +194,7 @@ public sealed class CommandListTests : IDisposable
 	[Theory]
 	[InlineData("", 5, 5)]
 	[InlineData("# comment", 3, 3)]
-	[InlineData("&& a", 0, 7)]
-	[InlineData("&& a", 1, 1)]
-	[InlineData("|| a", 1, 7)]
+	[InlineData("\n\n", 4, 4)]
 	public void Run_WithStatusBefore_StartsFromIt(string line, int before, int expected)
 	{
 		// Act
@@ -202,6 +202,100 @@ public sealed class CommandListTests : IDisposable
 
 		// Assert
 		_ = status.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that a line the grammar doesn't allow, or one that isn't finished, is refused, as bash refuses it with a
+	/// syntax error.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	[Theory]
+	[InlineData(";; a ;;")]
+	[InlineData("&& a")]
+	[InlineData("|| a")]
+	[InlineData("a |")]
+	[InlineData("echo ($HOME) (x)")]
+	[InlineData(@"echo \$(x)")]
+	[InlineData("if true; then echo")]
+	public void Split_WithSyntaxError_ReturnsNull(string line)
+	{
+		// Act
+		var commands = CommandList.Split(line);
+
+		// Assert
+		_ = commands.Should().BeNull();
+	}
+
+	/// <summary>
+	/// Checks that a line with a syntax error runs nothing, prints the report, and gives
+	/// <see cref="CommandList.UnsupportedStatus" />.
+	/// </summary>
+	[Fact]
+	public void Run_WithSyntaxError_RunsNothingAndReports()
+	{
+		// Arrange
+		var ran = new List<string>();
+
+		// Act
+		var status = CommandList.Run("echo a; fi", 0, command =>
+		{
+			ran.Add(command);
+
+			return 0;
+		});
+
+		// Assert
+		_ = ran.Should().BeEmpty();
+		_ = status.Should().Be(CommandList.UnsupportedStatus);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::syntax", "Unexpected `fi`")
+		{
+			Source = "echo a; fi",
+			Start = 8,
+			End = 10,
+			Label = "not allowed here",
+		}.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that a line that ends inside a compound command is refused with what would finish it, as bash's
+	/// "unexpected end of file".
+	/// </summary>
+	[Fact]
+	public void Run_WithUnfinishedCompound_ReportsWhatIsMissing()
+	{
+		// Act
+		var status = CommandList.Run("while true; do echo", 0, _ => 0);
+
+		// Assert
+		_ = status.Should().Be(CommandList.UnsupportedStatus);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::syntax", "The command isn't finished") { Help = "end it with `done`" }.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandList.NeedsMoreLines" /> asks for another line inside a here-document's body, a
+	/// compound command, or after an operator that needs a command after it, and not for a whole command.
+	/// </summary>
+	/// <param name="text">The lines read so far.</param>
+	/// <param name="expected">Whether another line is needed.</param>
+	[Theory]
+	[InlineData("cat <<EOF", true)]
+	[InlineData("if true; then", true)]
+	[InlineData("for x in a\ndo", true)]
+	[InlineData("a &&", true)]
+	[InlineData("a |", true)]
+	[InlineData("if true; then\n  cat <<EOF\nfi\nEOF", true)]
+	[InlineData("if true; then\n  cat <<EOF\nEOF\nfi", false)]
+	[InlineData("echo hi", false)]
+	[InlineData("fi", false)]
+	[InlineData("echo 'a", false)]
+	[InlineData("echo $(a", false)]
+	public void NeedsMoreLines_WithText_SaysWhetherToReadOn(string text, bool expected)
+	{
+		// Act
+		var more = CommandList.NeedsMoreLines(text);
+
+		// Assert
+		_ = more.Should().Be(expected);
 	}
 
 	/// <summary>
@@ -340,6 +434,7 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("  a\n\n  # c\n  b", new[] { 0, 3 })]
 	[InlineData("a\n  b && c &\nd", new[] { 0, 1, 2 })]
 	[InlineData("a \\\nb; c", new[] { 0, 1 })]
+	[InlineData("a\nb | { c; }", new[] { 0, 1 })]
 	public void Run_WithStarting_GivesLineOffsets(string line, int[] expected)
 	{
 		// Arrange
@@ -450,27 +545,21 @@ public sealed class CommandListTests : IDisposable
 	public void Dispose() => this.environment.Dispose();
 
 	/// <summary>
-	/// Checks that a function definition comes back as one command from its header to the <c>}</c> that closes it,
-	/// joined by a newline where <c>;</c> or a newline cut it and by the operator otherwise.
+	/// Checks that a function definition is one command, as typed, wherever it is in the list.
 	/// </summary>
 	/// <param name="line">The line to split.</param>
 	/// <param name="expected">The operator and command pairs, flattened.</param>
 	[Theory]
-	[InlineData("samplefn() { a; b; }", new[] { ";", "samplefn() { a\nb\n}" })]
-	[InlineData("samplefn() {\n  a\n  b\n}\nc", new[] { ";", "samplefn() {\na\nb\n}", ";", "c" })]
-	[InlineData("samplefn() { a && b || c; }", new[] { ";", "samplefn() { a && b || c\n}" })]
-	[InlineData("samplefn() { { a; }; b; }; c", new[] { ";", "samplefn() { { a\n}\nb\n}", ";", "c" })]
-	[InlineData("samplefn() { a & }", new[] { ";", "samplefn() { a &\n}" })]
+	[InlineData("samplefn() { a; b; }", new[] { ";", "samplefn() { a; b; }" })]
+	[InlineData("samplefn() {\n  a\n  b\n}\nc", new[] { ";", "samplefn() {\n  a\n  b\n}", ";", "c" })]
+	[InlineData("samplefn() { { a; }; b; }; c", new[] { ";", "samplefn() { { a; }; b; }", ";", "c" })]
 	[InlineData("samplefn()\n{\na\n}", new[] { ";", "samplefn()\n{\na\n}" })]
-	[InlineData("samplefn()\necho a", new[] { ";", "samplefn()", ";", "echo a" })]
-	[InlineData("samplefn() { a; } && b", new[] { ";", "samplefn() { a\n}", "&&", "b" })]
-	[InlineData("x && samplefn() { a; }", new[] { ";", "x", "&&", "samplefn() { a\n}" })]
-	[InlineData("samplefn() { a; }; }", new[] { ";", "samplefn() { a\n}", ";", "}" })]
-	[InlineData("{ a; }", new[] { ";", "{ a", ";", "}" })]
-	[InlineData("samplefn() { echo }; }", new[] { ";", "samplefn() { echo }\n}" })]
-	[InlineData("samplefn() { cat <<EOF; }\nhi\nEOF", new[] { ";", "samplefn() { cat <<EOF\nhi\nEOF\n}" })]
+	[InlineData("function samplefn { a; }", new[] { ";", "function samplefn { a; }" })]
+	[InlineData("x && samplefn() { a; }", new[] { ";", "x", "&&", "samplefn() { a; }" })]
+	[InlineData("samplefn() { echo }; }", new[] { ";", "samplefn() { echo }; }" })]
+	[InlineData("samplefn() { cat <<EOF; }\nhi\nEOF", new[] { ";", "samplefn() { cat <<EOF; }\nhi\nEOF" })]
 	[InlineData("samplefn() {\ncat <<EOF\n}\nEOF\n}", new[] { ";", "samplefn() {\ncat <<EOF\n}\nEOF\n}" })]
-	public void Split_WithFunctionDefinition_JoinsItIntoOneCommand(string line, string[] expected)
+	public void Split_WithFunctionDefinition_KeepsItOneCommand(string line, string[] expected)
 	{
 		// Act
 		var commands = CommandList.Split(line);
@@ -481,55 +570,51 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a definition whose body is never closed, or whose header ends the line, is left open as <c>{</c>,
-	/// so a reader goes on to the next line, and that a quote inside it wins.
+	/// Checks that a definition the grammar doesn't allow, like a body that isn't a compound command or a stray
+	/// <c>}</c>, is refused.
 	/// </summary>
 	/// <param name="line">The line.</param>
-	/// <param name="expected">What's left open, or <c>'\0'</c> for nothing.</param>
 	[Theory]
-	[InlineData("samplefn() {", '{')]
-	[InlineData("samplefn() { a", '{')]
-	[InlineData("samplefn() {\na\n{ b; }", '{')]
-	[InlineData("samplefn()", '{')]
-	[InlineData("function samplefn", '{')]
-	[InlineData("samplefn() { echo 'a", '\'')]
-	[InlineData("samplefn() { a; }", '\0')]
-	[InlineData("{ a", '\0')]
-	[InlineData("samplefn() x", '\0')]
-	public void Unfinished_WithOpenDefinition_GivesBrace(string line, char expected)
+	[InlineData("samplefn()\necho a")]
+	[InlineData("samplefn() { a; }; }")]
+	[InlineData("samplefn() x")]
+	public void Split_WithBadDefinition_ReturnsNull(string line)
 	{
 		// Act
-		var open = CommandList.Unfinished(line);
+		var commands = CommandList.Split(line);
 
 		// Assert
-		_ = open.Should().Be(expected == '\0' ? null : expected);
+		_ = commands.Should().BeNull();
 	}
 
 	/// <summary>
-	/// Checks that <see cref="CommandList.IsDefinitionOpen" /> says a definition is open even while a quote inside it
-	/// is, so a reader keeps going to the body's end.
+	/// Checks that a reader is asked for more lines while a function's header or body is open, even when a quote
+	/// inside the body is, and not once the body is closed.
 	/// </summary>
 	/// <param name="text">The lines read so far.</param>
-	/// <param name="expected">Whether a definition is open.</param>
+	/// <param name="expected">Whether another line is needed.</param>
 	[Theory]
 	[InlineData("samplefn() {", true)]
+	[InlineData("samplefn() { a", true)]
+	[InlineData("samplefn() {\na\n{ b; }", true)]
+	[InlineData("samplefn()", true)]
+	[InlineData("function samplefn", true)]
 	[InlineData("samplefn() {\necho \"a", true)]
 	[InlineData("samplefn() {\necho \"a\n\"", true)]
-	[InlineData("samplefn()", true)]
 	[InlineData("samplefn() {\necho \"a\n\"\n}", false)]
-	[InlineData("echo \"a", false)]
-	[InlineData("{ a", false)]
-	public void IsDefinitionOpen_WithText_SaysWhetherBodyIsOpen(string text, bool expected)
+	[InlineData("samplefn() { a; }", false)]
+	[InlineData("samplefn() x", false)]
+	public void NeedsMoreLines_WithOpenDefinition_ReadsOn(string text, bool expected)
 	{
 		// Act
-		var open = CommandList.IsDefinitionOpen(text);
+		var more = CommandList.NeedsMoreLines(text);
 
 		// Assert
-		_ = open.Should().Be(expected);
+		_ = more.Should().Be(expected);
 	}
 
 	/// <summary>
-	/// Checks that a line whose function body is never closed runs nothing, prints why, and gives
+	/// Checks that a line whose function body is never closed runs nothing, prints what's missing, and gives
 	/// <see cref="CommandList.UnsupportedStatus" />, also when a quote inside the body is still open.
 	/// </summary>
 	/// <param name="line">The line.</param>
@@ -552,9 +637,6 @@ public sealed class CommandListTests : IDisposable
 		// Assert
 		_ = ran.Should().BeEmpty();
 		_ = status.Should().Be(CommandList.UnsupportedStatus);
-		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::unclosed_function", "The function's body is never closed")
-		{
-			Help = "end it with a line holding only }",
-		}.Render(color: false));
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::syntax", "The command isn't finished") { Help = "end it with `}`" }.Render(color: false));
 	}
 }

@@ -18,6 +18,30 @@ public sealed class ReadCommandTests : IDisposable
 	private readonly Queue<ConsoleKeyInfo> keys = new();
 
 	/// <summary>
+	/// Checks that a redirect of stream 0 is read instead of the keyboard, with no prompt, and that reads under the same
+	/// redirect take its lines in turn.
+	/// </summary>
+	[Fact]
+	public void Run_WithRedirectedInput_ReadsItInsteadOfKeyboard()
+	{
+		// Arrange
+		var sut = new ReadCommand(this.declare, () => throw new InvalidOperationException("the keyboard was read"));
+
+		ReadCommand.RedirectedInput = new StringReader("one\ntwo\n");
+
+		// Act
+		var first = sut.Run(["-p", "name? ", "a"]);
+		var second = sut.Run(["b"]);
+		var third = sut.Run(["c"]);
+
+		// Assert
+		_ = (first, second, third).Should().Be((0, 0, 1));
+		_ = this.declare.Variables["a"].Should().Be("one");
+		_ = this.declare.Variables["b"].Should().Be("two");
+		_ = this.environment.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
 	/// Checks that piped input is split on the default separators, with the last name getting the rest and names past
 	/// the last field getting an empty value, as bash gives.
 	/// </summary>
@@ -332,6 +356,7 @@ public sealed class ReadCommandTests : IDisposable
 	/// </summary>
 	public void Dispose()
 	{
+		ReadCommand.RedirectedInput = null;
 		Console.SetIn(this.originalIn);
 		this.environment.Dispose();
 	}

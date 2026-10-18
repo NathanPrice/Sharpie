@@ -46,6 +46,14 @@ internal sealed class FunctionCommand(string name, string body, ICommand? shadow
 	/// </value>
 	internal ICommand? Shadowed => shadowed;
 
+	/// <summary>
+	/// Gets the function's body.
+	/// </summary>
+	/// <value>
+	/// The compound command a call runs, as typed, which a copy of the shell defines the function from.
+	/// </value>
+	internal string Body => body;
+
 	/// <inheritdoc />
 	/// <remarks>
 	/// The status is the last command's, or the one <c>return</c> gives. Going past <see cref="MaxDepth" /> prints an
@@ -79,50 +87,50 @@ internal sealed class FunctionCommand(string name, string body, ICommand? shadow
 	}
 
 	/// <summary>
-	/// Defines the function that <paramref name="command" /> holds, if it holds one.
+	/// Defines the function the parser read, in place of any function of the same name.
 	/// </summary>
 	/// <param name="commands">The builtins and functions, by name, which get the new function.</param>
-	/// <param name="command">One command, as <see cref="CommandList" /> gives it.</param>
+	/// <param name="definition">The definition.</param>
 	/// <param name="declare">The <c>declare</c> builtin, which the function's calls use.</param>
 	/// <param name="runLine">Runs the function's body.</param>
-	/// <returns>
-	/// <see langword="null" /> when <paramref name="command" /> isn't a definition. Otherwise 0, or
-	/// <see cref="CommandList.UnsupportedStatus" /> after an error when a redirect follows the body's <c>}</c>, and
-	/// then nothing is defined.
-	/// </returns>
 	/// <remarks>
-	/// Read before the command is split into words, so the body isn't expanded until the function runs. A function
-	/// defined again keeps the builtin the first one hid.
+	/// The body is the compound command as typed, its redirects included, so <c>f() { ...; } &gt; log</c> sends every
+	/// call's output to <c>log</c>, as in bash. It's parsed again on each call, so it isn't expanded until it runs. A
+	/// function defined again keeps the builtin the first one hid.
 	/// </remarks>
-	internal static int? Define(IDictionary<string, ICommand> commands, string command, DeclareCommand declare, Func<string, int> runLine)
+	internal static void Define(IDictionary<string, ICommand> commands, FunctionDefinition definition, DeclareCommand declare, Func<string, int> runLine)
 	{
 		_ = commands.ArgumentNotNull();
+		_ = definition.ArgumentNotNull();
 
-		if (FunctionDefinition.Parse(command) is not (var name, var body, var rest))
+		var old = commands.TryGetValue(definition.Name, out var found) ? found : null;
+
+		commands[definition.Name] = new FunctionCommand(definition.Name, definition.Body.Text, old is FunctionCommand function ? function.Shadowed : old, declare, runLine);
+	}
+
+	/// <summary>
+	/// Removes the function <paramref name="name" />, as <c>unset -f</c> does.
+	/// </summary>
+	/// <param name="commands">The builtins and functions, by name.</param>
+	/// <param name="name">The function's name. A name that isn't a function is left alone.</param>
+	/// <remarks>
+	/// The builtin the function hid comes back.
+	/// </remarks>
+	internal static void Remove(IDictionary<string, ICommand> commands, string name)
+	{
+		if (!commands.ArgumentNotNull().TryGetValue(name, out var found) || found is not FunctionCommand function)
 		{
-			return null;
+			return;
 		}
 
-		// shortcut: bash saves these with the function and applies them to every call. Add that if an rc file needs it.
-		if (!string.IsNullOrWhiteSpace(rest))
+		if (function.Shadowed is { } builtin)
 		{
-			new ShellError("sharpie::function::redirect_after_body", "A redirect after a function's `}` isn't supported")
-			{
-				Source = command,
-				Start = command.Length - rest.TrimStart().Length,
-				End = command.Length,
-				Label = "would apply to every call",
-				Help = "put it inside the body, or on the command that calls the function",
-			}.Write();
-
-			return CommandList.UnsupportedStatus;
+			commands[name] = builtin;
 		}
-
-		var old = commands.TryGetValue(name, out var found) ? found : null;
-
-		commands[name] = new FunctionCommand(name, body, old is FunctionCommand function ? function.Shadowed : old, declare, runLine);
-
-		return 0;
+		else
+		{
+			_ = commands.Remove(name);
+		}
 	}
 
 	/// <summary>

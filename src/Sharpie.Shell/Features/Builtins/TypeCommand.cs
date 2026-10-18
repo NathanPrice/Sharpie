@@ -5,7 +5,8 @@ using Sharpie.Shell.Features.Functions;
 namespace Sharpie.Shell.Features.Builtins;
 
 /// <summary>
-/// Reports whether each argument is an alias, a shell builtin, an executable on <c>PATH</c>, or unknown.
+/// Reports whether each argument is an alias, a shell keyword, a function, a shell builtin, an executable on
+/// <c>PATH</c>, or unknown.
 /// </summary>
 /// <param name="builtins">
 /// The registered builtins, keyed by <see cref="ICommand.Name" />. The shell may still be adding entries when this
@@ -24,6 +25,9 @@ internal class TypeCommand(IReadOnlyDictionary<string, ICommand> builtins, IRead
 	{
 		/// <summary>An alias, whose value replaces the name.</summary>
 		Alias,
+
+		/// <summary>A reserved word of the shell's grammar, like <c>if</c>.</summary>
+		Keyword,
 
 		/// <summary>A builtin the shell runs itself.</summary>
 		Builtin,
@@ -58,6 +62,7 @@ internal class TypeCommand(IReadOnlyDictionary<string, ICommand> builtins, IRead
 			Console.WriteLine(kind switch
 			{
 				Kind.Alias => $"{commandName} is an alias for {value}",
+				Kind.Keyword => $"{commandName} is a shell keyword",
 				Kind.Builtin => $"{commandName} is a shell builtin",
 				Kind.Function => $"{commandName} is a function",
 				Kind.Program => $"{commandName} is {value}",
@@ -82,11 +87,12 @@ internal class TypeCommand(IReadOnlyDictionary<string, ICommand> builtins, IRead
 	/// when missing.
 	/// </returns>
 	/// <remarks>
-	/// Aliases are checked first, then functions and builtins, then <c>PATH</c>, because that is the order the shell's
-	/// main loop dispatches in, so the answer matches what would actually run.
+	/// Aliases are checked first, then reserved words, functions and builtins, then <c>PATH</c>, because that is the
+	/// order bash looks a name up in, so the answer matches what would actually run.
 	/// </remarks>
 	internal (Kind Kind, string Value) Resolve(string commandName) =>
 		this.aliases.TryGetValue(commandName, out var value) ? (Kind.Alias, value)
+		: CommandParser.ReservedWords.Contains(commandName) ? (Kind.Keyword, commandName)
 		: this.builtins.TryGetValue(commandName, out var command) ? (command is FunctionCommand ? Kind.Function : Kind.Builtin, commandName)
 		: PathFinder.FindExecutable(commandName) is { } fullPath ? (Kind.Program, fullPath)
 		: (Kind.Missing, commandName);

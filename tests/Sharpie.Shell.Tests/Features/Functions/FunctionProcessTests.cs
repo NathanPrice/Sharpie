@@ -185,7 +185,7 @@ public sealed class FunctionProcessTests : IDisposable
 
 		// Assert
 		_ = run.Output.Should().BeEmpty();
-		_ = run.Error.Should().Contain("The function's body is never closed");
+		_ = run.Error.Should().Contain("The command isn't finished").And.Contain("end it with `}`");
 		_ = run.ExitCode.Should().Be(2);
 	}
 

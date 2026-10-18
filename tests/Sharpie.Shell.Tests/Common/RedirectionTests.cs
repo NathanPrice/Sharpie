@@ -267,6 +267,62 @@ public sealed class RedirectionTests : IDisposable
 	public void Dispose() => this.environment.Dispose();
 
 	/// <summary>
+	/// Checks that redirects start from the streams a compound command around them set up, apply on top of them, and
+	/// leave that command's files open when they're disposed.
+	/// </summary>
+	[Fact]
+	public void Open_WithInheritedTargets_StartsFromThem()
+	{
+		// Arrange
+		using var outer = Open("x >outer")!;
+
+		// Act
+		var inner = Redirection.Open(CommandLine.SplitRedirect(CommandLine.Split("x 2>&1 3>inner")).Redirects, "x 2>&1 3>inner", noClobber: false, outer.Targets)!;
+
+		// Assert
+		_ = inner.Targets[1].Should().Be(outer.Targets[1]);
+		_ = inner.Targets[2].Should().Be(outer.Targets[1]);
+		_ = inner.Targets[3].Opened!.Name.Should().EndWith("inner");
+		_ = outer.Targets[2].Should().Be(StreamTarget.Own(2));
+
+		inner.Dispose();
+
+		_ = outer.Targets[1].Opened!.CanWrite.Should().BeTrue();
+	}
+
+	/// <summary>
+	/// Checks that a builtin's writes and a program's writes to the same redirect file each land after the other's,
+	/// as they do in <c>{ echo a; printf b; echo c; } &gt; f</c>.
+	/// </summary>
+	[Fact]
+	public void Open_WithWritesFromShellAndProgram_KeepsTheirOrder()
+	{
+		// Arrange
+		// Windows copies a program's output through .NET, so there is no second position to keep in step.
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		var path = Path.Combine(this.folder, "mixed");
+
+		// Act
+		using (var redirection = Open("x >mixed")!)
+		{
+			var file = redirection.Targets[1].Opened!;
+
+			file.Write("a\n"u8);
+			_ = ExternalProgram.Run("printf", ["b\n"], redirection: redirection);
+			file.Write("c\n"u8);
+			_ = ExternalProgram.Run("printf", ["d\n"], redirection: redirection);
+			_ = ExternalProgram.Run("printf", ["e\n"], redirection: redirection);
+		}
+
+		// Assert
+		_ = File.ReadAllText(path).Should().Be("a\nb\nc\nd\ne\n");
+	}
+
+	/// <summary>
 	/// Opens the redirects of <paramref name="line" />.
 	/// </summary>
 	/// <param name="line">A command with redirects.</param>

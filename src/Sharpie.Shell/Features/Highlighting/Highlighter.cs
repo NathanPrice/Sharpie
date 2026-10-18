@@ -103,6 +103,13 @@ internal static class Highlighter
 				kind = TokenKind.Redirect;
 				target = redirect;
 			}
+			else if (word.IsOperator)
+			{
+				// Each command of a list or pipeline starts with its own command word.
+				kind = null;
+				command = null;
+				argumentCount = 0;
+			}
 			else
 			{
 				switch (command)
@@ -110,6 +117,11 @@ internal static class Highlighter
 					// NAME=VALUE words in front of the command go into its environment, so they aren't the command.
 					case null when DeclareCommand.IsAssignment(value):
 						kind = null;
+						break;
+
+					// A reserved word is typed unquoted, and the word after it starts a command again.
+					case null when CommandParser.ReservedWords.Contains(line[start..end]):
+						kind = TokenKind.Command;
 						break;
 					case null:
 						command = value;

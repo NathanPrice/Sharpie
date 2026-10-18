@@ -30,6 +30,20 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 	/// </summary>
 	private const string DefaultSeparators = " \t\n";
 
+	/// <summary>
+	/// Gets or sets where a redirect of stream 0 points <c>read</c>, as in <c>read x &lt; file</c> or
+	/// <c>while read l; do ...; done &lt; file</c>.
+	/// </summary>
+	/// <value>
+	/// The reader, shared by every <c>read</c> under the same redirect so none loses what another read ahead, or
+	/// <see langword="null" /> to read the keyboard or the shell's own input.
+	/// </value>
+	/// <remarks>
+	/// The reader reads ahead, so a program the loop runs that reads its standard input starts after what
+	/// <c>read</c> took in; bash reads one byte at a time to avoid that.
+	/// </remarks>
+	internal static TextReader? RedirectedInput { get; set; }
+
 	/// <inheritdoc />
 	public string Name => "read";
 
@@ -60,7 +74,7 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 			return 1;
 		}
 
-		if (prompt is not null && readKey is not null)
+		if (prompt is not null && readKey is not null && RedirectedInput is null)
 		{
 			Console.Error.Write(prompt);
 		}
@@ -318,11 +332,12 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 	{
 		var text = new StringBuilder();
 
-		if (readKey is null)
+		if (readKey is null || RedirectedInput is not null)
 		{
+			var input = RedirectedInput ?? Console.In;
 			int character;
 
-			while ((character = Console.In.Read()) is not -1 and not '\n')
+			while ((character = input.Read()) is not -1 and not '\n')
 			{
 				_ = text.Append((char)character);
 			}

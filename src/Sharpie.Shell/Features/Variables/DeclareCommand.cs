@@ -40,6 +40,16 @@ internal partial class DeclareCommand : ICommand
 	public int FunctionDepth => this.scopes.Count;
 
 	/// <summary>
+	/// Gets or sets how many loops are running around the current command, which <c>break</c> and <c>continue</c>
+	/// can leave.
+	/// </summary>
+	/// <value>
+	/// 0 outside any loop. Each function call starts again from 0 and puts the caller's count back after, as in bash,
+	/// so a <c>break</c> in a function can't leave a loop around the call.
+	/// </value>
+	public int LoopDepth { get; set; }
+
+	/// <summary>
 	/// Gets how many names the innermost running function has made local so far.
 	/// </summary>
 	/// <value>
@@ -66,6 +76,7 @@ internal partial class DeclareCommand : ICommand
 	/// The parameters in order, empty when there are none.
 	/// </value>
 	public IReadOnlyList<string> Positional => ReadPositional(this.variables);
+
 
 	/// <inheritdoc />
 	public string Name => "declare";
@@ -231,10 +242,12 @@ internal partial class DeclareCommand : ICommand
 		_ = run.ArgumentNotNull();
 
 		var caller = this.Positional;
+		var loops = this.LoopDepth;
 		var scope = new List<(string Name, string? Value, string? Exported)>();
 
 		this.SetPositional(arguments);
 		this.scopes.Push(scope);
+		this.LoopDepth = 0;
 
 		try
 		{
@@ -242,6 +255,7 @@ internal partial class DeclareCommand : ICommand
 		}
 		finally
 		{
+			this.LoopDepth = loops;
 			_ = this.scopes.Pop();
 
 			foreach (var (name, value, exported) in scope)

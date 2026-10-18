@@ -161,15 +161,15 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 
 	/// <summary>
 	/// Joins each line that ends in an unescaped backslash to the line after it, each line that leaves a quote,
-	/// <c>$(</c>, backquote or function body open to the lines that close it, as POSIX does, and a line that starts a
-	/// here-document to the lines of its body.
+	/// <c>$(</c> or backquote open to the lines that close it, as POSIX does, a line that starts a here-document to
+	/// the lines of its body, and the lines of a compound command up to its end.
 	/// </summary>
 	/// <param name="lines">The lines of the file.</param>
 	/// <returns>
 	/// The command lines, each with the number of the file line it starts on, counted from 1, and with each joining
-	/// backslash and its line break removed. Lines joined for an open quote,
-	/// substitution or here-document keep the line break between them, so <c>X=$(</c> on one line and <c>pwd)</c> on
-	/// the next run as one command.
+	/// backslash and its line break removed. Lines joined for an open quote, substitution, here-document or compound
+	/// command keep the line break between them, so <c>X=$(</c> on one line and <c>pwd)</c> on the next run as one
+	/// command, and so do <c>if x; then</c> and the lines up to its <c>fi</c>.
 	/// </returns>
 	/// <remarks>
 	/// The backslash counts when there's an odd number of them at the end, so <c>\\</c>, an escaped backslash, doesn't
@@ -195,7 +195,7 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 			number++;
 			start ??= number;
 
-			if (body is not null)
+			if (body is not null && CommandList.IsHereDocumentOpen(body))
 			{
 				body += "\n" + line;
 			}
@@ -221,10 +221,10 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 				}
 
 				pending = string.Empty;
-				body = joined;
+				body = body is null ? joined : body + "\n" + joined;
 			}
 
-			if (!CommandList.IsHereDocumentOpen(body))
+			if (!CommandList.NeedsMoreLines(body))
 			{
 				yield return (start.Value, body);
 

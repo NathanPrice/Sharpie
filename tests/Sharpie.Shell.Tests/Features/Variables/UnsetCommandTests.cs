@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Sharpie.Shell.Features.Variables;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Functions;
 
 namespace Sharpie.Shell.Tests.Features.Variables;
 
@@ -44,6 +45,29 @@ public sealed class UnsetCommandTests : IDisposable
 		_ = Environment.GetEnvironmentVariable(SampleVariable).Should().BeNull();
 		_ = this.declare.Variables.Should().NotContainKey(SampleVariable);
 		_ = this.environment.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that <c>unset -f</c> removes functions and leaves a variable of the same name alone, and that a name
+	/// with no function is skipped quietly.
+	/// </summary>
+	[Fact]
+	public void Run_WithFunctionFlag_RemovesFunctions()
+	{
+		// Arrange
+		var commands = new Dictionary<string, ICommand>();
+		var definition = (FunctionDefinition)CommandParser.Parse("sampletool() { :; }").List!.Items[0].Command.First.Stages[0];
+
+		FunctionCommand.Define(commands, definition, this.declare, _ => 0);
+		this.declare.Set("sampletool", "kept");
+
+		// Act
+		var status = new UnsetCommand(this.declare, commands).Run(["-f", "sampletool", "missing"]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = commands.Should().BeEmpty();
+		_ = this.declare.Variables["sampletool"].Should().Be("kept");
 	}
 
 	/// <summary>

@@ -350,6 +350,10 @@ public sealed class SourceCommandTests : IDisposable
 	[InlineData(new[] { "cat <<A <<B", "1", "A", "2", "B", @"a\", "b" }, new[] { "cat <<A <<B\n1\nA\n2\nB", "ab" })]
 	[InlineData(new[] { "cat <<EOF", "never closed" }, new[] { "cat <<EOF\nnever closed" })]
 	[InlineData(new[] { "cat <<EOF", "don't $(", "EOF", "echo c" }, new[] { "cat <<EOF\ndon't $(\nEOF", "echo c" })]
+	[InlineData(new[] { "if true; then", "  echo a", "fi", "echo b" }, new[] { "if true; then\n  echo a\nfi", "echo b" })]
+	[InlineData(new[] { "f() {", @"  echo a \", "b", "}" }, new[] { "f() {\n  echo a b\n}" })]
+	[InlineData(new[] { "while read l; do", "  cat <<EOF", "fi", "EOF", "done" }, new[] { "while read l; do\n  cat <<EOF\nfi\nEOF\ndone" })]
+	[InlineData(new[] { "if true; then" }, new[] { "if true; then" })]
 	public void JoinContinuedLines_WithLines_JoinsOnOddBackslashes(string[] lines, string[] expected)
 	{
 		// Act

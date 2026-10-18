@@ -46,7 +46,7 @@ internal sealed class Redirection : IDisposable
 
 	// Shared, because .NET turns the share mode into a file lock on Linux and macOS. An exclusive lock made a second
 	// shell's > /dev/null fail while the first one's was open; bash takes no lock.
-	private const FileShare Shared = FileShare.ReadWrite | FileShare.Delete;
+	internal const FileShare Shared = FileShare.ReadWrite | FileShare.Delete;
 
 	// Each opened file once, however many streams point at it.
 	private readonly List<FileStream> opened = [];
@@ -81,6 +81,11 @@ internal sealed class Redirection : IDisposable
 	/// <see langword="true" /> while <c>set -C</c> is on, so <c>&gt;</c> and <c>&amp;&gt;</c> won't replace an
 	/// existing file.
 	/// </param>
+	/// <param name="inherited">
+	/// Where the streams go before these redirects, as a compound command around this one set them, or
+	/// <see langword="null" /> for <see cref="Standard" />. Their files belong to that command, so this one doesn't
+	/// close them.
+	/// </param>
 	/// <returns>
 	/// The streams, or <see langword="null" /> after reporting the first redirect that failed, with every file opened
 	/// so far closed again.
@@ -90,11 +95,11 @@ internal sealed class Redirection : IDisposable
 	/// where output went before and output to <c>f</c>. A copy from a stream that isn't open is an error, so stream
 	/// numbers the shell itself uses never reach a program.
 	/// </remarks>
-	public static Redirection? Open(IReadOnlyList<Redirect> redirects, string line, bool noClobber)
+	public static Redirection? Open(IReadOnlyList<Redirect> redirects, string line, bool noClobber, StreamTarget[]? inherited = null)
 	{
 		_ = redirects.ArgumentNotNull();
 
-		Redirection? redirection = new();
+		Redirection? redirection = new() { Targets = inherited is null ? Standard : [.. inherited] };
 
 		try
 		{
@@ -200,7 +205,7 @@ internal sealed class Redirection : IDisposable
 
 					break;
 				case ">" or ">|" or "&>":
-					this.Set(stream, this.Keep(new FileStream(SystemPath(target.Text), FileMode.Create, FileAccess.Write, Shared)), both: operatorText == "&>");
+					this.Set(stream, this.Keep(new SharedFile(SystemPath(target.Text), FileMode.Create)), both: operatorText == "&>");
 
 					break;
 				case ">>" or "&>>":
@@ -258,14 +263,14 @@ internal sealed class Redirection : IDisposable
 	{
 		try
 		{
-			return this.Keep(new FileStream(SystemPath(path), FileMode.CreateNew, FileAccess.Write, Shared));
+			return this.Keep(new SharedFile(SystemPath(path), FileMode.CreateNew));
 		}
 		// Stryker disable once all : on Unix /dev/null exists as a file, so only Windows needs the second check.
 		catch (IOException) when (File.Exists(path) || path == NullDevice)
 		{
 		}
 
-		var existing = new FileStream(SystemPath(path), FileMode.Open, FileAccess.Write, Shared);
+		var existing = new SharedFile(SystemPath(path), FileMode.Open);
 
 		if (IsRegularFile(existing))
 		{
@@ -290,14 +295,14 @@ internal sealed class Redirection : IDisposable
 	/// and seeks only a file that can seek, since <c>NUL</c> can't.
 	/// </remarks>
 	// Stryker disable all : each branch only runs on its own OS, so a test run on one OS can't tell them apart.
-	private static FileStream OpenAppend(string path)
+	private static SharedFile OpenAppend(string path)
 	{
 		if (!OperatingSystem.IsWindows())
 		{
-			return new FileStream(path, FileMode.Append, FileAccess.Write, Shared);
+			return new SharedFile(path, FileMode.Append);
 		}
 
-		var file = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, Shared);
+		var file = new SharedFile(path, FileMode.OpenOrCreate);
 
 		if (file.CanSeek)
 		{

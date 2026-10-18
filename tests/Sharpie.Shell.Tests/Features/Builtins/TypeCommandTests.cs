@@ -43,6 +43,25 @@ public sealed class TypeCommandTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a reserved word is reported as a shell keyword, ahead of a function, builtin or program with its
+	/// name.
+	/// </summary>
+	[Fact]
+	public void Run_WithReservedWord_ReportsShellKeyword()
+	{
+		// Arrange
+		this.builtins["if"] = new EchoCommand();
+		_ = ShellEnvironment.CreateFile(this.folder, "done", executable: true);
+
+		// Act
+		var status = this.sut.Run(["if", "done", "{"]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = this.environment.Output.Should().Be($"if is a shell keyword{Environment.NewLine}done is a shell keyword{Environment.NewLine}{{ is a shell keyword{Environment.NewLine}");
+	}
+
+	/// <summary>
 	/// Checks that a builtin wins over an executable of the same name on <c>PATH</c>.
 	/// </summary>
 	[Fact]

@@ -94,8 +94,8 @@ public sealed class FunctionCommandTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a definition adds the function under its name with status 0, keeping the builtin it hides, and
-	/// that a command that isn't a definition gives <see langword="null" /> and changes nothing.
+	/// Checks that a definition adds the function under its name, keeping the builtin it hides, and that a call runs
+	/// the body as typed.
 	/// </summary>
 	[Fact]
 	public void Define_WithDefinition_AddsFunctionOverBuiltin()
@@ -106,15 +106,12 @@ public sealed class FunctionCommandTests : IDisposable
 		this.commands["echo"] = echo;
 
 		// Act
-		var defined = FunctionCommand.Define(this.commands, "echo() { a\n}", this.declare, this.Record);
-		var other = FunctionCommand.Define(this.commands, "echo hi", this.declare, this.Record);
+		this.Define("echo() { a\n}");
 
 		// Assert
-		_ = defined.Should().Be(0);
-		_ = other.Should().BeNull();
 		_ = this.commands.Should().ContainKey("echo").WhoseValue.Should().BeOfType<FunctionCommand>().Which.Shadowed.Should().BeSameAs(echo);
 		_ = this.commands["echo"].Run(["b"]).Should().Be(0);
-		_ = this.ran.Should().Equal(" a\n");
+		_ = this.ran.Should().Equal("{ a\n}");
 	}
 
 	/// <summary>
@@ -127,18 +124,19 @@ public sealed class FunctionCommandTests : IDisposable
 		var echo = new EchoCommand();
 
 		this.commands["echo"] = echo;
-		_ = FunctionCommand.Define(this.commands, "echo() { a; }", this.declare, this.Record);
+		this.Define("echo() { a; }");
 
 		// Act
-		_ = FunctionCommand.Define(this.commands, "echo() { b; }", this.declare, this.Record);
+		this.Define("function echo { b; }");
 
 		// Assert
 		var function = this.commands["echo"].Should().BeOfType<FunctionCommand>().Subject;
 
 		_ = function.Shadowed.Should().BeSameAs(echo);
 		_ = function.Name.Should().Be("echo");
+		_ = function.Body.Should().Be("{ b; }");
 		_ = function.Run([]);
-		_ = this.ran.Should().Equal(" b; ");
+		_ = this.ran.Should().Equal("{ b; }");
 	}
 
 	/// <summary>
@@ -148,50 +146,50 @@ public sealed class FunctionCommandTests : IDisposable
 	public void Define_WithNewName_HidesNothing()
 	{
 		// Act
-		_ = FunctionCommand.Define(this.commands, "samplefn() { a; }", this.declare, this.Record);
+		this.Define("samplefn() { a; }");
 
 		// Assert
 		_ = this.commands["samplefn"].Should().BeOfType<FunctionCommand>().Which.Shadowed.Should().BeNull();
 	}
 
 	/// <summary>
-	/// Checks that a redirect after the body's <c>}</c> is refused with an error pointing at it, and nothing is
-	/// defined.
+	/// Checks that a redirect after the body's <c>}</c> stays with the body, so every call applies it, as in bash.
 	/// </summary>
 	[Fact]
-	public void Define_WithRedirectAfterBody_RefusesIt()
+	public void Define_WithRedirectAfterBody_KeepsItWithTheBody()
 	{
-		// Arrange
-		const string command = "samplefn() { a\n}  > out";
-
 		// Act
-		var status = FunctionCommand.Define(this.commands, command, this.declare, this.Record);
+		this.Define("samplefn() { a\n}  > out");
+		_ = this.commands["samplefn"].Run([]);
 
 		// Assert
-		_ = status.Should().Be(CommandList.UnsupportedStatus);
-		_ = this.commands.Should().BeEmpty();
-		_ = this.environment.Error.Should().Be(new ShellError("sharpie::function::redirect_after_body", "A redirect after a function's `}` isn't supported")
-		{
-			Source = command,
-			Start = command.Length - 5,
-			End = command.Length,
-			Label = "would apply to every call",
-			Help = "put it inside the body, or on the command that calls the function",
-		}.Render(color: false));
+		_ = this.ran.Should().Equal("{ a\n}  > out");
 	}
 
 	/// <summary>
-	/// Checks that blanks after the body's <c>}</c> are fine.
+	/// Checks that <see cref="FunctionCommand.Remove" /> puts back the builtin a function hid, removes one that hid
+	/// none, and leaves a builtin alone.
 	/// </summary>
 	[Fact]
-	public void Define_WithBlanksAfterBody_Defines()
+	public void Remove_WithFunction_PutsBackWhatItHid()
 	{
+		// Arrange
+		var echo = new EchoCommand();
+
+		this.commands["echo"] = echo;
+		this.commands["true"] = new StatusCommand("true", 0, "Does nothing and succeeds");
+		this.Define("echo() { a; }");
+		this.Define("samplefn() { a; }");
+
 		// Act
-		var status = FunctionCommand.Define(this.commands, "samplefn() { a; }  ", this.declare, this.Record);
+		FunctionCommand.Remove(this.commands, "echo");
+		FunctionCommand.Remove(this.commands, "samplefn");
+		FunctionCommand.Remove(this.commands, "true");
+		FunctionCommand.Remove(this.commands, "missing");
 
 		// Assert
-		_ = status.Should().Be(0);
-		_ = this.commands.Should().ContainKey("samplefn");
+		_ = this.commands["echo"].Should().BeSameAs(echo);
+		_ = this.commands.Should().NotContainKey("samplefn").And.ContainKey("true");
 	}
 
 	/// <summary>
@@ -209,6 +207,13 @@ public sealed class FunctionCommandTests : IDisposable
 		// Assert
 		_ = description.Should().Be("Runs a shell function");
 	}
+
+	/// <summary>
+	/// Defines the function that <paramref name="text" /> holds, as the shell does once it's parsed.
+	/// </summary>
+	/// <param name="text">The definition.</param>
+	private void Define(string text) =>
+		FunctionCommand.Define(this.commands, (FunctionDefinition)CommandParser.Parse(text).List!.Items[0].Command.First.Stages[0], this.declare, this.Record);
 
 	/// <summary>
 	/// Restores the console after each test.

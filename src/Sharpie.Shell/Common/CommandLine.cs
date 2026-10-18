@@ -202,6 +202,48 @@ internal static class CommandLine
 	}
 
 	/// <summary>
+	/// What <see cref="SplitWords" /> makes of each finished word.
+	/// </summary>
+	private enum WordForm
+	{
+		/// <summary>The file names its wildcards match, as <see cref="Split" /> gives.</summary>
+		Expanded,
+
+		/// <summary>The word with its quotes removed and no wildcards matched.</summary>
+		Text,
+
+		/// <summary>The word as a pattern for <see cref="Glob.IsMatch" />, its quoted parts escaped.</summary>
+		Pattern,
+	}
+
+	/// <summary>
+	/// Expands the word a <c>case</c> matches, as the word after <c>&lt;&lt;&lt;</c> expands.
+	/// </summary>
+	/// <param name="typed">The word as typed.</param>
+	/// <param name="variables">The shell variables, or <see langword="null" /> to expand nothing.</param>
+	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
+	/// <param name="substitute">Runs a command substitution, as <see cref="Split" /> describes.</param>
+	/// <returns>
+	/// The word with its variables and substitutions expanded and its quotes removed, but no wildcards matched.
+	/// </returns>
+	internal static string ExpandText(string typed, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset = null, Func<string, string>? substitute = null) =>
+		string.Join(' ', SplitWords(typed, variables, unset, substitute, out _, WordForm.Text).Select(word => word.Text));
+
+	/// <summary>
+	/// Expands a <c>case</c> pattern into a pattern for <see cref="Glob.IsMatch" />.
+	/// </summary>
+	/// <param name="typed">The pattern as typed.</param>
+	/// <param name="variables">The shell variables, or <see langword="null" /> to expand nothing.</param>
+	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
+	/// <param name="substitute">Runs a command substitution, as <see cref="Split" /> describes.</param>
+	/// <returns>
+	/// The pattern, with each quoted or escaped <c>*</c>, <c>?</c>, <c>[</c>, <c>]</c> and <c>\</c> behind a
+	/// backslash so it matches only itself, as in bash, where <c>"*")</c> matches only a <c>*</c>.
+	/// </returns>
+	internal static string Pattern(string typed, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset = null, Func<string, string>? substitute = null) =>
+		string.Join(' ', SplitWords(typed, variables, unset, substitute, out _, WordForm.Pattern).Select(word => word.Text));
+
+	/// <summary>
 	/// Splits the first line of <paramref name="line" /> into words, as <see cref="Split" /> describes, leaving each
 	/// here-document delimiter as typed.
 	/// </summary>
@@ -212,10 +254,11 @@ internal static class CommandLine
 	/// <param name="bodyStart">
 	/// Where the text after the first unquoted newline starts, or the line's length when there is none.
 	/// </param>
+	/// <param name="form">What each finished word becomes.</param>
 	/// <returns>
 	/// The words.
 	/// </returns>
-	private static Word[] SplitWords(string line, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset, Func<string, string>? substitute, out int bodyStart)
+	private static Word[] SplitWords(string line, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset, Func<string, string>? substitute, out int bodyStart, WordForm form = WordForm.Expanded)
 	{
 		_ = line.ArgumentNotNull();
 
@@ -427,7 +470,14 @@ internal static class CommandLine
 		{
 			if (hasWord)
 			{
-				words.AddRange(FinishedWords(condition, TakeWord(), wordStart, end, pattern, line, variables, words));
+				var text = TakeWord();
+
+				words.AddRange(form switch
+				{
+					WordForm.Text => [new Word(text, IsOperator: false, wordStart, end)],
+					WordForm.Pattern => [new Word(pattern.ToString(), IsOperator: false, wordStart, end)],
+					WordForm.Expanded or _ => FinishedWords(condition, text, wordStart, end, pattern, line, variables, words),
+				});
 			}
 		}
 	}
@@ -477,32 +527,28 @@ internal static class CommandLine
 
 		if (line[index] == '`')
 		{
-			for (var end = index + 1; end < line.Length; end++)
-			{
-				if (line[end] == '\\')
-				{
-					end++;
-				}
-				else if (line[end] == '`')
-				{
-					return end;
-				}
-			}
-
-			return -1;
+			return BackquoteEnd(line, index);
 		}
 
-		// shortcut: a case pattern's unmatched ) inside $(...) ends it early. Track case...esac if case is ever added.
 		// The $( itself is the first parenthesis, and a word, or a comment, can start right after it.
 		var depth = 1;
 		char? quote = null;
 
 		// True after a blank or an operator character outside quotes, where a word, or a comment, can start.
 		var wordStart = true;
+		var cases = new CaseTracker();
 
 		for (var end = index + 2; end < line.Length; end++)
 		{
 			var character = line[end];
+
+			if (quote is null && wordStart && cases.ReadReservedWord(line, end, depth) is > 0 and var length)
+			{
+				end += length - 1;
+				wordStart = false;
+
+				continue;
+			}
 
 			if (quote == '\'')
 			{
@@ -546,6 +592,8 @@ internal static class CommandLine
 						break;
 					case '`':
 						return -1;
+					case ')' when cases.EndsPattern(depth):
+						break;
 					case '(':
 						depth++;
 
@@ -558,6 +606,32 @@ internal static class CommandLine
 			}
 
 			wordStart = quote is null && (character is ' ' or '\t' or '\n' || OperatorStarts.Contains(character));
+			cases.Read(character, quote);
+		}
+
+		return -1;
+	}
+
+	/// <summary>
+	/// Finds the backquote that ends the substitution starting at the backquote at <paramref name="index" />.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="index">The position of the opening backquote.</param>
+	/// <returns>
+	/// The position of the next backquote that isn't escaped, or -1 when there is none.
+	/// </returns>
+	private static int BackquoteEnd(string line, int index)
+	{
+		for (var end = index + 1; end < line.Length; end++)
+		{
+			if (line[end] == '\\')
+			{
+				end++;
+			}
+			else if (line[end] == '`')
+			{
+				return end;
+			}
 		}
 
 		return -1;
@@ -1339,6 +1413,86 @@ internal static class CommandLine
 			&& !Array.Exists(words, word => word.IsOperator)
 			? [.. words.Select(word => word.Text)]
 			: null;
+	}
+
+	/// <summary>
+	/// Follows the <c>case</c> commands inside a <c>$(...)</c>, so the <c>)</c> that ends a pattern doesn't end the
+	/// substitution.
+	/// </summary>
+	private sealed class CaseTracker
+	{
+		/// <summary>
+		/// The characters that end a word outside quotes.
+		/// </summary>
+		private static readonly SearchValues<char> WordEnds = SearchValues.Create(" \t\n;&|()<>");
+
+		/// <summary>
+		/// The parenthesis depth each open <c>case</c> started at.
+		/// </summary>
+		private readonly List<int> open = [];
+
+		/// <summary>
+		/// <see langword="true" /> where a command's first word can start, so a reserved word there counts.
+		/// </summary>
+		private bool commandStart = true;
+
+		/// <summary>
+		/// Checks whether a <c>)</c> ends a pattern of the innermost <c>case</c>.
+		/// </summary>
+		/// <param name="depth">The parenthesis depth the <c>)</c> is at.</param>
+		/// <returns>
+		/// <see langword="true" /> when that <c>case</c> started at this depth.
+		/// </returns>
+		public bool EndsPattern(int depth) => this.open is [.., var start] && start == depth;
+
+		/// <summary>
+		/// Reads the reserved word that starts at <paramref name="index" />, if a command can start there.
+		/// </summary>
+		/// <param name="line">The text.</param>
+		/// <param name="index">Where a word starts, outside quotes.</param>
+		/// <param name="depth">The parenthesis depth there.</param>
+		/// <returns>
+		/// The reserved word's length, or 0 when the word there is any other or isn't in a command's place.
+		/// </returns>
+		public int ReadReservedWord(string line, int index, int depth)
+		{
+			var rest = line.AsSpan(index);
+			var word = rest.IndexOfAny(WordEnds) is >= 0 and var length ? rest[..length] : rest;
+			string? reserved = null;
+
+			// A blank or operator character; Read notes those.
+			if (word.IsEmpty)
+			{
+				return 0;
+			}
+
+			foreach (var keyword in this.commandStart ? CommandParser.ReservedWords : [])
+			{
+				reserved = word.SequenceEqual(keyword) ? keyword : reserved;
+			}
+
+			if (reserved == "case")
+			{
+				this.open.Add(depth);
+			}
+			else if (reserved == "esac" && this.EndsPattern(depth))
+			{
+				this.open.RemoveAt(this.open.Count - 1);
+			}
+
+			// The word after case is the one it matches, not a command; any other reserved word starts a command.
+			this.commandStart = reserved is not null and not "case";
+
+			return reserved?.Length ?? 0;
+		}
+
+		/// <summary>
+		/// Notes a character read outside a reserved word.
+		/// </summary>
+		/// <param name="character">The character.</param>
+		/// <param name="quote">The quote open after it, or <see langword="null" />.</param>
+		public void Read(char character, char? quote) =>
+			this.commandStart = quote is null && (character is ' ' or '\t' ? this.commandStart : character is ';' or '&' or '|' or '(' or ')' or '\n');
 	}
 }
 

@@ -310,7 +310,7 @@ public sealed class LineEditorTests : IDisposable
 		_ = this.sut.ReadLine(string.Empty);
 
 		// Assert
-		_ = this.Frame(1).Should().Be($"\r\e[J{PromptHeader.Symbol}\e[31mfi\e[0m\e[30mrst\e[0m\r\e[4C");
+		_ = this.Frame(1).Should().Be($"\r\e[J{PromptHeader.Symbol}\e[32mfi\e[0m\e[30mrst\e[0m\r\e[4C");
 	}
 
 	/// <summary>
@@ -371,7 +371,7 @@ public sealed class LineEditorTests : IDisposable
 
 		// Assert
 		_ = line.Should().Be("fi");
-		_ = this.Frame(2).Should().Be($"\r\e[J{PromptHeader.Symbol}\e[31mfi\e[0m\r\e[4C\r\n");
+		_ = this.Frame(2).Should().Be($"\r\e[J{PromptHeader.Symbol}\e[32mfi\e[0m\r\e[4C\r\n");
 	}
 
 	/// <summary>

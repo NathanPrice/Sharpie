@@ -718,11 +718,7 @@ public sealed class CommandLineProcessTests
 	[InlineData("echo a 2>&", "2>&", 7, "needs a stream number after it")]
 	[InlineData("cat <<", "<<", 4, "needs a delimiter after it")]
 	[InlineData("echo a 256>x", "256>", 7, "stream numbers go up to 255")]
-	[InlineData("echo a > f | | wc", "|", 11, "needs a command on both sides")]
 	[InlineData("echo a | > f", "|", 7, "needs a command on both sides")]
-	[InlineData("echo a |", "|", 7, "needs a command on both sides")]
-	[InlineData("| echo a", "|", 0, "needs a command on both sides")]
-	[InlineData("echo a | | wc", "|", 7, "needs a command on both sides")]
 	public async Task Shell_WithUnusableOperator_PrintsErrorAndStatus2(string line, string operatorText, int start, string label)
 	{
 		// Act
@@ -736,6 +732,33 @@ public sealed class CommandLineProcessTests
 			Start = start,
 			End = start + operatorText.Length,
 			Label = label,
+		}.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that a <c>|</c> with no command on one side is a syntax error with status 2, pointing at the token after
+	/// the gap, as bash's is.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="start">Where the token the error names starts.</param>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Theory]
+	[InlineData("echo a > f | | wc", 13)]
+	[InlineData("| echo a", 0)]
+	[InlineData("echo a | | wc", 9)]
+	public async Task Shell_WithPipeMissingCommand_PrintsSyntaxErrorAndStatus2(string line, int start)
+	{
+		// Act
+		var run = await ShellProcess.RunAsync($"{line}\necho $?\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ $ 2\n$ ");
+		_ = run.Error.Should().Be(new ShellError("sharpie::parser::syntax", "Unexpected `|`")
+		{
+			Source = line,
+			Start = start,
+			End = start + 1,
+			Label = "expected a command",
 		}.Render(color: false));
 	}
 
