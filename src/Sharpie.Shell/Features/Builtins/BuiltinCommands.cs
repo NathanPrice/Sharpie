@@ -1,6 +1,7 @@
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Aliases;
 using Sharpie.Shell.Features.Completion;
+using Sharpie.Shell.Features.Conditions;
 using Sharpie.Shell.Features.DotNetDocs;
 using Sharpie.Shell.Features.History;
 using Sharpie.Shell.Features.Jobs;
@@ -74,7 +75,8 @@ internal static class BuiltinCommands
 	/// <param name="runLine">Runs one command line the way the shell runs a typed one and gives its status.</param>
 	/// <param name="inSubshell">Tells whether a command substitution is running, for <c>exit</c>.</param>
 	/// <returns>
-	/// <c>declare</c> and the builtins built around it.
+	/// <c>declare</c> and the builtins built around it, <c>test</c> and <c>[</c> among them, whose <c>-v</c> reads its
+	/// variables.
 	/// </returns>
 	private static ICommand[] CreateVariableCommands(DeclareCommand declare, ShellSettings settings, Func<string, int> runLine, Func<bool>? inSubshell) =>
 		[
@@ -87,7 +89,9 @@ internal static class BuiltinCommands
 			new ReadCommand(declare, Console.IsInputRedirected ? null : () => Console.ReadKey(intercept: true)),
 			new SourceCommand(".", declare, runLine),
 			new SourceCommand("source", declare, runLine),
-			new EvalCommand(runLine)
+			new EvalCommand(runLine),
+			new TestCommand("test", declare),
+			new TestCommand("[", declare)
 		];
 
 	/// <summary>

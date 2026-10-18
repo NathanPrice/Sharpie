@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Features.Variables;
 
@@ -15,7 +16,12 @@ namespace Sharpie.Shell.Common;
 /// </param>
 /// <param name="Start">Where the word starts in the typed text, quotes included, for an error to point at.</param>
 /// <param name="End">Where the word ends in the typed text, one past its last character.</param>
-internal readonly record struct Word(string Text, bool IsOperator, int Start = 0, int End = 0);
+/// <param name="Pattern">
+/// For a word between <c>[[</c> and <c>]]</c>, the word again as a pattern: with each quoted wildcard behind a
+/// backslash, for <c>==</c>, or for the word after <c>=~</c>, with quoted text escaped by
+/// <see cref="System.Text.RegularExpressions.Regex.Escape" />. <see langword="null" /> everywhere else.
+/// </param>
+internal readonly record struct Word(string Text, bool IsOperator, int Start = 0, int End = 0, string? Pattern = null);
 
 /// <summary>
 /// One redirect taken out of a command's words, such as <c>2&gt;&amp;1</c> or <c>&lt; in.txt</c>.
@@ -167,6 +173,13 @@ internal static class CommandLine
 	/// <see cref="ReadHereDocument" /> and <see cref="ExpandBody" /> describe, keeping its <c>Start</c> and
 	/// <c>End</c>. The word after <c>&lt;&lt;&lt;</c> expands variables but no wildcards, as in bash.
 	/// </para>
+	/// <para>
+	/// From an unquoted first word <c>[[</c> to the unquoted word <c>]]</c>, the words are a condition, read as bash
+	/// reads them: <c>[[</c> and <c>]]</c> come back as operators, wildcards match nothing and go into each word's
+	/// <see cref="Word.Pattern" />, a substitution's output isn't split, an unquoted expansion that comes out empty is
+	/// still a word, and digits before <c>&lt;</c> or <c>&gt;</c> aren't a stream number. In the word after
+	/// <c>=~</c>, <c>(</c>, <c>)</c> and <c>|</c> are text, and so are blanks inside the parentheses.
+	/// </para>
 	/// </remarks>
 	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null, Action<Word>? unset = null, Func<string, string>? substitute = null)
 	{
@@ -233,6 +246,9 @@ internal static class CommandLine
 
 		// Just past the last $NAME or substitution, so a # right after one that added nothing isn't a comment.
 		var afterExpansion = -1;
+
+		// Where the words are between [[ and ]], which read differently.
+		var condition = new ConditionWords();
 
 		for (var index = 0; index < line.Length; index++)
 		{
@@ -320,10 +336,10 @@ internal static class CommandLine
 			{
 				quote = null;
 			}
-			else if (quote is null && OperatorAt(line, index) is { } typed)
+			else if (quote is null && condition.OperatorAt(line, index) is { } typed)
 			{
 				// With no word yet the span is empty, since wordStart is then this very index.
-				var stream = IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
+				var stream = condition.IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
 				// Taken digits are exactly the text typed before the operator, since IsStreamNumber allows nothing else.
 				var start = index - stream.Length;
 
@@ -332,7 +348,7 @@ internal static class CommandLine
 
 				return index + typed.Length - 1;
 			}
-			else if (quote is null && character is ' ' or '\t' or '\n')
+			else if (quote is null && condition.EndsWord(character))
 			{
 				EndWord(index);
 
@@ -372,17 +388,17 @@ internal static class CommandLine
 		// split into words the way a $@ expansion is.
 		void Substitute(int start, int close)
 		{
-			var (fields, quoted) = SubstitutionFields(line, start, close, quote, word.ToString(), words, run);
+			var (fields, quoted) = SubstitutionFields(line, start, close, quote, word.ToString(), words, run, condition.Active);
 
 			AppendParts(fields, quoted, close);
 			afterExpansion = close + 1;
 		}
 
-		// Adds text to the word and to its pattern.
+		// Adds text to the word and to its pattern, which for the word after =~ is a regular expression.
 		void Append(ReadOnlySpan<char> text, bool quoted)
 		{
 			_ = word.Append(text);
-			AppendPattern(pattern, text, quoted);
+			AppendPattern(pattern, text, quoted, condition.Regex);
 		}
 
 		// Adds what a $ expansion gave, each part as a word of its own, the first joined to the text before it and the
@@ -398,24 +414,41 @@ internal static class CommandLine
 				}
 
 				Append(parts[part], quoted);
-				hasWord |= quoted || parts[part].Length > 0;
+				hasWord |= condition.KeepsPart(parts[part], quoted);
 			}
 
 			// "$@" with no parameters is no word at all, not an empty one, unless more text touches it.
 			hasWord &= parts.Length > 0 || word.Length > 0;
 		}
 
-		// Adds the word read so far, if there is one, ending at end, or the file names its wildcards match.
+		// Adds the word read so far, if there is one, ending at end, or the file names its wildcards match. An unquoted
+		// [[ first and the ]] after it are operators, and the words between them keep their pattern instead.
 		void EndWord(int end)
 		{
 			if (hasWord)
 			{
-				var text = TakeWord();
-
-				words.AddRange(ExpandWildcards(text, pattern, variables, words).Select(match => new Word(match, IsOperator: false, wordStart, end)));
+				words.AddRange(FinishedWords(condition, TakeWord(), wordStart, end, pattern, line, variables, words));
 			}
 		}
 	}
+
+	/// <summary>
+	/// Gets the words a finished word adds.
+	/// </summary>
+	/// <param name="condition">Where the words are between <c>[[</c> and <c>]]</c>.</param>
+	/// <param name="text">The word with its quotes removed.</param>
+	/// <param name="start">Where it starts in <paramref name="line" />.</param>
+	/// <param name="end">Where it ends.</param>
+	/// <param name="pattern">The word as a pattern.</param>
+	/// <param name="line">The command line.</param>
+	/// <param name="variables">The shell variables, or <see langword="null" /> to expand nothing.</param>
+	/// <param name="words">The words before it.</param>
+	/// <returns>
+	/// What <see cref="ConditionWords.Read" /> gives for it, else the file names its wildcards match.
+	/// </returns>
+	private static IEnumerable<Word> FinishedWords(ConditionWords condition, string text, int start, int end, StringBuilder pattern, string line, IReadOnlyDictionary<string, string>? variables, List<Word> words) =>
+		condition.Read(text, start, end, pattern, line, words.Count == 0)
+		?? ExpandWildcards(text, pattern, variables, words).Select(match => new Word(match, IsOperator: false, start, end));
 
 	/// <summary>
 	/// Finds where the command substitution that starts at <paramref name="index" /> ends.
@@ -552,13 +585,14 @@ internal static class CommandLine
 	/// <param name="word">The word read so far.</param>
 	/// <param name="words">The words before it, which tell whether it's an assignment, as <see cref="IsAssignmentWord" /> describes.</param>
 	/// <param name="substitute">Runs the command list, or <see langword="null" /> to run nothing.</param>
+	/// <param name="inCondition"><see langword="true" /> between <c>[[</c> and <c>]]</c>, where nothing is split.</param>
 	/// <returns>
 	/// The substitution as typed when <paramref name="substitute" /> is <see langword="null" />. Otherwise its output
-	/// with NUL characters and trailing newlines removed. Outside quotes and assignments it's split on spaces, tabs and
+	/// with NUL characters and trailing newlines removed. Outside quotes, assignments and conditions it's split on spaces, tabs and
 	/// newlines into fields, where an empty field marks blanks with nothing between them. <c>Quoted</c> tells whether
 	/// wildcards in the fields only match themselves.
 	/// </returns>
-	private static (string[] Fields, bool Quoted) SubstitutionFields(string line, int start, int close, char? quote, string word, List<Word> words, Func<string, string>? substitute)
+	private static (string[] Fields, bool Quoted) SubstitutionFields(string line, int start, int close, char? quote, string word, List<Word> words, Func<string, string>? substitute, bool inCondition)
 	{
 		if (substitute is null)
 		{
@@ -567,7 +601,7 @@ internal static class CommandLine
 
 		var output = SubstitutionOutput(line, start, close, inDoubleQuotes: quote == '"', substitute);
 
-		var split = quote is null && !IsAssignmentWord(word, words);
+		var split = quote is null && !inCondition && !IsAssignmentWord(word, words);
 
 		return (split ? output.Split([' ', '\t', '\n']) : [output], quote is not null);
 	}
@@ -662,8 +696,19 @@ internal static class CommandLine
 	/// <param name="quoted">
 	/// <see langword="true" /> when the characters were quoted, escaped, or came from a quoted expansion or <c>~</c>.
 	/// </param>
-	private static void AppendPattern(StringBuilder pattern, ReadOnlySpan<char> text, bool quoted)
+	/// <param name="regex">
+	/// <see langword="true" /> for the word after <c>=~</c>, a regular expression, where quoted text goes through
+	/// <see cref="Regex.Escape" /> instead.
+	/// </param>
+	private static void AppendPattern(StringBuilder pattern, ReadOnlySpan<char> text, bool quoted, bool regex = false)
 	{
+		if (regex)
+		{
+			_ = pattern.Append(quoted ? Regex.Escape(text.ToString()) : text);
+
+			return;
+		}
+
 		foreach (var character in text)
 		{
 			_ = quoted && character is '*' or '?' or '[' or ']' or '\\' ? pattern.Append('\\').Append(character) : pattern.Append(character);
@@ -1294,5 +1339,117 @@ internal static class CommandLine
 			&& !Array.Exists(words, word => word.IsOperator)
 			? [.. words.Select(word => word.Text)]
 			: null;
+	}
+}
+
+/// <summary>
+/// Tracks where <see cref="CommandLine.Split" /> is between <c>[[</c> and <c>]]</c>, where words read as bash reads a
+/// condition.
+/// </summary>
+internal sealed class ConditionWords
+{
+	/// <summary>
+	/// How deep the word after <c>=~</c> is in unquoted parentheses, where blanks are part of it.
+	/// </summary>
+	private int depth;
+
+	/// <summary>
+	/// Gets a value indicating whether the words being read are between <c>[[</c> and <c>]]</c>.
+	/// </summary>
+	/// <value>
+	/// <see langword="true" /> inside a condition.
+	/// </value>
+	public bool Active { get; private set; }
+
+	/// <summary>
+	/// Gets a value indicating whether the word being read follows <c>=~</c>, so it's a regular expression.
+	/// </summary>
+	/// <value>
+	/// <see langword="true" /> for that word.
+	/// </value>
+	public bool Regex { get; private set; }
+
+	/// <summary>
+	/// Reads the operator, if any, that starts at the unquoted <paramref name="index" />, and counts the parentheses
+	/// of a regular expression.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="index">The position to look at.</param>
+	/// <returns>
+	/// What <see cref="CommandLine.OperatorAt" /> gives, or <see langword="null" /> for <c>(</c>, <c>)</c> and
+	/// <c>|</c> in the word after <c>=~</c>, which are part of the expression.
+	/// </returns>
+	public string? OperatorAt(string line, int index)
+	{
+		if (!this.Regex || line[index] is not ('(' or ')' or '|'))
+		{
+			return CommandLine.OperatorAt(line, index);
+		}
+
+		this.depth += line[index] switch { '(' => 1, ')' => -1, _ => 0 };
+
+		return null;
+	}
+
+	/// <summary>
+	/// Checks whether what an expansion gave makes a word, even when it's empty.
+	/// </summary>
+	/// <param name="part">One part of the expansion.</param>
+	/// <param name="quoted"><see langword="true" /> when the expansion was quoted.</param>
+	/// <returns>
+	/// <see langword="true" /> when the part isn't empty, was quoted, or is in a condition, where bash keeps an empty
+	/// unquoted expansion so <c>[[ -n $x ]]</c> fails for an empty <c>x</c>.
+	/// </returns>
+	public bool KeepsPart(string part, bool quoted) => quoted || this.Active || part.Length > 0;
+
+	/// <summary>
+	/// Checks whether an unquoted character ends the word being read.
+	/// </summary>
+	/// <param name="character">The character.</param>
+	/// <returns>
+	/// <see langword="true" /> for a space, tab or newline, except a space or tab inside the parentheses of a regular
+	/// expression.
+	/// </returns>
+	public bool EndsWord(char character) => character == '\n' || (character is ' ' or '\t' && this.depth <= 0);
+
+	/// <summary>
+	/// Checks whether digits before an operator name the stream it redirects, which they never do in a condition.
+	/// </summary>
+	/// <param name="typed">The word's characters as typed.</param>
+	/// <param name="typedOperator">The operator right after it.</param>
+	/// <returns>
+	/// What <see cref="CommandLine.IsStreamNumber" /> gives, or <see langword="false" /> inside a condition.
+	/// </returns>
+	public bool IsStreamNumber(ReadOnlySpan<char> typed, string typedOperator) => !this.Active && CommandLine.IsStreamNumber(typed, typedOperator);
+
+	/// <summary>
+	/// Reads a finished word, which starts or ends a condition or belongs to one.
+	/// </summary>
+	/// <param name="text">The word with its quotes removed.</param>
+	/// <param name="start">Where it starts in <paramref name="line" />.</param>
+	/// <param name="end">Where it ends.</param>
+	/// <param name="pattern">The word as a pattern.</param>
+	/// <param name="line">The command line, for the word's text as typed.</param>
+	/// <param name="first"><see langword="true" /> when it's the line's first word.</param>
+	/// <returns>
+	/// An unquoted <c>[[</c> first or the <c>]]</c> after it as an operator, any word between them with its
+	/// <see cref="Word.Pattern" />, or <see langword="null" /> outside a condition, where the caller expands the word.
+	/// </returns>
+	public Word[]? Read(string text, int start, int end, StringBuilder pattern, string line, bool first)
+	{
+		var typed = line.AsSpan(start, end - start);
+
+		if ((first && typed is "[[") || (this.Active && typed is "]]"))
+		{
+			this.Active = !this.Active;
+			this.Regex = false;
+
+			return [new Word(text, IsOperator: true, start, end)];
+		}
+
+		this.Regex = this.Active && typed is "=~";
+		this.depth = 0;
+
+		return this.Active ? [new Word(text, IsOperator: false, start, end, pattern.ToString())] : null;
 	}
 }

@@ -55,6 +55,17 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("echo ($HOME) (x)", new[] { ";", "echo ($HOME) (x)" })]
 	[InlineData("echo \"a #\" b", new[] { ";", "echo \"a #\" b" })]
 	[InlineData("echo 'say \"hi\"'; b", new[] { ";", "echo 'say \"hi\"'", ";", "b" })]
+	[InlineData("[[ a && b ]] && c", new[] { ";", "[[ a && b ]]", "&&", "c" })]
+	[InlineData("[[ a || b ]]||c", new[] { ";", "[[ a || b ]]", "||", "c" })]
+	[InlineData("x; [[ a && b ]]", new[] { ";", "x", ";", "[[ a && b ]]" })]
+	[InlineData("a && [[ b || c ]]", new[] { ";", "a", "&&", "[[ b || c ]]" })]
+	[InlineData("[[ a & b ]]", new[] { ";", "[[ a & b ]]" })]
+	[InlineData("[[ a && b; c && d", new[] { ";", "[[ a && b", ";", "c", "&&", "d" })]
+	[InlineData("echo [[ a && b ]]", new[] { ";", "echo [[ a", "&&", "b ]]" })]
+	[InlineData("'[[' a && b", new[] { ";", "'[[' a", "&&", "b" })]
+	[InlineData("[[a && b", new[] { ";", "[[a", "&&", "b" })]
+	[InlineData("[[ a ]]x && b ]]", new[] { ";", "[[ a ]]x && b ]]" })]
+	[InlineData("[[ a]] && b ]]", new[] { ";", "[[ a]] && b ]]" })]
 	public void Split_WithLine_CutsAtUnquotedOperators(string line, string[] expected)
 	{
 		// Act

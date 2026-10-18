@@ -1337,4 +1337,38 @@ public sealed class CommandLineTests
 		// Assert
 		_ = words.Select(word => word.Text).Should().Equal("echo", "a$(b *; c)d", "`e f`");
 	}
+
+	/// <summary>
+	/// Checks that the words from an unquoted first <c>[[</c> to its <c>]]</c> read as a condition: the brackets and
+	/// <c>&lt;</c> are operators, wildcards stay as typed with a pattern that escapes the quoted ones, a variable or
+	/// substitution isn't split, an empty one is still a word, and the word after <c>=~</c> keeps <c>(</c>, <c>|</c>
+	/// and the blanks in its parentheses, with its quoted text escaped as a regular expression. Each word is shown as
+	/// <c>op:TEXT</c> for an operator or <c>TEXT|PATTERN</c> for a word.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="expected">The words.</param>
+	[Theory]
+	[InlineData("[[ * == a* ]]", new[] { "op:[[", "*|*", "==|==", "a*|a*", "op:]]" })]
+	[InlineData("[[ $x == \"a*\"b ]]", new[] { "op:[[", "a b|a b", "==|==", @"a*b|a\*b", "op:]]" })]
+	[InlineData("[[ $star ]]", new[] { "op:[[", "a*|a*", "op:]]" })]
+	[InlineData("[[ a < b ]]", new[] { "op:[[", "a|a", "op:<", "b|b", "op:]]" })]
+	[InlineData("[[ 2 >1 ]]", new[] { "op:[[", "2|2", "op:>", "1|1", "op:]]" })]
+	[InlineData("[[ -n $empty ]]", new[] { "op:[[", "-n|-n", "|", "op:]]" })]
+	[InlineData("[[ a && $(out) ]]", new[] { "op:[[", "a|a", "op:&&", "x  y|x  y", "op:]]" })]
+	[InlineData("[[ a =~ ^(a| b)$ ]]", new[] { "op:[[", "a|a", "=~|=~", "^(a| b)$|^(a| b)$", "op:]]" })]
+	[InlineData("[[ a =~ \"a.b\"x|y ]]", new[] { "op:[[", "a|a", "=~|=~", @"a.bx|y|a\.bx|y", "op:]]" })]
+	[InlineData("[[ a =~ b ]] && (c)", new[] { "op:[[", "a|a", "=~|=~", "b|b", "op:]]", "op:&&", "op:(", "c|", "op:)" })]
+	[InlineData("'[[' a ]]", new[] { "[[|", "a|", "]]|" })]
+	[InlineData("echo [[ a ]]", new[] { "echo|", "[[|", "a|", "]]|" })]
+	public void Split_WithCondition_ReadsWordsAsBashDoes(string line, string[] expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["x"] = "a b", ["star"] = "a*", ["empty"] = string.Empty };
+
+		// Act
+		var words = CommandLine.Split(line, variables, substitute: _ => "x  y\n");
+
+		// Assert
+		_ = words.Select(word => word.IsOperator ? $"op:{word.Text}" : $"{word.Text}|{word.Pattern}").Should().Equal(expected);
+	}
 }

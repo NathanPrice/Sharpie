@@ -41,6 +41,8 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("\"prog\" hi", TokenKind.Command)]
 	[InlineData("p\\rog", TokenKind.Command)]
 	[InlineData("pr#og", TokenKind.UnknownCommand)]
+	[InlineData("[[ hi ]]", TokenKind.Command)]
+	[InlineData("[[[ hi ]]", TokenKind.UnknownCommand)]
 	public void Highlight_CommandWord_MarksWhetherItExists(string line, TokenKind expected)
 	{
 		// Act

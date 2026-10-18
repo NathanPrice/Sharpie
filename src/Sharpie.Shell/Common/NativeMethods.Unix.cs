@@ -452,6 +452,103 @@ internal static unsafe partial class NativeMethods
 	private static partial int FileStatus(SafeHandle file, byte* status);
 
 	/// <summary>
+	/// Reads what the system knows about the file at <paramref name="path" />, as the C <c>stat</c> and <c>lstat</c>
+	/// functions do.
+	/// </summary>
+	/// <param name="path">The path.</param>
+	/// <param name="followLinks">
+	/// <see langword="true" /> to describe what a symbolic link points to, like <c>stat</c>; otherwise,
+	/// <see langword="false" /> to describe the link itself, like <c>lstat</c>.
+	/// </param>
+	/// <returns>
+	/// The file's details, or <see langword="null" /> when it doesn't exist or can't be reached.
+	/// </returns>
+	/// <remarks>
+	/// Read from the same <c>FileStatus</c> layout as <see cref="IsRegularFile" />: mode at 4, owner at 8, group at
+	/// 12, size at 16, device at 88 and inode at 104.
+	/// </remarks>
+	internal static UnixFileStatus? Status(string path, bool followLinks)
+	{
+		var status = stackalloc byte[512];
+
+		return (followLinks ? PathStatus(path, status) : LinkStatus(path, status)) != 0 ? null
+			: new UnixFileStatus(*(int*)(status + 4), *(uint*)(status + 8), *(uint*)(status + 12), *(long*)(status + 16), *(long*)(status + 88), *(long*)(status + 104));
+	}
+
+	/// <summary>
+	/// Reads what the system knows about the file a path names, following symbolic links.
+	/// </summary>
+	/// <param name="path">The path.</param>
+	/// <param name="status">Receives .NET's <c>FileStatus</c>.</param>
+	/// <returns>
+	/// 0, or -1 with the reason in the last error.
+	/// </returns>
+	[LibraryImport("libSystem.Native", EntryPoint = "SystemNative_Stat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial int PathStatus(string path, byte* status);
+
+	/// <summary>
+	/// Reads what the system knows about the file a path names, describing a symbolic link itself.
+	/// </summary>
+	/// <param name="path">The path.</param>
+	/// <param name="status">Receives .NET's <c>FileStatus</c>.</param>
+	/// <returns>
+	/// 0, or -1 with the reason in the last error.
+	/// </returns>
+	[LibraryImport("libSystem.Native", EntryPoint = "SystemNative_LStat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial int LinkStatus(string path, byte* status);
+
+	/// <summary>
+	/// Checks whether this process may read, write or run the file at <paramref name="path" />, as the user and group
+	/// it acts as, the way bash's <c>eaccess</c> does.
+	/// </summary>
+	/// <param name="path">The path.</param>
+	/// <param name="mode">4 to read, 2 to write, 1 to run or search, as <c>R_OK</c>, <c>W_OK</c> and <c>X_OK</c>.</param>
+	/// <returns>
+	/// 0 when it may, or -1.
+	/// </returns>
+	/// <remarks>
+	/// <c>AT_FDCWD</c> is -100 on Linux and -2 on macOS, and <c>AT_EACCESS</c> is 0x200 on Linux and 0x10 on macOS.
+	/// </remarks>
+	internal static int Access(string path, int mode) =>
+		AccessAt(OperatingSystem.IsMacOS() ? -2 : -100, path, mode, OperatingSystem.IsMacOS() ? 0x10 : 0x200);
+
+	/// <summary>
+	/// Checks access to a file the way <c>faccessat</c> does.
+	/// </summary>
+	/// <param name="folder">The folder a relative path starts from, or <c>AT_FDCWD</c> for the current one.</param>
+	/// <param name="path">The path.</param>
+	/// <param name="mode">The access to check.</param>
+	/// <param name="flags"><c>AT_EACCESS</c> to check as the effective user and group.</param>
+	/// <returns>
+	/// 0 when the access is allowed, or -1.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "faccessat", StringMarshalling = StringMarshalling.Utf8)]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial int AccessAt(int folder, string path, int mode, int flags);
+
+	/// <summary>
+	/// Gets the user id this process acts as.
+	/// </summary>
+	/// <returns>
+	/// The effective user id.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "geteuid")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial uint EffectiveUser();
+
+	/// <summary>
+	/// Gets the group id this process acts as.
+	/// </summary>
+	/// <returns>
+	/// The effective group id.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "getegid")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial uint EffectiveGroup();
+
+	/// <summary>
 	/// Waits for a child process to change state.
 	/// </summary>
 	/// <param name="pid">A process id, or minus a process group id to wait for any process in that group.</param>
@@ -721,3 +818,14 @@ internal static unsafe partial class NativeMethods
 	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
 	private static partial byte*** GetArgv();
 }
+
+/// <summary>
+/// The parts of a file's <c>stat</c> details that <c>test</c> reads.
+/// </summary>
+/// <param name="Mode">The file type and permission bits, as <c>st_mode</c>.</param>
+/// <param name="User">The owner's user id.</param>
+/// <param name="Group">The owner's group id.</param>
+/// <param name="Size">The size in bytes.</param>
+/// <param name="Device">The id of the device that holds the file.</param>
+/// <param name="Inode">The file's number on that device, which every hard link to it shares.</param>
+internal readonly record struct UnixFileStatus(int Mode, uint User, uint Group, long Size, long Device, long Inode);

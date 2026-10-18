@@ -9,6 +9,7 @@ using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Aliases;
 using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Features.Completion;
+using Sharpie.Shell.Features.Conditions;
 using Sharpie.Shell.Features.DotNetDocs;
 using Sharpie.Shell.Features.History;
 using Sharpie.Shell.Features.Jobs;
@@ -762,10 +763,9 @@ internal static class Program
 			words = words[..^1];
 		}
 
-		// As in bash, a command that expands to nothing, like $(true), gives its last substitution's status.
-		if (words.Length == 0)
+		if (WholeCommandStatus(words, background, substituted, line, declare, settings) is { } whole)
 		{
-			return substituted;
+			return whole;
 		}
 
 		var parts = CommandLine.SplitPipeline(words).Select(CommandLine.SplitRedirect).ToArray();
@@ -897,6 +897,42 @@ internal static class Program
 
 			return ExternalProgram.NotFound;
 		}
+	}
+
+	/// <summary>
+	/// Runs a command that isn't cut into pipeline stages and redirects: one that expands to nothing, or a
+	/// <c>[[ ... ]]</c> condition.
+	/// </summary>
+	/// <param name="words">The command's words, without a trailing <c>&amp;</c>.</param>
+	/// <param name="background"><see langword="true" /> when the command ended in <c>&amp;</c>.</param>
+	/// <param name="substituted">The last command substitution's status, or 0.</param>
+	/// <param name="line">The command as typed.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
+	/// <param name="settings">The <c>set</c> options, for <c>-x</c>.</param>
+	/// <returns>
+	/// <paramref name="substituted" /> for no words, as in bash, so <c>$(true)</c> gives its status, the condition's
+	/// status for <c>[[</c>, or <see langword="null" /> for any other command. A <c>[[</c> in the background gives
+	/// <see langword="null" /> too, and its operator makes the copy of the shell run it.
+	/// </returns>
+	private static int? WholeCommandStatus(Word[] words, bool background, int substituted, string line, DeclareCommand declare, ShellSettings settings)
+	{
+		if (words.Length == 0)
+		{
+			return substituted;
+		}
+
+		if (background || words[0] is not { IsOperator: true, Text: ConditionalCommand.Open })
+		{
+			return null;
+		}
+
+		// bash shows the words of a condition unquoted.
+		if (settings.XTrace)
+		{
+			Console.Error.WriteLine($"+ {string.Join(' ', words.Select(word => word.Text))}");
+		}
+
+		return ConditionalCommand.Run(words, line, declare.Variables);
 	}
 
 	/// <summary>

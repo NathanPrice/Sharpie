@@ -165,6 +165,51 @@ internal static partial class NativeMethods
 	private static partial uint GetFileType(SafeHandle file);
 
 	/// <summary>
+	/// Gets what tells the file at <paramref name="path" /> apart from every other file, so two paths, hard links
+	/// included, can be checked for naming the same one.
+	/// </summary>
+	/// <param name="path">The path.</param>
+	/// <returns>
+	/// The volume's serial number and the file's index on it, or <see langword="null" /> when the file can't be opened.
+	/// </returns>
+	/// <remarks>
+	/// shortcut: a folder can't be opened this way, so it gives <see langword="null" />. Open it through
+	/// <c>CreateFileW</c> with <c>FILE_FLAG_BACKUP_SEMANTICS</c> if <c>-ef</c> on folders has to see junctions.
+	/// </remarks>
+	[SupportedOSPlatform("windows")]
+	internal static unsafe (uint Volume, ulong Index)? FileIndex(string path)
+	{
+		try
+		{
+			using var file = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+			// BY_HANDLE_FILE_INFORMATION is 52 bytes: the serial number at 28, the index's high half at 44 and low at 48.
+			var information = stackalloc byte[52];
+
+			return GetFileInformationByHandle(file, information)
+				? (*(uint*)(information + 28), ((ulong)*(uint*)(information + 44) << 32) | *(uint*)(information + 48))
+				: null;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+		{
+			return null;
+		}
+	}
+
+	/// <summary>
+	/// Reads a file's details, its volume and index among them.
+	/// </summary>
+	/// <param name="file">The open file.</param>
+	/// <param name="information">Receives a <c>BY_HANDLE_FILE_INFORMATION</c>.</param>
+	/// <returns>
+	/// <see langword="true" /> on success.
+	/// </returns>
+	[LibraryImport("kernel32")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static unsafe partial bool GetFileInformationByHandle(SafeHandle file, byte* information);
+
+	/// <summary>
 	/// Gets one of the process's standard handles.
 	/// </summary>
 	/// <param name="id">Which handle: -10 for input, -11 for output, -12 for error.</param>

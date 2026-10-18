@@ -55,7 +55,8 @@ internal static class CommandList
 	/// next run as <c>a &amp;&amp; b</c>, as POSIX allows. A command substitution, <c>$(...)</c> or backquotes, stays
 	/// in its command whole, so a <c>;</c>, quote or <c>#</c> inside it neither cuts nor ends the command around it.
 	/// The refusals are reported rather than passed on as text, so a command meant to get the output of another
-	/// never runs with the wrong arguments.
+	/// never runs with the wrong arguments. Between a <c>[[</c> that starts a command and its <c>]]</c>,
+	/// <c>&amp;&amp;</c> and <c>||</c> join tests, so they stay in the command, as in bash.
 	/// <para>
 	/// At a newline, the lines after it up to each delimiter line are the bodies of the here-documents the commands
 	/// since the last newline start. They're added, newlines and delimiter lines included, to the end of the command
@@ -142,6 +143,9 @@ internal static class CommandList
 		// A comment starts only at the start of a word, as in CommandLine.Split, so the # in a#b is kept.
 		var wordStart = true;
 
+		// True from a [[ that starts a command to its ]], where && and || join tests instead of commands.
+		var inCondition = false;
+
 		for (var index = 0; index < line.Length; index++)
 		{
 			var character = line[index];
@@ -178,7 +182,9 @@ internal static class CommandList
 				continue;
 			}
 
-			if (quote is null && OperatorAt(line, index) is { } typed)
+			inCondition = IsInCondition(line, index, inCondition, quote is null && wordStart, command);
+
+			if (quote is null && OperatorAt(line, index, inCondition) is { } typed)
 			{
 				if (typed == Background)
 				{
@@ -260,8 +266,29 @@ internal static class CommandList
 
 			_ = command.Clear();
 			wordStart = true;
+			inCondition = false;
 		}
 	}
+
+	/// <summary>
+	/// Works out whether the character at <paramref name="index" /> is between a <c>[[</c> and its <c>]]</c>.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="index">The position of the character.</param>
+	/// <param name="inCondition">Whether the character before it was.</param>
+	/// <param name="wordStart"><see langword="true" /> when a word starts here, outside quotes.</param>
+	/// <param name="command">The command read so far, which a <c>[[</c> has to start.</param>
+	/// <returns>
+	/// The opposite of <paramref name="inCondition" /> when the word here is the bracket that starts or ends the
+	/// condition, followed by a blank, an operator character or the end of the line; otherwise,
+	/// <paramref name="inCondition" />.
+	/// </returns>
+	private static bool IsInCondition(string line, int index, bool inCondition, bool wordStart, StringBuilder command) =>
+		wordStart && line.AsSpan(index).StartsWith(inCondition ? "]]" : "[[", StringComparison.Ordinal)
+		&& (index + 2 == line.Length || line[index + 2] is ' ' or '\t' or '\n' or '|' or '&' or ';' or '<' or '>' or '(' or ')')
+		&& (inCondition || string.IsNullOrWhiteSpace(command.ToString()))
+			? !inCondition
+			: inCondition;
 
 	/// <summary>
 	/// Reads the bodies of the here-documents that the commands since the last newline start, and adds each to the end
@@ -303,14 +330,18 @@ internal static class CommandList
 	/// </summary>
 	/// <param name="line">The line.</param>
 	/// <param name="index">The position to look at.</param>
+	/// <param name="inCondition">
+	/// <see langword="true" /> between <c>[[</c> and <c>]]</c>, where only <c>;</c> and a newline end the command.
+	/// </param>
 	/// <returns>
 	/// <see cref="Sequence" /> for <c>;</c> or a newline, <see cref="Background" />, <see cref="And" /> or
 	/// <see cref="Or" />, or <see langword="null" /> when none starts there. A single <c>|</c> isn't one, and neither is an <c>&amp;</c> in
 	/// <c>&amp;&gt;</c>, <c>&gt;&amp;</c>, <c>&lt;&amp;</c> or <c>|&amp;</c>, which <see cref="CommandLine.Split" /> reads.
 	/// </returns>
-	private static string? OperatorAt(string line, int index) => line[index] switch
+	private static string? OperatorAt(string line, int index, bool inCondition) => line[index] switch
 	{
 		';' or '\n' => Sequence,
+		_ when inCondition => null,
 		'&' or '|' when index + 1 < line.Length && line[index + 1] == line[index] => line[index] == '&' ? And : Or,
 		'&' when (index + 1 == line.Length || line[index + 1] != '>') && (index == 0 || line[index - 1] is not ('>' or '<' or '|')) => Background,
 		_ => null,

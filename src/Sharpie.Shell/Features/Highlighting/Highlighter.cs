@@ -113,7 +113,7 @@ internal static class Highlighter
 						break;
 					case null:
 						command = value;
-						kind = IsCommand(value, builtins, knownCommands) ? TokenKind.Command : TokenKind.UnknownCommand;
+						kind = value == "[[" || IsCommand(value, builtins, knownCommands) ? TokenKind.Command : TokenKind.UnknownCommand;
 						break;
 					case "cd" when argumentCount++ == 0:
 						kind = Directory.Exists(ExpandHome(value)) ? null : TokenKind.MissingPath;
