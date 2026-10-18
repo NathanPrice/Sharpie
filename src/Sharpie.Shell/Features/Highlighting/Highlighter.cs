@@ -120,7 +120,7 @@ internal static class Highlighter
 						break;
 
 					// A reserved word is typed unquoted, and the word after it starts a command again.
-					case null when CommandParser.ReservedWords.Contains(line[start..end]):
+					case null when IsKeyword(line[start..end]):
 						kind = TokenKind.Command;
 						break;
 					case null:
@@ -155,6 +155,29 @@ internal static class Highlighter
 	}
 
 	/// <summary>
+	/// Checks whether a word as typed is a reserved word or a <c>((...))</c>, which is a command of its own, colored as
+	/// <c>[[</c> is.
+	/// </summary>
+	/// <param name="typed">The word as typed.</param>
+	/// <returns>
+	/// <see langword="true" /> when it is.
+	/// </returns>
+	private static bool IsKeyword(string typed) => CommandParser.ReservedWords.Contains(typed) || typed.StartsWith("((", StringComparison.Ordinal);
+
+	/// <summary>
+	/// Finds where the arithmetic at <paramref name="index" /> ends.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="index">The position.</param>
+	/// <param name="quote">The quote that's open, or <see langword="null" />.</param>
+	/// <param name="inWord"><see langword="true" /> when a word has started.</param>
+	/// <returns>
+	/// The position of the last <c>)</c> of a <c>$((...))</c>, or of a <c>((...))</c> that starts a word, or -1.
+	/// </returns>
+	private static int ArithmeticEnd(string line, int index, char? quote, bool inWord) =>
+		quote == '\'' || (inWord && line[index] != '$') ? -1 : CommandLine.ArithmeticEnd(line, index);
+
+	/// <summary>
 	/// Finds where each word of <paramref name="line" /> starts and ends, and where its quoted parts are.
 	/// </summary>
 	/// <param name="line">The command line typed so far.</param>
@@ -184,6 +207,15 @@ internal static class Highlighter
 			if (escaped)
 			{
 				escaped = false;
+
+				continue;
+			}
+
+			// A ((...)) or $((...)) is part of its word, so the expression isn't read as commands.
+			if (ArithmeticEnd(line, index, quote, start >= 0) is var close and >= 0)
+			{
+				start = start < 0 ? index : start;
+				index = close;
 
 				continue;
 			}

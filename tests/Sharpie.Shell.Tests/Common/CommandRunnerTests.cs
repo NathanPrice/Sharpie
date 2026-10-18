@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Arithmetic;
 
 namespace Sharpie.Shell.Tests.Common;
 
@@ -247,6 +248,9 @@ public sealed class CommandRunnerTests
 	[InlineData("a | { f; }", new[] { 1 })]
 	[InlineData("{ f; } || t", new int[0])]
 	[InlineData("t && fb && t", new int[0])]
+	[InlineData("((0))", new[] { 1 })]
+	[InlineData("((0)) || t", new int[0])]
+	[InlineData("for ((;0;)); do t; done", new int[0])]
 	public void Run_WithFailures_ReportsWhereSetEActs(string line, int[] expected)
 	{
 		// Arrange
@@ -356,6 +360,49 @@ public sealed class CommandRunnerTests
 		_ = this.ran.Should().BeEmpty();
 		_ = defined.Should().ContainSingle().Which.Name.Should().Be("greet");
 		_ = defined[0].Text.Should().Be("greet() { echo hi; }");
+	}
+
+	/// <summary>
+	/// Checks that <c>for ((init; test; step))</c> works the init out once, then the test before each round and the
+	/// step after it, <c>continue</c> included, and stops with 1 at an expression that can't be worked out.
+	/// </summary>
+	/// <param name="line">The line, where <c>bad</c> can't be worked out.</param>
+	/// <param name="expectedWorked">The expressions worked out, in order.</param>
+	/// <param name="expectedBodies">How many times the body ran.</param>
+	/// <param name="expectedStatus">The status.</param>
+	[Theory]
+	[InlineData("for ((i=0; i<2; i++)); do a; done", new[] { "i=0", " i<2", " i++", " i<2", " i++", " i<2" }, 2, 0)]
+	[InlineData("for ((i=0; i<2; i++)); do continue; done", new[] { "i=0", " i<2", " i++", " i<2", " i++", " i<2" }, 0, 0)]
+	[InlineData("for ((;;)); do break; done", new[] { "", "1" }, 0, 0)]
+	[InlineData("for ((;1;bad)); do a; done", new[] { "", "1", "bad" }, 1, 1)]
+	[InlineData("for ((;bad;)); do a; done", new[] { "", "bad" }, 0, 1)]
+	[InlineData("for ((bad;;)); do a; done", new[] { "bad" }, 0, 1)]
+	[InlineData("for ((;1;)); do fa; break; done", new[] { "", "1" }, 1, 0)]
+	public void Run_WithArithmeticFor_WorksOutEachPart(string line, string[] expectedWorked, int expectedBodies, int expectedStatus)
+	{
+		// Arrange
+		var worked = new List<string>();
+		var variables = new Dictionary<string, string>();
+		var hooks = new ShellHooks((command, _) =>
+		{
+			this.ran.Add((command, false));
+
+			return command is "break" or "continue" ? throw new LoopControl(1, next: command == "continue") : command.StartsWith('f') ? 1 : 0;
+		})
+		{
+			Arithmetic = expression =>
+			{
+				worked.Add(expression);
+
+				return expression == "bad" ? null : ArithmeticExpression.Evaluate(expression, variables);
+			},
+		};
+
+		// Act
+		var status = CommandList.Run(line, 0, hooks);
+
+		// Assert
+		_ = (worked, this.ran.Count(command => command.Command is "a" or "fa"), status).Should().BeEquivalentTo((expectedWorked, expectedBodies, expectedStatus), options => options.WithStrictOrdering());
 	}
 
 	/// <summary>

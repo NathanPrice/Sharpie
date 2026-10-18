@@ -18,8 +18,6 @@ public sealed class ConditionalCommandTests : IDisposable
 	private const string UnexpectedHelp = "join the tests with && or ||, or quote a word that has spaces";
 	private const string PatternLabel = "a POSIX extended regular expression";
 	private const string PatternHelp = "check its brackets, classes and parentheses, or quote it to match it as text";
-	private const string NumberLabel = "compares whole numbers";
-	private const string NumberHelp = "-eq, -ne, -lt, -le, -gt and -ge compare whole numbers; use = or != to compare text";
 
 	private readonly ShellEnvironment environment = new();
 	private readonly Dictionary<string, string> variables = new()
@@ -86,6 +84,10 @@ public sealed class ConditionalCommandTests : IDisposable
 	[InlineData("[[ ab =~ ^(a b)$ ]]", 1)]
 	[InlineData("[[ 5 -eq $five ]]", 0)]
 	[InlineData("[[ 5 -eq five ]]", 0)]
+	[InlineData("[[ 1+1 -eq 2 ]]", 0)]
+	[InlineData("[[ 2*3 -gt five ]]", 0)]
+	[InlineData("[[ 0 -eq a-b ]]", 0)]
+	[InlineData("[[ five -eq 0x5 ]]", 0)]
 	[InlineData("[[ 0 -eq $empty ]]", 0)]
 	[InlineData("[[ 0 -eq unset_name ]]", 0)]
 	[InlineData("[[ 2 -lt 10 ]]", 0)]
@@ -143,8 +145,6 @@ public sealed class ConditionalCommandTests : IDisposable
 	[InlineData("[[ a =~ [[:nope:]] ]]", "sharpie::condition::invalid_pattern", "[[:nope:]]", "`[[:nope:]]` isn't a valid regular expression", PatternLabel, PatternHelp)]
 	[InlineData("[[ a =~ a) ]]", "sharpie::condition::invalid_pattern", "a)", "`a)` isn't a valid regular expression", PatternLabel, PatternHelp)]
 	[InlineData("[[ a =~ [a ]]", "sharpie::condition::invalid_pattern", "[a", "`[a` isn't a valid regular expression", PatternLabel, PatternHelp)]
-	[InlineData("[[ 1 -eq 1.5 ]]", "sharpie::test::not_a_number", "1 -eq 1.5", "`1.5` isn't a whole number", NumberLabel, NumberHelp)]
-	[InlineData("[[ 0 -eq a-b ]]", "sharpie::test::not_a_number", "0 -eq a-b", "`a-b` isn't a whole number", NumberLabel, NumberHelp)]
 	public void Run_WithBadCondition_ReportsAndGivesTwo(string line, string code, string underlined, string summary, string label, string help)
 	{
 		// Act
@@ -163,6 +163,25 @@ public sealed class ConditionalCommandTests : IDisposable
 
 		_ = lines[source][(column + marks.Length - marks.TrimStart().Length)..].Should().StartWith(underlined);
 		_ = marks.Trim().Length.Should().Be(underlined.Length);
+	}
+
+	/// <summary>
+	/// Checks that a number operator's word that isn't an expression gives status 2 and the arithmetic report.
+	/// </summary>
+	/// <param name="line">The command as typed.</param>
+	/// <param name="code">The report's code.</param>
+	/// <param name="summary">The report's summary.</param>
+	[Theory]
+	[InlineData("[[ 1 -eq 1.5 ]]", "sharpie::arithmetic::syntax", "Unexpected `.`")]
+	[InlineData("[[ 1 -eq 1/0 ]]", "sharpie::arithmetic::division_by_zero", "Division by 0")]
+	public void Run_WithBadNumberExpression_ReportsAndGivesTwo(string line, string code, string summary)
+	{
+		// Act
+		var status = this.Run(line);
+
+		// Assert
+		_ = status.Should().Be(TestCommand.ErrorStatus);
+		_ = this.environment.Error.Should().StartWith($"Error: {code}\n\n  × {summary}\n");
 	}
 
 	/// <summary>

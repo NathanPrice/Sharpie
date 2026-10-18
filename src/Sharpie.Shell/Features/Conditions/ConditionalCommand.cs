@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Arithmetic;
 
 namespace Sharpie.Shell.Features.Conditions;
 
@@ -15,8 +16,7 @@ namespace Sharpie.Shell.Features.Conditions;
 /// empty. The right side of <c>==</c>, <c>=</c> and <c>!=</c> is a pattern, so <c>[[ $x == a* ]]</c> checks that
 /// <c>x</c> starts with <c>a</c> and a quoted <c>"a*"</c> only matches itself. <c>=~</c> matches a POSIX extended
 /// regular expression anywhere in the word. <c>&lt;</c> and <c>&gt;</c> sort in the locale's order. The number
-/// operators read an empty word as 0 and a variable name as its value, as bash's arithmetic does, but nothing more of
-/// it, so <c>1+1</c> isn't 2. A test that <c>&amp;&amp;</c> or <c>||</c> skips doesn't run, so it can't fail, though
+/// operators read each word as an arithmetic expression, as bash does, so <c>1+1</c> is 2. A test that <c>&amp;&amp;</c> or <c>||</c> skips doesn't run, so it can't fail, though
 /// the substitutions in it have already run. <c>BASH_REMATCH</c> isn't set, since the shell has no arrays, and
 /// <c>-o OPTION</c>, which checks a <c>set</c> option, isn't there. No redirect may follow <c>]]</c>.
 /// </remarks>
@@ -357,20 +357,23 @@ internal static class ConditionalCommand
 		}
 
 		/// <summary>
-		/// Reads a word a number operator compares, as much of bash's arithmetic as the shell has.
+		/// Reads a word a number operator compares, as an arithmetic expression, as bash does.
 		/// </summary>
 		/// <param name="text">The word.</param>
 		/// <returns>
-		/// 0 for an empty word, a variable's value for its name, with 0 for an empty or unset one, or the word itself.
+		/// The number the expression gives, in decimal; 0 for an empty word.
 		/// </returns>
+		/// <exception cref="Condition.Failure">The expression can't be worked out.</exception>
 		private string Number(string text)
 		{
-			var name = text.Trim();
-			var value = name is [var first, ..] && (char.IsAsciiLetter(first) || first == '_') && name.All(character => char.IsAsciiLetterOrDigit(character) || character == '_')
-				? CommandLine.Lookup(variables, name)
-				: text;
-
-			return value.Trim().Length == 0 ? "0" : value;
+			try
+			{
+				return ArithmeticExpression.Evaluate(text, variables).ToString(CultureInfo.InvariantCulture);
+			}
+			catch (ArithmeticExpression.Failure failure)
+			{
+				throw new Condition.Failure(failure.Error);
+			}
 		}
 
 		/// <summary>

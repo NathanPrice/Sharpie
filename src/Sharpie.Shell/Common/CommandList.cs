@@ -42,8 +42,7 @@ internal static class CommandList
 	/// Each pipeline's text as typed, quotes kept, with the operator before it, which is <see cref="Sequence" /> for the
 	/// first of each and-or list. A compound command is one item with its whole text. Blank commands and comments are
 	/// dropped. <see langword="null" /> when <see cref="CommandParser.Parse" /> gives an error: a <c>$(</c> or backquote
-	/// outside single quotes is never closed, the line uses arithmetic expansion, <c>$((...))</c>, it has a syntax
-	/// error, or it isn't finished.
+	/// outside single quotes is never closed, it has a syntax error, or it isn't finished.
 	/// </returns>
 	/// <remarks>
 	/// Quotes and backslashes work as in <see cref="CommandLine.Split" />, so a quoted or escaped <c>;</c> stays in its
@@ -92,17 +91,15 @@ internal static class CommandList
 	/// </summary>
 	/// <param name="line">The line, or several joined by newlines.</param>
 	/// <returns>
-	/// The quote that's still open, <c>(</c> for a <c>$(</c> or <c>`</c> for a backquote that's never closed, or
-	/// <see langword="null" /> when nothing is. Arithmetic expansion gives <see langword="null" />, since it's refused
-	/// however it ends. A quote inside a comment doesn't count, so <c># don't</c> is complete.
+	/// The quote that's still open, <c>(</c> for a <c>$(</c> or <c>$((</c> or <c>`</c> for a backquote that's never
+	/// closed, or <see langword="null" /> when nothing is. A quote inside a comment doesn't count, so <c># don't</c> is
+	/// complete.
 	/// </returns>
 	internal static char? Unfinished(string line)
 	{
 		var (_, _, _, quote, refused, _) = CommandParser.Parse(line);
 
-		return refused < 0 ? quote
-			: line.AsSpan(refused).StartsWith("$((", StringComparison.Ordinal) ? null
-			: line[refused] == '`' ? '`' : '(';
+		return refused < 0 ? quote : line[refused] == '`' ? '`' : '(';
 	}
 
 	/// <summary>

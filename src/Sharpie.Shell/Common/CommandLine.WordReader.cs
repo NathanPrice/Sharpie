@@ -173,6 +173,10 @@ internal static partial class CommandLine
 					this.hasWord = true;
 
 					return index;
+				case null or '"' when character == '$' && ArithmeticEnd(line, index) is var close and >= 0:
+					this.Arithmetic(index, close);
+
+					return close;
 				case null or '"' when SubstitutionEnd(line, index) is var close and >= 0:
 					this.Substitute(index, close);
 
@@ -298,6 +302,26 @@ internal static partial class CommandLine
 			var (fields, quoted, splitOn) = SubstitutionFields(line, start, close, this.quote, this.run, this.SplitOn());
 
 			this.AppendParts(fields, quoted, close, quoting: null, splitOn);
+			this.afterExpansion = close + 1;
+		}
+
+		/// <summary>
+		/// Adds the number the <c>$((...))</c> from <paramref name="start" /> to <paramref name="close" /> gives, or the
+		/// text as typed when nothing expands here, as <see cref="Substitute" /> adds a substitution's output.
+		/// </summary>
+		/// <param name="start">The position of the <c>$((</c>.</param>
+		/// <param name="close">The position of its last <c>)</c>.</param>
+		private void Arithmetic(int start, int close)
+		{
+			if (this.expand is { } expand)
+			{
+				this.AppendParts([ExpandArithmetic(line, start, close, expand, unset, this.run)], quoted: this.quote is not null, close, quoting: null, this.SplitOn());
+			}
+			else
+			{
+				this.AppendParts([line[start..(close + 1)]], quoted: true, close, quoting: null, separators: null);
+			}
+
 			this.afterExpansion = close + 1;
 		}
 

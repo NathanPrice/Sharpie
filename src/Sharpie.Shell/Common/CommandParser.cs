@@ -16,7 +16,7 @@ namespace Sharpie.Shell.Common;
 /// </param>
 /// <param name="OpenQuote">The quote the text ends inside, or <see langword="null" />.</param>
 /// <param name="Refused">
-/// Where an unclosed <c>$(</c> or backquote, or a <c>$((</c>, starts; otherwise, -1.
+/// Where an unclosed <c>$(</c>, <c>$((</c> or backquote starts; otherwise, -1.
 /// </param>
 /// <param name="Unclosed">The delimiter of a here-document whose body runs to the end, or <see langword="null" />.</param>
 internal sealed record ParseResult(ListNode? List, ShellError? Error, bool Incomplete, char? OpenQuote, int Refused, string? Unclosed);
@@ -74,6 +74,9 @@ internal sealed class CommandParser
 		/// <summary>An operator, like <c>;</c>, <c>|</c>, <c>(</c> or <c>&gt;</c>.</summary>
 		Operator,
 
+		/// <summary>A whole <c>((...))</c> where a command starts, which works out an expression.</summary>
+		Arithmetic,
+
 		/// <summary>An unquoted newline.</summary>
 		Newline,
 
@@ -117,7 +120,7 @@ internal sealed class CommandParser
 	}
 
 	/// <summary>
-	/// Builds the report for an unclosed substitution or arithmetic.
+	/// Builds the report for an unclosed substitution.
 	/// </summary>
 	/// <param name="text">The text.</param>
 	/// <param name="refused">Where the refused part starts.</param>
@@ -128,32 +131,15 @@ internal sealed class CommandParser
 	{
 		var backquote = text[refused] == '`';
 
-		var report = text.AsSpan(refused).StartsWith("$((", StringComparison.Ordinal)
-			? ArithmeticError(refused + 3)
-			: new ShellError("sharpie::parser::unclosed_substitution", backquote ? "The backquote is never closed" : "`$(` is never closed")
-			{
-				End = refused + (backquote ? 1 : 2),
-				Label = "runs a command for its output",
-				Help = backquote ? "add the closing backquote" : "add the missing `)`",
-			};
-
-		return report with { Source = text, Start = refused };
-	}
-
-	/// <summary>
-	/// Builds the report for arithmetic, which the shell can't work out yet.
-	/// </summary>
-	/// <param name="end">Where the opening ends.</param>
-	/// <returns>
-	/// The report, without its source.
-	/// </returns>
-	private static ShellError ArithmeticError(int end) =>
-		new("sharpie::parser::arithmetic", "Arithmetic expansion isn't supported")
+		return new ShellError("sharpie::parser::unclosed_substitution", backquote ? "The backquote is never closed" : "`$(` is never closed")
 		{
-			End = end,
-			Label = "works out a number",
-			Help = "run a program such as expr for the number, or quote it to pass it as text",
+			Source = text,
+			Start = refused,
+			End = refused + (backquote ? 1 : 2),
+			Label = "runs a command for its output",
+			Help = backquote ? "add the closing backquote" : "add the missing `)`",
 		};
+	}
 
 	/// <summary>
 	/// Gets the token at the current position.
@@ -188,11 +174,11 @@ internal sealed class CommandParser
 	/// </summary>
 	/// <param name="token">The token.</param>
 	/// <returns>
-	/// <see langword="true" /> for <c>(</c>, <c>{</c>, <c>if</c>, <c>while</c>, <c>until</c>, <c>for</c> and
-	/// <c>case</c>.
+	/// <see langword="true" /> for <c>((...))</c>, <c>(</c>, <c>{</c>, <c>if</c>, <c>while</c>, <c>until</c>,
+	/// <c>for</c> and <c>case</c>.
 	/// </returns>
 	private static bool IsCompoundStart(Token token) =>
-		IsOperator(token, "(") || (token.Kind == TokenKind.Word && token.Text is "{" or "if" or "while" or "until" or "for" or "case");
+		token.Kind == TokenKind.Arithmetic || IsOperator(token, "(") || (token.Kind == TokenKind.Word && token.Text is "{" or "if" or "while" or "until" or "for" or "case");
 
 	/// <summary>
 	/// Checks whether a token is a redirect operator.
@@ -449,9 +435,9 @@ internal sealed class CommandParser
 		var token = this.Next();
 		var start = token.Start;
 
-		Compound command = token.Text switch
+		var command = token.Text switch
 		{
-			"(" when IsOperator(this.Peek, "(") && this.Peek.Start == token.End => throw new SyntaxException(ArithmeticError(token.End + 1) with { Source = this.source, Start = start }, incomplete: false),
+			_ when token.Kind == TokenKind.Arithmetic => new ArithmeticCommand(start, 0, token.Text[2..^2]),
 			"(" => new Subshell(start, 0, this.ParseClosed(")", ")")),
 			"{" => new Group(start, 0, this.ParseClosed("}", "}")),
 			"if" => this.ParseIf(start),
@@ -538,15 +524,21 @@ internal sealed class CommandParser
 	private Loop ParseLoop(int start, bool until) => new(start, 0, this.ParseClosed("do", "do"), this.ParseClosed("done", "done"), until);
 
 	/// <summary>
-	/// Reads the rest of a <c>for</c>: the name, the words after <c>in</c> when there are any, and the body.
+	/// Reads the rest of a <c>for</c>: the name, the words after <c>in</c> when there are any, and the body; or the
+	/// <c>((init; test; step))</c> of an arithmetic loop and its body.
 	/// </summary>
 	/// <param name="start">Where it starts.</param>
 	/// <returns>
 	/// The command, its end not yet set.
 	/// </returns>
-	private For ParseFor(int start)
+	private Compound ParseFor(int start)
 	{
 		var name = this.Peek;
+
+		if (name.Kind == TokenKind.Arithmetic)
+		{
+			return this.ParseArithmeticFor(start);
+		}
 
 		if (name.Kind != TokenKind.Word || !DeclareCommand.IsIdentifier(name.Text))
 		{
@@ -582,6 +574,44 @@ internal sealed class CommandParser
 		this.Expect("do");
 
 		return new For(start, 0, name.Text, words, this.ParseClosed("done", "done"));
+	}
+
+	/// <summary>
+	/// Reads the rest of <c>for ((init; test; step))</c>, from the <c>((</c>.
+	/// </summary>
+	/// <param name="start">Where the <c>for</c> starts.</param>
+	/// <returns>
+	/// The command, its end not yet set. An empty test is 1, so <c>for ((;;))</c> runs until <c>break</c>.
+	/// </returns>
+	private ArithmeticFor ParseArithmeticFor(int start)
+	{
+		var token = this.Next();
+		var inner = token.Text[2..^2];
+		var parts = new List<string>();
+		var from = 0;
+
+		while (CommandLine.UnquotedIndex(inner, from, ";", quoted: false) is var semicolon and >= 0)
+		{
+			parts.Add(inner[from..semicolon]);
+			from = semicolon + 1;
+		}
+
+		parts.Add(inner[from..]);
+
+		if (parts.Count != 3)
+		{
+			throw this.Unexpected(token, "`((init; test; step))`");
+		}
+
+		if (IsOperator(this.Peek, ";"))
+		{
+			_ = this.Next();
+		}
+
+		this.SkipNewlines();
+		this.Expect("do");
+
+		return new ArithmeticFor(start, 0, parts[0], parts[1].Trim().Length == 0 ? "1" : parts[1], parts[2], this.ParseClosed("done", "done"));
 	}
 
 	/// <summary>
@@ -910,8 +940,8 @@ internal sealed class CommandParser
 		/// Reads the whole text.
 		/// </summary>
 		/// <returns>
-		/// The tokens, ending with <see cref="TokenKind.End" />; where an unclosed substitution or <c>$((</c> starts,
-		/// or -1; the quote left open at the end; and the delimiter of a here-document that never closed.
+		/// The tokens, ending with <see cref="TokenKind.End" />; where an unclosed substitution starts, or -1; the quote
+		/// left open at the end; and the delimiter of a here-document that never closed.
 		/// </returns>
 		public (List<Token> Tokens, int Refused, char? Quote, string? Unclosed) Scan()
 		{
@@ -976,6 +1006,14 @@ internal sealed class CommandParser
 				this.inCondition = true;
 			}
 
+			// Without a matching )) it stays two ( operators, a subshell in a subshell, as in bash.
+			if (this.wordStart < 0 && !this.inCondition && this.AtCommandStart() && CommandLine.ArithmeticEnd(text, index) is var close and >= 0)
+			{
+				this.tokens.Add(new Token(TokenKind.Arithmetic, index, close + 1, text[index..(close + 1)]));
+
+				return close;
+			}
+
 			// A ]] typed right before an operator ends the test there, as in [[ a ]]&&b.
 			if (this.inCondition && character is not ('\n' or ';') && CommandLine.OperatorAt(text, index) is not null
 				&& !(this.wordStart >= 0 && text.AsSpan(this.wordStart, index - this.wordStart) is "]]"))
@@ -1015,14 +1053,22 @@ internal sealed class CommandParser
 		private bool StartsCondition(int index) =>
 			text.AsSpan(index).StartsWith("[[", StringComparison.Ordinal)
 			&& (index + 2 == text.Length || text[index + 2] is ' ' or '\t' or '\n' or ';')
-			&& this.tokens switch
-			{
-				[] => true,
-				[.., { Kind: TokenKind.Newline }] => true,
-				[.., { Kind: TokenKind.Operator } previous] => !IsRedirect(previous),
-				[.., { Kind: TokenKind.Word, Text: var word }] => ReservedWords.Contains(word),
-				_ => false,
-			};
+			&& this.AtCommandStart();
+
+		/// <summary>
+		/// Checks whether a word starting here would be the first word of a command.
+		/// </summary>
+		/// <returns>
+		/// <see langword="true" /> after an operator, a newline or a reserved word, or at the start.
+		/// </returns>
+		private bool AtCommandStart() => this.tokens switch
+		{
+			[] => true,
+			[.., { Kind: TokenKind.Newline }] => true,
+			[.., { Kind: TokenKind.Operator } previous] => !IsRedirect(previous),
+			[.., { Kind: TokenKind.Word, Text: var word }] => ReservedWords.Contains(word),
+			_ => false,
+		};
 
 		/// <summary>
 		/// Adds the character at <paramref name="index" /> to the word, noting a backslash or quote.

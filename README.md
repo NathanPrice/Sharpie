@@ -42,8 +42,8 @@ and mouse reporting all work.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
 - **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines and
   command lists joined by `;`, `&&` and `||`.
-- **Control flow.** `if`/`elif`/`else`, `while`, `until`, `for`, `case`, `{ ...; }` groups, `( ... )` subshells,
-  `!`, and `break`/`continue`, at the prompt, in `-c` strings and in scripts. A compound
+- **Control flow.** `if`/`elif`/`else`, `while`, `until`, `for`, `for ((i=0; i<3; i++))`, `case`, `(( ... ))`,
+  `{ ...; }` groups, `( ... )` subshells, `!`, and `break`/`continue`, at the prompt, in `-c` strings and in scripts. A compound
   command can span lines, and the prompt asks for the rest with `> `. Redirects after one apply to everything inside,
   so `{ echo a; ls; } > f` and `while read l; do ...; done < f` work, and a compound stage of a pipeline runs in a
   copy of the shell with real pipes, so `tail -f log | while read l; do ...; done` streams.
@@ -54,6 +54,8 @@ and mouse reporting all work.
   `RANDOM`, `SECONDS`, `LINENO`, `SHLVL` and `PPID`. Inside braces, `${X:-default}`, `${X:=default}`, `${X:?message}`,
   `${X:+other}` (each also without the colon), `${#X}`, `${X#pattern}`, `${X##pattern}`, `${X%pattern}`,
   `${X%%pattern}`, `${X/pattern/text}`, `${X//pattern/text}` and `${X:offset:length}` work as in bash.
+  `$((...))` works out bash's 64-bit integer arithmetic, so `n=$((n + 1))` counts, and an offset or length and the
+  number tests of `[[ ]]` are expressions too.
 - **Redirects.** Bash's redirects work on builtins, programs and every stage of a pipeline: `<`, `>`, `>>`, `>|`,
   `&>`, `&>>`, any stream number as in `3> f`, copies and closes like `2>&1` and `2>&-`, here-documents
   (`<<EOF` and `<<-EOF`) and here-strings (`<<< text`). `ls /nope 2>&1 | wc -l` counts the error line, and
@@ -194,8 +196,6 @@ offline use. Inside the window the page opens in the built-in reader, in another
 > [!WARNING]
 > Some of the POSIX shell language is still missing:
 >
-> - **Arithmetic, `$((...))` and `(( ))`.** A line that uses it is refused with status 2 rather than run with the
->   wrong arguments.
 > - **`;&` and `;;&` in `case`, and `select`.** A `case` item has to end with `;;`.
 > - **Builtins in pipelines of three or more stages.** Those stages only run programs found on `PATH`.
 

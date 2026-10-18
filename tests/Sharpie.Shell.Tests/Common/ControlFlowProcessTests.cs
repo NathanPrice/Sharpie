@@ -71,6 +71,15 @@ public sealed class ControlFlowProcessTests : IDisposable
 	[InlineData("if true; then cat <<EOF\nbody\nEOF\nfi", "body\n")]
 	[InlineData("type if fi", "if is a shell keyword\nfi is a shell keyword\n")]
 	[InlineData("command -v while", "while\n")]
+	[InlineData("i=0; while (( i < 3 )); do echo $i; (( i++ )); done", "0\n1\n2\n")]
+	[InlineData("for ((i=0; i<3; i++)); do echo $i; done", "0\n1\n2\n")]
+	[InlineData("for ((i=0; i<4; i++)) do (( i == 1 )) && continue; echo $i; done", "0\n2\n3\n")]
+	[InlineData("for ((;;)); do echo once; break; done", "once\n")]
+	[InlineData("n=1; echo $((n + 1)); n=$((n * 5)); echo $n", "2\n5\n")]
+	[InlineData("(( 0 )); echo $?; (( 2 > 1 )); echo $?", "1\n0\n")]
+	[InlineData("s=abcdef; echo ${s:1+1:2}; [[ 1+1 -eq 2 ]] && echo yes", "cd\nyes\n")]
+	[InlineData("cat <<EOF\nsum $((1 + 2))\nEOF", "sum 3\n")]
+	[InlineData("set -e; (( 1 )); echo kept; (( 0 )) || echo tested", "kept\ntested\n")]
 	public async Task Shell_WithCompoundCommand_RunsIt(string command, string expected)
 	{
 		// Act
@@ -234,6 +243,26 @@ public sealed class ControlFlowProcessTests : IDisposable
 		// Assert
 		_ = run.Output.Should().Be("0\n2\n");
 		_ = run.Error.Should().Contain("sharpie::break::outside_loop").And.Contain("sharpie::return::outside_function");
+	}
+
+	/// <summary>
+	/// Checks that an expression that can't be worked out is reported: <c>((...))</c> then gives 1 and the line goes on,
+	/// while <c>$((...))</c> skips the rest of the line, as in bash, and <c>set -e</c> ends the shell at a
+	/// <c>((...))</c> that gives 1.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithBadArithmetic_ReportsIt()
+	{
+		// Act
+		var command = await ShellProcess.RunAsync(string.Empty, this.folder, arguments: ["-c", "((1/0)); echo after $?"]).ConfigureAwait(true);
+		var expansion = await ShellProcess.RunAsync(string.Empty, this.folder, arguments: ["-c", "echo $((1/0)); echo skipped"]).ConfigureAwait(true);
+		var errExit = await ShellProcess.RunAsync(string.Empty, this.folder, arguments: ["-c", "set -e; ((0)); echo never"]).ConfigureAwait(true);
+
+		// Assert
+		_ = (command.Output, expansion.Output, errExit.Output, errExit.ExitCode).Should().Be(("after 1\n", string.Empty, string.Empty, 1));
+		_ = command.Error.Should().StartWith("Error: sharpie::arithmetic::division_by_zero\n");
+		_ = expansion.Error.Should().StartWith("Error: sharpie::arithmetic::division_by_zero\n");
 	}
 
 	/// <summary>

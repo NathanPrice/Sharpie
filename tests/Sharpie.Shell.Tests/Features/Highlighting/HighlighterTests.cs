@@ -230,6 +230,14 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("echo if", "0,4,Command")]
 	[InlineData("\"if\" x", "0,4,UnknownCommand")]
 	[InlineData("2>out.txt", "0,2,Redirect")]
+	[InlineData("(( i++ ))", "0,9,Command")]
+	[InlineData("echo $((1+2)) $(( (2) ))", "0,4,Command")]
+	[InlineData("echo \"$((1+2))\" x", "0,4,Command;5,10,Quoted")]
+	[InlineData("for ((i=0; i<3; i++)); do prog; done", "0,3,Command;4,17,Command;23,2,Command;26,4,Command;32,4,Command")]
+	[InlineData("echo '$((' nope", "0,4,Command;5,5,Quoted")]
+	[InlineData("echo '$((1))' x", "0,4,Command;5,8,Quoted")]
+	[InlineData("nope$((1)) x", "0,10,UnknownCommand")]
+	[InlineData("a((b)) x", "0,1,UnknownCommand;3,1,UnknownCommand;7,1,UnknownCommand")]
 	public void Highlight_EdgeCaseLine_GivesExactTokens(string line, string expected)
 	{
 		// Arrange

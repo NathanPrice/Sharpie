@@ -58,6 +58,16 @@ public sealed class CommandParserTests
 	[InlineData("a | while b; do c; done | d", "'a' | while('b'; 'c') | 'd'")]
 	[InlineData("{ a; } &", "group('a') &")]
 	[InlineData("if a; then for x in 1; do while b; do c; done; done; fi", "if('a' ? for(x in 1; while('b'; 'c')))")]
+	[InlineData("(( x ))", "arith( x )")]
+	[InlineData("((a)) && b", "arith(a) && 'b'")]
+	[InlineData("(( x )) > out", "arith( x ) > '> out'")]
+	[InlineData("if (( a > 1 )); then b; fi", "if(arith( a > 1 ) ? 'b')")]
+	[InlineData("! ((a))", "!arith(a)")]
+	[InlineData("((a); (b))", "subshell(subshell('a'), subshell('b'))")]
+	[InlineData("echo $((1+2)) $(( (x) ))", "'echo $((1+2)) $(( (x) ))'")]
+	[InlineData("for ((;;)); do a; done", "for((;1;); 'a')")]
+	[InlineData("for ((i=0; i<3; i++))\ndo a; done", "for((i=0; i<3; i++); 'a')")]
+	[InlineData("for (( i=0 ; ';' ; \";\" )) do a; done", "for(( i=0 ; ';' ; \";\" ); 'a')")]
 	public void Parse_WithConstruct_BuildsTree(string text, string expected)
 	{
 		// Act
@@ -270,15 +280,15 @@ public sealed class CommandParserTests
 	}
 
 	/// <summary>
-	/// Checks that arithmetic and the <c>case</c> fall-through operators are refused with reports of their own.
+	/// Checks that the <c>case</c> fall-through operators and an unclosed substitution are refused with reports of their
+	/// own.
 	/// </summary>
 	/// <param name="text">The text.</param>
 	/// <param name="code">The report's code.</param>
 	/// <param name="start">Where the refused part starts.</param>
 	/// <param name="end">Where its opening ends.</param>
 	[Theory]
-	[InlineData("((1 + 2))", "sharpie::parser::arithmetic", 0, 2)]
-	[InlineData("echo $((1))", "sharpie::parser::arithmetic", 5, 8)]
+	[InlineData("echo $((1", "sharpie::parser::unclosed_substitution", 5, 7)]
 	[InlineData("case x in a) b;& c) d;; esac", "sharpie::parser::unsupported", 14, 16)]
 	[InlineData("case x in a) b;;& esac", "sharpie::parser::unsupported", 14, 17)]
 	[InlineData("case x in a) ;& esac", "sharpie::parser::unsupported", 13, 15)]
@@ -292,6 +302,42 @@ public sealed class CommandParserTests
 		_ = parsed.List.Should().BeNull();
 		_ = parsed.Error!.Code.Should().Be(code);
 		_ = (parsed.Error.Start, parsed.Error.End).Should().Be((start, end));
+	}
+
+	/// <summary>
+	/// Checks that <c>for ((...))</c> needs exactly three expressions, pointing at the <c>((...))</c>.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	[Theory]
+	[InlineData("for ((1;2)); do a; done")]
+	[InlineData("for ((1;2;3;4)); do a; done")]
+	public void Parse_WithArithmeticForOfWrongShape_ReportsIt(string text)
+	{
+		// Act
+		var parsed = CommandParser.Parse(text);
+
+		// Assert
+		_ = parsed.Error!.Code.Should().Be("sharpie::parser::syntax");
+		_ = parsed.Error.Label.Should().Be("expected `((init; test; step))`");
+		_ = (parsed.Error.Start, parsed.Error.End).Should().Be((4, text.IndexOf("; do", StringComparison.Ordinal)));
+	}
+
+	/// <summary>
+	/// Checks that <c>((</c> is arithmetic only where a command starts, so after a word, where <c>x(</c> starts a
+	/// function, or after another <c>((...))</c>, it's a <c>(</c> the grammar doesn't allow there, as in bash.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	/// <param name="start">Where the unexpected token starts.</param>
+	[Theory]
+	[InlineData("x((1))", 2)]
+	[InlineData("((1)) ((2))", 6)]
+	public void Parse_WithArithmeticAfterWord_ReportsTheParenthesis(string text, int start)
+	{
+		// Act
+		var parsed = CommandParser.Parse(text);
+
+		// Assert
+		_ = (parsed.Error!.Summary, parsed.Error.Start, parsed.Error.End).Should().Be(("Unexpected `(`", start, start + 1));
 	}
 
 	/// <summary>
@@ -405,6 +451,8 @@ public sealed class CommandParserTests
 		If conditional => "if(" + string.Join(" : ", conditional.Branches.Select(branch => $"{Show(branch.Condition)} ? {Show(branch.Body)}")) + (conditional.Else is { } otherwise ? $" : {Show(otherwise)}" : string.Empty) + ")",
 		Loop loop => $"{(loop.Until ? "until" : "while")}({Show(loop.Condition)}; {Show(loop.Body)})",
 		For loop => $"for({loop.Name}{(loop.Words is { } words ? $" in {words}" : string.Empty)}; {Show(loop.Body)})",
+		ArithmeticCommand arithmetic => $"arith({arithmetic.Expression})",
+		ArithmeticFor loop => $"for(({loop.Init};{loop.Condition};{loop.Step}); {Show(loop.Body)})",
 		Case match => $"case({match.Word}; " + string.Join("; ", match.Items.Select(item => $"{string.Join('|', item.Patterns)}: {Show(item.Body)}")) + ")",
 		_ => throw new ArgumentException("Unknown node", nameof(compound)),
 	};

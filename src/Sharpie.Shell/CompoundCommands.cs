@@ -4,6 +4,7 @@ using System.Text;
 using Serilog;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Aliases;
+using Sharpie.Shell.Features.Arithmetic;
 using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Features.Functions;
 using Sharpie.Shell.Features.Variables;
@@ -136,6 +137,26 @@ internal static class CompoundCommands
 			ExpandWords = words => Expand(words, unset => CommandLine.Split(words, declare.Variables, unset, Substitution).Where(word => !word.IsOperator).Select(word => word.Text).ToArray()),
 			ExpandWord = word => Expand(word, unset => CommandLine.ExpandText(word, declare.Variables, unset, Substitution)),
 			Pattern = pattern => Expand(pattern, unset => CommandLine.Pattern(pattern, declare.Variables, unset, Substitution)),
+			Arithmetic = expression =>
+			{
+				var expanded = Expand(expression, unset => CommandLine.ExpandExpression(expression, declare.Variables, unset, Substitution));
+
+				if (settings.XTrace)
+				{
+					Console.Error.WriteLine($"+ (( {expanded} ))");
+				}
+
+				try
+				{
+					return ArithmeticExpression.Evaluate(expanded, declare.Variables);
+				}
+				catch (ArithmeticExpression.Failure failure)
+				{
+					failure.Error.Write();
+
+					return null;
+				}
+			},
 			Assign = declare.Set,
 			Positional = () => declare.Positional,
 			Subshell = body => RunIsolated(commands, aliases, declare, settings, body),

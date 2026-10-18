@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using DotNetTips.Spargine.Core;
+using Sharpie.Shell.Features.Arithmetic;
 using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Common;
@@ -67,6 +68,25 @@ internal sealed class ShellHooks(Func<string, bool, int> run)
 	/// The hook. By default it only removes the quotes, escaping the wildcards they held.
 	/// </value>
 	public Func<string, string> Pattern { get; init; } = pattern => CommandLine.Pattern(pattern, null);
+
+	/// <summary>
+	/// Gets the hook that works out the expression of a <c>((...))</c> or <c>for ((;;))</c>, as typed.
+	/// </summary>
+	/// <value>
+	/// The hook, which gives <see langword="null" /> after reporting an expression it can't work out. By default it
+	/// works the expression out with no variables.
+	/// </value>
+	public Func<string, long?> Arithmetic { get; init; } = expression =>
+	{
+		try
+		{
+			return ArithmeticExpression.Evaluate(expression, new Dictionary<string, string>());
+		}
+		catch (ArithmeticExpression.Failure)
+		{
+			return null;
+		}
+	};
 
 	/// <summary>
 	/// Gets the hook that sets a shell variable, for a <c>for</c> loop.
@@ -287,10 +307,10 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 	/// </summary>
 	/// <param name="pipeline">The pipeline.</param>
 	/// <returns>
-	/// <see langword="false" /> for a compound command other than a subshell, as bash has it: a failure inside counted
-	/// already, or was one <c>set -e</c> ignores, as in <c>{ false &amp;&amp; true; }</c>.
+	/// <see langword="false" /> for a compound command other than a subshell or <c>((...))</c>, as bash has it: a
+	/// failure inside counted already, or was one <c>set -e</c> ignores, as in <c>{ false &amp;&amp; true; }</c>.
 	/// </returns>
-	private static bool CanFail(Pipeline pipeline) => pipeline.Stages is not [Compound and not Subshell];
+	private static bool CanFail(Pipeline pipeline) => pipeline.Stages is not [Compound and not (Subshell or ArithmeticCommand)];
 
 	/// <summary>
 	/// Runs a pipeline and stores its status as <c>$?</c>.
@@ -355,7 +375,8 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 	/// <param name="tested"><see langword="true" /> when it's tested.</param>
 	/// <returns>
 	/// Its status. An <c>if</c> with no branch taken, a <c>for</c> with no words, a loop whose body never ran and a
-	/// <c>case</c> with no match give 0, as in bash.
+	/// <c>case</c> with no match give 0, as in bash. <c>((...))</c> gives 1 for 0, and both it and
+	/// <c>for ((;;))</c> give 1 for an expression they can't work out.
 	/// </returns>
 	private int RunCompound(Compound command, bool tested)
 	{
@@ -377,6 +398,10 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 				return conditional.Else is { } otherwise ? this.Run(otherwise, 0, tested) : 0;
 			case Loop loop:
 				return this.Repeat(tested, () => this.Run(loop.Condition, 0, tested: true) == 0 != loop.Until, loop.Body);
+			case ArithmeticCommand arithmetic:
+				return hooks.Arithmetic(arithmetic.Expression) is null or 0 ? 1 : 0;
+			case ArithmeticFor loop:
+				return this.RepeatArithmetic(loop, tested);
 			case For loop:
 				var values = loop.Words is { } words ? hooks.ExpandWords(words) : hooks.Positional();
 				var next = 0;
@@ -403,6 +428,38 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 
 			return true;
 		}
+	}
+
+	/// <summary>
+	/// Runs <c>for ((init; test; step))</c>: the init once, then the body while the test isn't 0, with the step after
+	/// each round, <c>continue</c> included.
+	/// </summary>
+	/// <param name="loop">The loop.</param>
+	/// <param name="tested"><see langword="true" /> when the loop is tested.</param>
+	/// <returns>
+	/// The body's last status, or 1 once an expression can't be worked out, which ends the loop.
+	/// </returns>
+	private int RepeatArithmetic(ArithmeticFor loop, bool tested)
+	{
+		if (hooks.Arithmetic(loop.Init) is null)
+		{
+			return 1;
+		}
+
+		var first = true;
+		var failed = false;
+
+		var status = this.Repeat(tested, () =>
+		{
+			var test = first || hooks.Arithmetic(loop.Step) is not null ? hooks.Arithmetic(loop.Condition) : null;
+
+			first = false;
+			failed = test is null;
+
+			return test is not (null or 0);
+		}, loop.Body);
+
+		return failed ? 1 : status;
 	}
 
 	/// <summary>

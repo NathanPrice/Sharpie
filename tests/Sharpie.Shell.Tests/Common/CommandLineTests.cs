@@ -1376,7 +1376,9 @@ public sealed class CommandLineTests
 	[InlineData("$(echo `x)", 0, -1)]
 	[InlineData("`echo", 0, -1)]
 	[InlineData("`a \\`", 0, -1)]
-	[InlineData("$((1+2))", 0, -1)]
+	[InlineData("$((1+2))", 0, 7)]
+	[InlineData("$((echo hi) )", 0, 12)]
+	[InlineData("$((1", 0, -1)]
 	[InlineData("$x", 0, -1)]
 	[InlineData("$(echo a # )\n)", 0, 13)]
 	[InlineData("$(echo a # )", 0, -1)]
@@ -1395,6 +1397,119 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = close.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.ArithmeticEnd" /> finds the closing <c>))</c>, skipping parentheses, quotes
+	/// and nested expansions, and gives -1 when the first parenthesis closes alone or nothing closes.
+	/// </summary>
+	/// <param name="line">The text.</param>
+	/// <param name="index">Where the <c>$((</c> or <c>((</c> starts.</param>
+	/// <param name="expected">The position of the last <c>)</c>, or -1.</param>
+	[Theory]
+	[InlineData("$((1+2))", 0, 7)]
+	[InlineData("((1+2))", 0, 6)]
+	[InlineData("x $(( (1+2) * (3) )) y", 2, 19)]
+	[InlineData("$(( $(echo ')') + 1 ))", 0, 21)]
+	[InlineData("$(( `echo 1` ))", 0, 14)]
+	[InlineData("$(( ${X:-)} ))", 0, 13)]
+	[InlineData("$(( \\) \")\" ))", 0, 12)]
+	[InlineData("$(( ')' ))", 0, 9)]
+	[InlineData("$(( \"${X:-'}\" ))", 0, 15)]
+	[InlineData("$(( $((1)) ))", 0, 12)]
+	[InlineData("$((echo hi) )", 0, -1)]
+	[InlineData("((a); (b))", 0, -1)]
+	[InlineData("$((1", 0, -1)]
+	[InlineData("$((1)", 0, -1)]
+	[InlineData("$(( $(echo ) )", 0, -1)]
+	[InlineData("$(( ${X ))", 0, -1)]
+	[InlineData("$(1)", 0, -1)]
+	[InlineData("(1)", 0, -1)]
+	public void ArithmeticEnd_WithLine_FindsClose(string line, int index, int expected)
+	{
+		// Act
+		var close = CommandLine.ArithmeticEnd(line, index);
+
+		// Assert
+		_ = close.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>$((...))</c> becomes the number its expression gives: its text expanded as if in double quotes,
+	/// assignments kept, the number split as a substitution's output is, a here-document body expanded too, and the
+	/// text kept as typed where nothing expands.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="expected">The words.</param>
+	[Theory]
+	[InlineData("echo $((1 + 2)) \"$((2*3))\" x$((N))y", new[] { "echo", "3", "6", "x10y" })]
+	[InlineData("echo $(( \"1\" + $N )) $(( $(n) * 2 )) $(( ${N} / 3 ))", new[] { "echo", "11", "14", "3" })]
+	[InlineData("echo $((M = N + 1)) $M $((M++)) $M", new[] { "echo", "11", "11", "11", "12" })]
+	[InlineData("echo $((E)) $((-1)) $((2#101)) $(( $U + 1 ))", new[] { "echo", "0", "-1", "5", "1" })]
+	[InlineData("echo $((1 < 2)) $((1<<2)) $((2>1))", new[] { "echo", "1", "4", "1" })]
+	[InlineData("echo $((101)) x$((1))y $((1))#c", new[] { "echo", "", "0", "x", "y", "", "#c" })]
+	[InlineData("echo \"$((101))\"", new[] { "echo", "101" })]
+	[InlineData("echo '$((1))' $((echo a) )", new[] { "echo", "$((1))", "sub" })]
+	public void Split_WithArithmetic_GivesTheNumber(string line, string[] expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["N"] = "10", ["E"] = string.Empty, ["IFS"] = line.Contains("$((101))", StringComparison.Ordinal) ? "1" : " " };
+
+		// Act
+		var words = CommandLine.Split(line, variables, substitute: list => list == "n" ? "7" : "sub");
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>$((...))</c> stays as typed with no variables, and in a here-document's delimiter.
+	/// </summary>
+	[Fact]
+	public void Split_WithArithmeticAndNothingToExpand_KeepsItAsTyped()
+	{
+		// Act
+		var plain = CommandLine.Split("echo $((1 + 2))");
+		var delimiter = CommandLine.Split("cat <<$((1))\n3\n$((1))", new Dictionary<string, string>());
+
+		// Assert
+		_ = plain.Select(word => word.Text).Should().Equal("echo", "$((1 + 2))");
+		_ = delimiter[^1].Text.Should().Be("3\n");
+	}
+
+	/// <summary>
+	/// Checks that an unquoted here-document body works out <c>$((...))</c>.
+	/// </summary>
+	[Fact]
+	public void ExpandBody_WithArithmetic_GivesTheNumber()
+	{
+		// Act
+		var body = CommandLine.ExpandBody("sum $((1 + N)) \"$((2))\"\n", new Dictionary<string, string> { ["N"] = "2" });
+
+		// Assert
+		_ = body.Should().Be("sum 3 \"2\"\n");
+	}
+
+	/// <summary>
+	/// Checks that an expression that can't be worked out throws an error that isn't fatal, pointing into the
+	/// expression, and that an unset variable inside is reported where it was typed.
+	/// </summary>
+	[Fact]
+	public void Split_WithBadArithmetic_ThrowsAndReportsUnset()
+	{
+		// Arrange
+		var unset = new List<Word>();
+
+		// Act
+		var act = () => CommandLine.Split("echo $(( $U + 1/0 ))", new Dictionary<string, string>(), unset.Add);
+		var offset = () => CommandLine.Split("echo ${S:1/0}", new Dictionary<string, string> { ["S"] = "abc" });
+
+		// Assert
+		var thrown = act.Should().Throw<CommandLine.ExpansionError>().Which;
+
+		_ = (thrown.Fatal, thrown.Error.Code, thrown.Error.Source, thrown.Error.Start, thrown.Error.End).Should().Be((false, "sharpie::arithmetic::division_by_zero", "  + 1/0 ", 6, 7));
+		_ = unset.Select(word => (word.Text, word.Start, word.End)).Should().Equal(("U", 9, 11));
+		_ = offset.Should().Throw<CommandLine.ExpansionError>().Which.Should().Match<CommandLine.ExpansionError>(error => !error.Fatal && error.Error.Code == "sharpie::arithmetic::division_by_zero");
 	}
 
 	/// <summary>
@@ -1612,6 +1727,7 @@ public sealed class CommandLineTests
 	[InlineData("echo ${S/X/-} ${S//X/-} ${S//X} ${S//} ${S/[ab]*/-} ${S/\"*\"/-} ${S/X*/-} ${S/X*b/-}", new[] { "echo", "a-bXc", "a-b-c", "abc", "aXbXc", "-", "aXbXc", "a-", "a-Xc" })]
 	[InlineData("echo \"${G/ /_}\" ${G// } ${E/*/-}", new[] { "echo", "a_b c", "abc", "-" })]
 	[InlineData("echo ${S:1} ${S:1:2} ${S: -2} ${S:1:-1} ${S:$I} ${S:I} ${S: 1 : 2 } ${S:9} ${S:1:-4} ${W:1}", new[] { "echo", "XbXc", "Xb", "Xc", "XbX", "XbXc", "XbXc", "Xb", "😀" })]
+	[InlineData("echo ${S:1+1:2} ${S:I*2} ${S:(I+1)%5:I} ${S:E}", new[] { "echo", "bX", "bXc", "b", "aXbXc" })]
 	[InlineData("echo ${N:-${S}} ${N:-\"}\"} \"${N:-a  b}\" ${N:-a  b} ${N:-${M:-z}}", new[] { "echo", "aXbXc", "}", "a  b", "a", "b", "z" })]
 	[InlineData("echo ${N:-~/x} \"${N:-~}\" ${N:-a|b;c#d} ${N:-'q  r'}", new[] { "echo", "/h/x", "~", "a|b;c#d", "q  r" })]
 	[InlineData("echo ${*:-none} ${10:-ten} \"${N:-$S}\" ${N:-}", new[] { "echo", "1", "2", "3", "ten", "aXbXc" })]
@@ -1683,7 +1799,6 @@ public sealed class CommandLineTests
 	[InlineData("echo ${1:=a}", "sharpie::shell::bad_substitution", "$1: cannot assign in this way", "not a variable name", false)]
 	[InlineData("echo ${S:1:-5}", "sharpie::shell::bad_substitution", "-5: substring expression < 0", "ends before its offset", false)]
 	[InlineData("echo ${S:5:-1}", "sharpie::shell::bad_substitution", "-1: substring expression < 0", "ends before its offset", false)]
-	[InlineData("echo ${S:x+1}", "sharpie::shell::bad_substitution", "`x+1` isn't a whole number", "not a number", false)]
 	[InlineData("echo ${S^^}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${S^^}`", "not a form Sharpie reads", false)]
 	[InlineData("echo ${!S}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${!S}`", "not a form Sharpie reads", false)]
 	[InlineData("echo ${%S}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${%S}`", "not a form Sharpie reads", false)]

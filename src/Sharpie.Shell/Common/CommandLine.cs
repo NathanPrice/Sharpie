@@ -211,7 +211,8 @@ internal static partial class CommandLine
 	/// quotes the output stays one word, so <c>"$(true)"</c> is an empty argument. In a <c>NAME=value</c> word it isn't
 	/// split either, so <c>A=$(cmd)</c> keeps its spaces. Anywhere else the output splits on <c>IFS</c> as a value does,
 	/// and wildcards in it match file names, so <c>kill $(pgrep x)</c> passes each id as its own argument and an empty
-	/// output adds none. <c>$((</c> is arithmetic, not a substitution, and stays as typed.
+	/// output adds none. <c>$((...))</c> is replaced by the number its expression gives, expanded by
+	/// <see cref="ExpandExpression" />, which splits as a substitution's output does.
 	/// </para>
 	/// <para>
 	/// An unquoted newline ends the words, and the here-document bodies follow it. The word after each <c>&lt;&lt;</c>
@@ -457,8 +458,9 @@ internal static partial class CommandLine
 	/// <param name="line">The command line.</param>
 	/// <param name="index">The position of a <c>$(</c> or a backquote, outside single quotes and not escaped.</param>
 	/// <returns>
-	/// The position of the closing <c>)</c> or backquote, or -1 when there is none, nothing starts a substitution at
-	/// <paramref name="index" />, or it's a <c>$((</c>, which is arithmetic.
+	/// The position of the closing <c>)</c> or backquote, or -1 when there is none or nothing starts a substitution at
+	/// <paramref name="index" />. For a <c>$((</c> it's where <see cref="ArithmeticEnd" /> says the arithmetic ends, or,
+	/// when that's nowhere, where the substitution that starts with a subshell ends, as in bash.
 	/// </returns>
 	/// <remarks>
 	/// Inside <c>$(...)</c>, parentheses outside quotes are counted, and quoted or escaped text is skipped, so the
@@ -467,20 +469,23 @@ internal static partial class CommandLine
 	/// substitution inside double quotes or backquotes ends where its own call says. Inside backquotes the next
 	/// backquote that isn't escaped ends it.
 	/// </remarks>
-	internal static int SubstitutionEnd(string line, int index)
+	internal static int SubstitutionEnd(string line, int index) =>
+		!IsSubstitutionStart(line.ArgumentNotNull(), index) ? -1
+		: line[index] == '`' ? BackquoteEnd(line, index)
+		: ArithmeticEnd(line, index) is var arithmetic and >= 0 ? arithmetic
+		: ParenthesisEnd(line, index);
+
+	/// <summary>
+	/// Finds the <c>)</c> that ends the <c>$(</c> at <paramref name="index" />, as <see cref="SubstitutionEnd" />
+	/// describes.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="index">The position of the <c>$(</c>.</param>
+	/// <returns>
+	/// The position of the <c>)</c>, or -1 when there is none.
+	/// </returns>
+	private static int ParenthesisEnd(string line, int index)
 	{
-		_ = line.ArgumentNotNull();
-
-		if (!IsSubstitutionStart(line, index))
-		{
-			return -1;
-		}
-
-		if (line[index] == '`')
-		{
-			return BackquoteEnd(line, index);
-		}
-
 		// The $( itself is the first parenthesis, and a word, or a comment, can start right after it.
 		var depth = 1;
 		char? quote = null;
@@ -594,10 +599,10 @@ internal static partial class CommandLine
 	/// <param name="line">The command line.</param>
 	/// <param name="index">The position to look at.</param>
 	/// <returns>
-	/// <see langword="true" /> for a backquote or a <c>$(</c>, but not for <c>$((</c>, which is arithmetic.
+	/// <see langword="true" /> for a backquote or a <c>$(</c>, which includes <c>$((</c>.
 	/// </returns>
 	private static bool IsSubstitutionStart(string line, int index) =>
-		line[index] == '`' || (line.AsSpan(index).StartsWith("$(", StringComparison.Ordinal) && !line.AsSpan(index).StartsWith("$((", StringComparison.Ordinal));
+		line[index] == '`' || line.AsSpan(index).StartsWith("$(", StringComparison.Ordinal);
 
 	/// <summary>
 	/// Runs the substitution from <paramref name="start" /> to <paramref name="close" />.
@@ -1246,9 +1251,8 @@ internal static partial class CommandLine
 	/// <returns>
 	/// The body with <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c> and the positional parameters replaced as
 	/// <see cref="Split" /> replaces them inside double quotes, except that <c>$@</c> joins its parameters too, and
-	/// each command substitution replaced by its output, never split. Inside backquotes a backslash before <c>"</c>
-	/// stays, as in bash. A
-	/// backslash is dropped only before <c>$</c>, <c>`</c>, <c>\</c> or a newline, and a backslash before a newline
+	/// each command substitution replaced by its output and each <c>$((...))</c> by its number, never split. Inside
+	/// backquotes a backslash before <c>"</c> stays, as in bash. A backslash is dropped only before <c>$</c>, <c>`</c>, <c>\</c> or a newline, and a backslash before a newline
 	/// joins the two lines. Quotes are ordinary characters.
 	/// </returns>
 	internal static string ExpandBody(string body, IReadOnlyDictionary<string, string> variables, Action<Word>? unset = null, Func<string, string>? substitute = null)
@@ -1260,6 +1264,11 @@ internal static partial class CommandLine
 			if (body[index] == '\\' && index + 1 < body.Length && body[index + 1] is '$' or '`' or '\\' or '\n')
 			{
 				_ = body[++index] == '\n' ? text : text.Append(body[index]);
+			}
+			else if (body[index] == '$' && ArithmeticEnd(body, index) is var sum and >= 0)
+			{
+				_ = text.Append(ExpandArithmetic(body, index, sum, variables, unset, substitute));
+				index = sum;
 			}
 			else if (SubstitutionEnd(body, index) is var close and >= 0)
 			{

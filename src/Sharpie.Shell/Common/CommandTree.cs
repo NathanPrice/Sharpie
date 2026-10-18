@@ -132,6 +132,25 @@ internal sealed record Loop(int Start, int End, ListNode Condition, ListNode Bod
 internal sealed record For(int Start, int End, string Name, string? Words, ListNode Body) : Compound(Start, End);
 
 /// <summary>
+/// <c>((expression))</c>, which gives 0 when the expression isn't 0, and 1 when it is or can't be worked out.
+/// </summary>
+/// <param name="Start">Where it starts.</param>
+/// <param name="End">Where it ends.</param>
+/// <param name="Expression">The text between the parentheses, as typed.</param>
+internal sealed record ArithmeticCommand(int Start, int End, string Expression) : Compound(Start, End);
+
+/// <summary>
+/// <c>for ((init; test; step)); do list; done</c>.
+/// </summary>
+/// <param name="Start">Where it starts.</param>
+/// <param name="End">Where it ends.</param>
+/// <param name="Init">The expression worked out once before the loop, as typed.</param>
+/// <param name="Condition">The expression tested before each round, 1 when none was typed.</param>
+/// <param name="Step">The expression worked out after each round.</param>
+/// <param name="Body">The list run each round.</param>
+internal sealed record ArithmeticFor(int Start, int End, string Init, string Condition, string Step, ListNode Body) : Compound(Start, End);
+
+/// <summary>
 /// <c>case word in patterns) list;; esac</c>.
 /// </summary>
 /// <param name="Start">Where it starts.</param>

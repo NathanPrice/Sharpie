@@ -101,7 +101,7 @@ public sealed class CommandListTests : IDisposable
 
 	/// <summary>
 	/// Checks that <see cref="CommandList.Unfinished" /> names the quote or substitution a line leaves open, and
-	/// nothing for a complete line, arithmetic, or a quote inside a comment.
+	/// nothing for a complete line or a quote inside a comment.
 	/// </summary>
 	/// <param name="line">The line.</param>
 	/// <param name="expected">What's left open, or <c>'\0'</c> for nothing.</param>
@@ -115,7 +115,7 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("`a", '`')]
 	[InlineData("$(a", '(')]
 	[InlineData("echo a", '\0')]
-	[InlineData("echo $((1", '\0')]
+	[InlineData("echo $((1", '(')]
 	[InlineData("# don't", '\0')]
 	[InlineData("echo a # it's", '\0')]
 	[InlineData("echo $(a 'b) c')", '\0')]
@@ -129,16 +129,16 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a substitution that never closes, and arithmetic expansion, are refused.
+	/// Checks that a substitution or arithmetic that never closes is refused.
 	/// </summary>
 	/// <param name="line">The line.</param>
 	[Theory]
 	[InlineData("echo $(date")]
 	[InlineData("echo \"$(date\"")]
 	[InlineData("echo `date")]
-	[InlineData("echo $((1 + 1))")]
+	[InlineData("echo $((1 + 1)")]
 	[InlineData("a; b $(c")]
-	public void Split_WithUnclosedSubstitutionOrArithmetic_ReturnsNull(string line)
+	public void Split_WithUnclosedSubstitution_ReturnsNull(string line)
 	{
 		// Act
 		var commands = CommandList.Split(line);
@@ -351,24 +351,35 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that arithmetic expansion is refused with its own report, pointing at the <c>$((</c>.
+	/// Checks that <c>((...))</c> gives 0 for an expression that isn't 0 and 1 for one that is, and that a command
+	/// with <c>$((...))</c> runs as typed, for its own expansion to work out.
 	/// </summary>
-	[Fact]
-	public void Run_WithArithmetic_PointsAtIt()
+	/// <param name="line">The line.</param>
+	/// <param name="expected">The commands run.</param>
+	/// <param name="status">The line's status.</param>
+	[Theory]
+	[InlineData("((2 > 1)) && echo $((1+2))", new[] { "echo $((1+2))" }, 0)]
+	[InlineData("((0)) || a", new[] { "a" }, 0)]
+	[InlineData("((1/0)) || a", new[] { "a" }, 0)]
+	[InlineData("((0))", new string[0], 1)]
+	[InlineData("for ((;0;)); do a; done", new string[0], 0)]
+	[InlineData("for ((1/0;;)); do a; done", new string[0], 1)]
+	public void Run_WithArithmetic_RunsIt(string line, string[] expected, int status)
 	{
+		// Arrange
+		var commands = new List<string>();
+
 		// Act
-		var status = CommandList.Run("echo $((1+2))", 0, _ => 0);
+		var result = CommandList.Run(line, 0, command =>
+		{
+			commands.Add(command);
+
+			return 0;
+		});
 
 		// Assert
-		_ = status.Should().Be(CommandList.UnsupportedStatus);
-		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::arithmetic", "Arithmetic expansion isn't supported")
-		{
-			Source = "echo $((1+2))",
-			Start = 5,
-			End = 8,
-			Label = "works out a number",
-			Help = "run a program such as expr for the number, or quote it to pass it as text",
-		}.Render(color: false));
+		_ = (result, this.environment.Error).Should().Be((status, string.Empty));
+		_ = commands.Should().Equal(expected);
 	}
 
 	/// <summary>

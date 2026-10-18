@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using DotNetTips.Spargine.Core;
+using Sharpie.Shell.Features.Arithmetic;
 using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Common;
@@ -45,7 +46,7 @@ internal static partial class CommandLine
 	/// <returns>
 	/// The position of the character, or -1 when there is none.
 	/// </returns>
-	private static int UnquotedIndex(string text, int start, ReadOnlySpan<char> targets, bool quoted)
+	internal static int UnquotedIndex(string text, int start, ReadOnlySpan<char> targets, bool quoted)
 	{
 		char? quote = null;
 
@@ -419,19 +420,21 @@ internal static partial class CommandLine
 		/// <param name="word">The word as typed.</param>
 		/// <param name="typed">The word expanded, for an error to show.</param>
 		/// <returns>
-		/// The whole number the word gives, or the one in the variable it names, 0 when that's empty.
+		/// The number the word gives as an arithmetic expression, as in bash, 0 when it's empty.
 		/// </returns>
-		/// <exception cref="ExpansionError">The word gives anything else.</exception>
+		/// <exception cref="ExpansionError">The expression can't be worked out.</exception>
 		private long Number(string word, out string typed)
 		{
 			typed = this.Text(word).Trim();
 
-			// shortcut: offsets are plain integers or a variable name, no arithmetic; use the arithmetic evaluator once $(( )) exists.
-			var number = DeclareCommand.IsIdentifier(typed) ? Lookup(this.Variables, typed) : typed;
-
-			return number.Length == 0 ? 0
-				: long.TryParse(number, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var parsed) ? parsed
-				: throw this.Failure("sharpie::shell::bad_substitution", fatal: false, $"`{typed}` isn't a whole number", "not a number", "Sharpie has no arithmetic yet, so an offset is a number or a variable holding one");
+			try
+			{
+				return ArithmeticExpression.Evaluate(typed, this.Variables);
+			}
+			catch (ArithmeticExpression.Failure failure)
+			{
+				throw new ExpansionError(failure.Error, fatal: false);
+			}
 		}
 
 		/// <summary>
