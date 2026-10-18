@@ -580,6 +580,7 @@ public sealed class CommandLineTests
 	[Theory]
 	[InlineData("cat <<EOF\nhello $X\nEOF", "hello val\n")]
 	[InlineData("cat <<EOF\n${X}y $? $ $1 $@ $*\nEOF", "valy 3 $ a a b a b\n")]
+	[InlineData("cat <<EOF\n${N:-d} ${X:+\"q r\"} ${#X} ${X%l}\nEOF", "d q r 3 va\n")]
 	[InlineData("cat <<'EOF'\nhello $X\nEOF", "hello $X\n")]
 	[InlineData("cat <<\"EOF\"\nhello $X\nEOF", "hello $X\n")]
 	[InlineData("cat <<E\\OF\nhello $X\nEOF", "hello $X\n")]
@@ -1370,5 +1371,133 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = words.Select(word => word.IsOperator ? $"op:{word.Text}" : $"{word.Text}|{word.Pattern}").Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks the <c>${...}</c> forms against what bash gives for the same line: defaults, lengths, removing and
+	/// replacing a pattern, and substrings.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="expected">The words the line should produce.</param>
+	[Theory]
+	[InlineData("echo ${S:-d} ${E:-d} ${N:-d}", new[] { "echo", "aXbXc", "d", "d" })]
+	[InlineData("echo ${S-d} \"${E-d}\" ${N-d}", new[] { "echo", "aXbXc", "", "d" })]
+	[InlineData("echo ${S:+alt} \"${E:+alt}\" ${N:+alt} ${S+alt} ${E+alt} ${N+alt}", new[] { "echo", "alt", "", "alt", "alt" })]
+	[InlineData("echo ${N:=v} $N ${E=w} ${E:=w}", new[] { "echo", "v", "v", "w" })]
+	[InlineData("echo ${#W} ${#S} ${#E} ${#} ${#@} ${##}", new[] { "echo", "2", "5", "0", "3", "3", "1" })]
+	[InlineData("echo ${S#*X} ${S##*X} ${S%X*} ${S%%X*} ${S#Z} ${S#}", new[] { "echo", "bXc", "c", "aXb", "a", "aXbXc", "aXbXc" })]
+	[InlineData("echo ${P#\"*\"} \"${P#*}\" ${S#$P} ${S#\"$P\"} \"${S#*X}\"", new[] { "echo", "X", "*X", "bXc", "aXbXc", "bXc" })]
+	[InlineData("echo ${S/X/-} ${S//X/-} ${S//X} ${S//} ${S/[ab]*/-} ${S/\"*\"/-} ${S/X*/-} ${S/X*b/-}", new[] { "echo", "a-bXc", "a-b-c", "abc", "aXbXc", "-", "aXbXc", "a-", "a-Xc" })]
+	[InlineData("echo \"${G/ /_}\" ${G// } ${E/*/-}", new[] { "echo", "a_b c", "abc", "-" })]
+	[InlineData("echo ${S:1} ${S:1:2} ${S: -2} ${S:1:-1} ${S:$I} ${S:I} ${S: 1 : 2 } ${S:9} ${S:1:-4} ${W:1}", new[] { "echo", "XbXc", "Xb", "Xc", "XbX", "XbXc", "XbXc", "Xb", "😀" })]
+	[InlineData("echo ${N:-${S}} ${N:-\"}\"} \"${N:-a  b}\" ${N:-a  b} ${N:-${M:-z}}", new[] { "echo", "aXbXc", "}", "a  b", "a", "b", "z" })]
+	[InlineData("echo ${N:-~/x} \"${N:-~}\" ${N:-a|b;c#d} ${N:-'q  r'}", new[] { "echo", "/h/x", "~", "a|b;c#d", "q  r" })]
+	[InlineData("echo ${*:-none} ${10:-ten} \"${N:-$S}\" ${N:-}", new[] { "echo", "1", "2", "3", "ten", "aXbXc" })]
+	[InlineData("echo ${S}end ${S:-x}y ${A", new[] { "echo", "aXbXcend", "aXbXcy", "${A" })]
+	[InlineData("echo ${N:-a\\}b} ${N:-'a}'} \"${N:-'}'}\" ${N:-'a|b'x;'c;d'}", new[] { "echo", "a}b", "a}", "''}", "a|bx;c;d" })]
+	[InlineData("echo \"${@:-x}\" \"${*:-x}\" ${N:=~/x}", new[] { "echo", "1", "2", "3", "1 2 3", "/h/x" })]
+	[InlineData("echo ${D/'/'/-} ${D///b} \"${E///x}\" \"${E/a/-}\"", new[] { "echo", "a-b", "a/b", "", "" })]
+	[InlineData("echo ${S::2} ${S:0:1} ${S:3:9} \"${S:1:0}\" ${S:$N:2} \"${S#a*c}\"", new[] { "echo", "aX", "a", "Xc", "", "aX", "" })]
+	[InlineData("echo ${@#1} ${@/2/X} \"${*%3}\" \"${@%3}\"", new[] { "echo", "2", "3", "1", "X", "3", "1 2 ", "1", "2", "" })]
+	[InlineData("echo ${N:-\"*\"} ${N:-''} ${N:-\\*} ${N:+x} ${S:+\"*\"}", new[] { "echo", "*", "", "*", "*" })]
+	public void Split_WithBracedForms_ExpandsAsBash(string line, string[] expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string>
+		{
+			["S"] = "aXbXc",
+			["E"] = string.Empty,
+			["P"] = "*X",
+			["I"] = "1",
+			["W"] = "é😀",
+			["G"] = "a b c",
+			["D"] = "a/b",
+			["HOME"] = "/h",
+			["#"] = "3",
+			["1"] = "1",
+			["2"] = "2",
+			["3"] = "3",
+		};
+
+		// Act
+		var words = CommandLine.Split(line, variables);
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>${X:=value}</c> stores the value in the shell's variables.
+	/// </summary>
+	[Fact]
+	public void Split_WithAssigningDefault_StoresVariable()
+	{
+		// Arrange
+		var declare = new DeclareCommand(new ShellSettings());
+
+		// Act
+		var words = CommandLine.Split("echo ${SHARPIE_SAMPLE_UNSET:=v w}", declare.Variables);
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal("echo", "v w");
+		_ = declare.Variables["SHARPIE_SAMPLE_UNSET"].Should().Be("v w");
+	}
+
+	/// <summary>
+	/// Checks that a <c>${...}</c> that can't expand throws an error that points at it, with bash's message, and that
+	/// only <c>?</c> is fatal, ending a script.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="code">The error's code.</param>
+	/// <param name="summary">The error's message.</param>
+	/// <param name="label">The note under the <c>${...}</c>.</param>
+	/// <param name="fatal">Whether the error ends a shell that isn't interactive.</param>
+	[Theory]
+	[InlineData("echo ${N:?gone away}", "sharpie::shell::parameter_unset", "N: gone away", "empty or not set", true)]
+	[InlineData("echo ${E:?}", "sharpie::shell::parameter_unset", "E: parameter null or not set", "empty or not set", true)]
+	[InlineData("echo ${N?}", "sharpie::shell::parameter_unset", "N: parameter not set", "not set", true)]
+	[InlineData("echo ${N:-${M:?inner}}", "sharpie::shell::parameter_unset", "M: inner", "empty or not set", true)]
+	[InlineData("echo ${1:=a}", "sharpie::shell::bad_substitution", "$1: cannot assign in this way", "not a variable name", false)]
+	[InlineData("echo ${S:1:-5}", "sharpie::shell::bad_substitution", "-5: substring expression < 0", "ends before its offset", false)]
+	[InlineData("echo ${S:5:-1}", "sharpie::shell::bad_substitution", "-1: substring expression < 0", "ends before its offset", false)]
+	[InlineData("echo ${S:x+1}", "sharpie::shell::bad_substitution", "`x+1` isn't a whole number", "not a number", false)]
+	[InlineData("echo ${S^^}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${S^^}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${!S}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${!S}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${%S}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${%S}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${S/#a/b}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${S/#a/b}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${@:2}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${@:2}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${*:2}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${*:2}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${}`", "not a form Sharpie reads", false)]
+	public void Split_WithBadBracedForm_Throws(string line, string code, string summary, string label, bool fatal)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["S"] = "aXbXc", ["E"] = string.Empty };
+
+		// Act
+		var act = () => CommandLine.Split(line, variables);
+
+		// Assert
+		var thrown = act.Should().Throw<CommandLine.ExpansionError>().Which;
+
+		_ = (thrown.Error.Code, thrown.Error.Summary, thrown.Error.Label, thrown.Fatal).Should().Be((code, summary, label, fatal));
+		_ = (thrown.Error.Source, thrown.Error.Start, thrown.Error.End).Should().Be((line, 5, line.Length));
+	}
+
+	/// <summary>
+	/// Checks that <c>set -u</c> reports an unset name in <c>${#X}</c>, a pattern, a substring or a default's word,
+	/// pointing at the whole <c>${...}</c>, but not the name of a default form, which decides what an unset name gives.
+	/// </summary>
+	[Fact]
+	public void Split_WithUnsetCallbackAndBracedForms_ReportsOnlyNonDefaultForms()
+	{
+		// Arrange
+		var unset = new List<Word>();
+
+		// Act
+		var words = CommandLine.Split("echo ${N:-d} ${N-d} ${N+x} ${N:+x} ${#@} ${#M} ${O#a} ${Q:1} ${*:-none} ${A:-$B} ${@-none}", new Dictionary<string, string>(), unset.Add);
+
+		// Assert
+		_ = unset.Select(word => (word.Text, word.Start, word.End)).Should().Equal(("M", 41, 46), ("O", 47, 53), ("Q", 54, 60), ("B", 72, 80));
+		_ = words.Select(word => word.Text).Should().Equal("echo", "d", "d", "0", "0", "none", "none");
 	}
 }

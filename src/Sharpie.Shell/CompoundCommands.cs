@@ -30,6 +30,12 @@ internal static class CompoundCommands
 	internal static int SubshellDepth { get; private set; }
 
 	/// <summary>
+	/// How many <see cref="RunList" /> calls this thread is inside, so only the outermost one stops an expansion error.
+	/// </summary>
+	[ThreadStatic]
+	private static int lineDepth;
+
+	/// <summary>
 	/// Gets where a command's streams go before its own redirects.
 	/// </summary>
 	/// <value>
@@ -42,6 +48,49 @@ internal static class CompoundCommands
 	/// What the command runner asks the shell to do, made the first time a line runs.
 	/// </summary>
 	private static ShellHooks? hooks;
+
+	/// <summary>
+	/// Runs the commands of one line through <see cref="Hooks" />, as <see cref="Program.RunLine" /> does.
+	/// </summary>
+	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="aliases">The <c>alias</c> builtin.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and the last status.</param>
+	/// <param name="line">The line.</param>
+	/// <param name="first">The line number the line starts on, for <c>LINENO</c>.</param>
+	/// <returns>
+	/// The last command's status.
+	/// </returns>
+	/// <remarks>
+	/// A <c>${...}</c> that can't expand skips the rest of the outermost line, through any function, <c>eval</c> or
+	/// <c>source</c> it's in, and gives status 1, as in bash. <c>${X:?}</c> with <c>X</c> unset also ends a shell that
+	/// isn't interactive, with 127, through <see cref="Program.Fail" />. A subshell stops at its own boundary in
+	/// <see cref="RunIsolated" />.
+	/// </remarks>
+	internal static int RunList(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line, int first)
+	{
+		// Kept apart from the field, since an exception filter runs before the inner calls' finally blocks lower it.
+		var depth = ++lineDepth;
+
+		try
+		{
+			return CommandList.Run(line, declare.Status, Hooks(commands, aliases, declare), offset => declare.LineNumber = first + offset);
+		}
+		catch (CommandLine.ExpansionError failure) when (depth == 1)
+		{
+			if (failure.Fatal)
+			{
+				return Program.Fail(failure.Error, 127, ((SetCommand)commands["set"]).Settings.Interactive);
+			}
+
+			failure.Error.Write();
+
+			return 1;
+		}
+		finally
+		{
+			lineDepth--;
+		}
+	}
 
 	/// <summary>
 	/// Gets the hooks for <see cref="CommandList.Run(string, int, ShellHooks, Action{int})" />, making them the first time.
@@ -163,6 +212,13 @@ internal static class CompoundCommands
 		catch (ExitCommand.SubshellExit exit)
 		{
 			return exit.Status;
+		}
+		catch (CommandLine.ExpansionError failure)
+		{
+			// Even ${X:?} ends only the subshell, with 1, as bash's does.
+			failure.Error.Write();
+
+			return 1;
 		}
 		catch (LoopControl)
 		{

@@ -176,12 +176,41 @@ internal partial class DeclareCommand
 	}
 
 	/// <summary>
+	/// Stores a variable through the variables <see cref="CommandLine" /> expands from, as <c>${X:=value}</c> does.
+	/// </summary>
+	/// <param name="variables"><see cref="Variables" />, or a plain dictionary of variables.</param>
+	/// <param name="name">A valid variable name.</param>
+	/// <param name="value">The value.</param>
+	/// <remarks>
+	/// Only a dictionary that can be written keeps the value; any other leaves it unchanged.
+	/// </remarks>
+	internal static void Assign(IReadOnlyDictionary<string, string> variables, string name, string value)
+	{
+		if (variables is View view)
+		{
+			view.Owner.Set(name, value);
+		}
+		else if (variables is IDictionary<string, string> plain)
+		{
+			plain[name] = value;
+		}
+	}
+
+	/// <summary>
 	/// The read-only view <see cref="Variables" /> gives: the stored variables, with the worked-out ones in place of
 	/// any stored value of the same name.
 	/// </summary>
 	/// <param name="owner">The command whose variables it shows.</param>
 	private sealed class View(DeclareCommand owner) : IReadOnlyDictionary<string, string>
 	{
+		/// <summary>
+		/// Gets the command whose variables it shows.
+		/// </summary>
+		/// <value>
+		/// The owner, which <see cref="Assign" /> stores through.
+		/// </value>
+		public DeclareCommand Owner => owner;
+
 		/// <inheritdoc />
 		public int Count => this.Keys.Count();
 

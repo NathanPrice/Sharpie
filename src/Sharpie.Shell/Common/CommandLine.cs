@@ -60,7 +60,7 @@ internal enum TargetKind
 /// <summary>
 /// Breaks a typed command line into words the way a POSIX shell does.
 /// </summary>
-internal static class CommandLine
+internal static partial class CommandLine
 {
 	/// <summary>
 	/// The highest stream number a redirect may name. A bigger one is refused rather than handed to the system.
@@ -133,7 +133,14 @@ internal static class CommandLine
 	/// no shell variable has that name, and a name set in neither gives nothing. An
 	/// unquoted <c>$NAME</c> that comes out empty adds no argument, like bash. A <c>$</c> followed by none of the forms
 	/// below stays as typed. <c>${NAME}</c> marks where the name ends, so <c>${A}b</c> expands <c>A</c> and keeps
-	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. <c>$?</c> is the last command's exit status,
+	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. Inside the braces, as in bash, <c>${#A}</c> is the
+	/// length of <c>A</c>'s value; <c>${A:-word}</c> gives the word when <c>A</c> is unset or empty, <c>${A:=word}</c>
+	/// also stores it in <c>A</c>, <c>${A:?word}</c> stops the command with the word as its error, and
+	/// <c>${A:+word}</c> gives the word only when <c>A</c> isn't empty, each without the colon for an unset <c>A</c>
+	/// only; <c>${A#pattern}</c> and <c>${A##pattern}</c> remove the shortest and longest start that matches, and
+	/// <c>%</c> and <c>%%</c> the end; <c>${A/pattern/text}</c> replaces the first match and <c>//</c> each one; and
+	/// <c>${A:offset}</c> and <c>${A:offset:length}</c> take a substring, with a negative offset counting from the end.
+	/// Any other form throws <see cref="ExpansionError" />. <c>$?</c> is the last command's exit status,
 	/// <c>$$</c> the shell's process id, <c>$!</c> the last background program's and <c>$-</c> the letters of the
 	/// options that are on. Values aren't split on spaces.
 	/// </para>
@@ -214,6 +221,9 @@ internal static class CommandLine
 
 		/// <summary>The word as a pattern for <see cref="Glob.IsMatch" />, its quoted parts escaped.</summary>
 		Pattern,
+
+		/// <summary>The word with its quotes removed, and as a pattern in <see cref="Word.Pattern" />.</summary>
+		Spliced,
 	}
 
 	/// <summary>
@@ -322,8 +332,8 @@ internal static class CommandLine
 						index = close;
 
 						break;
-					case null or '"' when TryExpand(line, index, expand, quote is not null, unset, out var parts, out var end):
-						AppendParts(parts, quoted: quote is not null, end);
+					case null or '"' when TryExpand(line, index, expand, quote is not null, unset, run, out var parts, out var patterns, out var end):
+						AppendParts(parts, quoted: quote is not null, end, patterns);
 						afterExpansion = end + 1;
 						index = end;
 
@@ -445,8 +455,9 @@ internal static class CommandLine
 		}
 
 		// Adds what a $ expansion gave, each part as a word of its own, the first joined to the text before it and the
-		// last to the text after it. An unquoted empty part adds no word, and a quoted one adds an empty word.
-		void AppendParts(string[] parts, bool quoted, int end)
+		// last to the text after it. An unquoted empty part adds no word, and a quoted one adds an empty word. Parts that
+		// come with patterns are words of an unquoted ${X:-word}, which bash reads as if typed there.
+		void AppendParts(string[] parts, bool quoted, int end, string[]? patterns = null)
 		{
 			for (var part = 0; part < parts.Length; part++)
 			{
@@ -456,8 +467,18 @@ internal static class CommandLine
 					_ = pattern.Clear();
 				}
 
-				Append(parts[part], quoted);
-				hasWord |= condition.KeepsPart(parts[part], quoted);
+				// shortcut: after =~ a spliced part's pattern escapes quoted text as a glob, not a regular expression; add a regex form to Spliced if a quoted default there needs it.
+				if (patterns is null)
+				{
+					Append(parts[part], quoted);
+					hasWord |= condition.KeepsPart(parts[part], quoted);
+				}
+				else
+				{
+					_ = word.Append(parts[part]);
+					_ = pattern.Append(patterns[part]);
+					hasWord = true;
+				}
 			}
 
 			// "$@" with no parameters is no word at all, not an empty one, unless more text touches it.
@@ -476,6 +497,7 @@ internal static class CommandLine
 				{
 					WordForm.Text => [new Word(text, IsOperator: false, wordStart, end)],
 					WordForm.Pattern => [new Word(pattern.ToString(), IsOperator: false, wordStart, end)],
+					WordForm.Spliced => [new Word(text, IsOperator: false, wordStart, end, pattern.ToString())],
 					WordForm.Expanded or _ => FinishedWords(condition, text, wordStart, end, pattern, line, variables, words),
 				});
 			}
@@ -877,17 +899,21 @@ internal static class CommandLine
 	/// </param>
 	/// <param name="quoted"><see langword="true" /> inside double quotes, where <c>$*</c> joins its parameters.</param>
 	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
+	/// <param name="substitute">Runs a command substitution inside a <c>${...}</c>, as <see cref="Split" /> describes.</param>
 	/// <param name="parts">
 	/// The words the expansion gives: one for a variable, one per parameter for <c>$@</c> and <c>$*</c>, and one for
 	/// <c>"$*"</c>.
 	/// </param>
+	/// <param name="patterns">The parts as patterns, as <see cref="TryExpandBraced" /> gives them, or <see langword="null" />.</param>
 	/// <param name="end">The position of the last character the expansion used.</param>
 	/// <returns>
 	/// <see langword="false" /> when no form follows the <c>$</c>, so it stays as typed.
 	/// </returns>
-	private static bool TryExpand(string line, int index, IReadOnlyDictionary<string, string>? variables, bool quoted, Action<Word>? unset, out string[] parts, out int end)
+	/// <exception cref="ExpansionError">A <c>${...}</c> can't be expanded, as <see cref="TryExpandBraced" /> says.</exception>
+	private static bool TryExpand(string line, int index, IReadOnlyDictionary<string, string>? variables, bool quoted, Action<Word>? unset, Func<string, string>? substitute, out string[] parts, out string[]? patterns, out int end)
 	{
 		parts = [];
+		patterns = null;
 		end = index;
 
 		if (line[index] != '$' || variables is null)
@@ -904,13 +930,17 @@ internal static class CommandLine
 			return true;
 		}
 
+		if (index + 1 < line.Length && line[index + 1] == '{')
+		{
+			return TryExpandBraced(line, index, variables, quoted, unset, substitute, out parts, out patterns, out end);
+		}
+
 		if (!TryReadVariableName(line, index, out var name, out end))
 		{
 			return false;
 		}
 
-		// $? is always set, though it isn't stored until the first command has run.
-		if (unset is not null && name != "?" && !variables.ContainsKey(name) && Environment.GetEnvironmentVariable(name) is null)
+		if (unset is not null && !IsSet(variables, name))
 		{
 			unset(new Word(name, IsOperator: false, index, end + 1));
 		}
@@ -943,7 +973,7 @@ internal static class CommandLine
 	}
 
 	/// <summary>
-	/// Reads the variable name of the <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c>, <c>$#</c>, <c>$$</c>, <c>$!</c>,
+	/// Reads the variable name of the <c>$NAME</c>, <c>$?</c>, <c>$#</c>, <c>$$</c>, <c>$!</c>,
 	/// <c>$-</c> or <c>$0</c> to <c>$9</c> that starts at the <c>$</c> at <paramref name="index" />.
 	/// </summary>
 	/// <param name="line">The command line being split.</param>
@@ -955,19 +985,11 @@ internal static class CommandLine
 	/// </returns>
 	private static bool TryReadVariableName(string line, int index, out string name, out int end)
 	{
-		// Only one digit counts, so $10 is $1 followed by 0, as in POSIX. ${10} goes through the braces below.
+		// Only one digit counts, so $10 is $1 followed by 0, as in POSIX. ${10} goes through TryExpandBraced.
 		if (index + 1 < line.Length && (line[index + 1] is '?' or '#' or '$' or '!' or '-' || char.IsAsciiDigit(line[index + 1])))
 		{
 			name = line[index + 1].ToString();
 			end = index + 1;
-
-			return true;
-		}
-
-		if (index + 1 < line.Length && line[index + 1] == '{' && line.IndexOf('}', index + 2) is var close and > 0)
-		{
-			name = line[(index + 2)..close];
-			end = close;
 
 			return true;
 		}
@@ -1307,7 +1329,7 @@ internal static class CommandLine
 				_ = text.Append(substitute is null ? body[index..(close + 1)] : SubstitutionOutput(body, index, close, inDoubleQuotes: false, substitute));
 				index = close;
 			}
-			else if (TryExpand(body, index, variables, quoted: true, unset, out var parts, out var end))
+			else if (TryExpand(body, index, variables, quoted: true, unset, substitute, out var parts, out _, out var end))
 			{
 				_ = text.AppendJoin(' ', parts);
 				index = end;

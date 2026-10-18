@@ -546,6 +546,8 @@ internal static class Program
 	/// that <see cref="CommandList" /> refuses. With <c>set -e</c>, a failed command ends the shell with its status
 	/// through <see cref="Environment.Exit" />, so the history is still saved. A failure anywhere inside a command
 	/// that <c>&amp;&amp;</c> or <c>||</c> tests doesn't, so <c>eval false || echo ok</c> prints ok, as in bash.
+	/// A <c>${...}</c> that can't expand, such as <c>${X:?}</c> with <c>X</c> unset, ends the line there, as
+	/// <see cref="CompoundCommands.RunList" /> describes.
 	/// </remarks>
 	internal static int RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line, Stream? output = null)
 	{
@@ -558,7 +560,7 @@ internal static class Program
 
 		try
 		{
-			return declare.Status = CommandList.Run(line, declare.Status, CompoundCommands.Hooks(commands, aliases, declare), offset => declare.LineNumber = first + offset);
+			return declare.Status = CompoundCommands.RunList(commands, aliases, declare, line, first);
 		}
 		finally
 		{
@@ -1001,16 +1003,33 @@ internal static class Program
 	/// <returns>
 	/// 1, the command's status.
 	/// </returns>
-	internal static int ReportUnset(string line, Word name, bool interactive)
+	internal static int ReportUnset(string line, Word name, bool interactive) =>
+		Fail(
+			new ShellError("sharpie::shell::unset_variable", $"`{name.Text}` isn't set")
+			{
+				Source = line,
+				Start = name.Start,
+				End = name.End,
+				Label = "set -u makes this an error",
+				Help = "set it first, or turn the check off with set +u",
+			},
+			127,
+			interactive);
+
+	/// <summary>
+	/// Reports an error that ends the line, and the shell too when it isn't interactive, as bash's expansion errors do.
+	/// </summary>
+	/// <param name="error">The report.</param>
+	/// <param name="status">The status a shell that isn't interactive exits with.</param>
+	/// <param name="interactive">
+	/// <see langword="true" /> when the shell reads typed lines and keeps going.
+	/// </param>
+	/// <returns>
+	/// 1, the command's status.
+	/// </returns>
+	internal static int Fail(ShellError error, int status, bool interactive)
 	{
-		new ShellError("sharpie::shell::unset_variable", $"`{name.Text}` isn't set")
-		{
-			Source = line,
-			Start = name.Start,
-			End = name.End,
-			Label = "set -u makes this an error",
-			Help = "set it first, or turn the check off with set +u",
-		}.Write();
+		error.Write();
 
 		// A substitution is a subshell in bash, which isn't interactive, so the error ends it, with 1 as bash's does.
 		if (CompoundCommands.SubshellDepth > 0)
@@ -1020,7 +1039,7 @@ internal static class Program
 
 		if (!interactive)
 		{
-			Environment.Exit(127);
+			Environment.Exit(status);
 		}
 
 		return 1;

@@ -1142,4 +1142,63 @@ public sealed class CommandLineProcessTests
 		_ = run.Error.Should().Contain("sharpie::shell::command_not_found").And.Contain("sampletool");
 		_ = run.ExitCode.Should().Be(127);
 	}
+
+	/// <summary>
+	/// Checks that <c>${X:?message}</c> with <c>X</c> unset reports the message and ends a script with 127, as bash
+	/// does, running nothing after it.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithRequiredParameterUnset_ExitsWith127()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "echo ${SHARPIE_SAMPLE_UNSET:?gone}; echo after"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().BeEmpty();
+		_ = run.Error.Should().Contain("sharpie::shell::parameter_unset").And.Contain("SHARPIE_SAMPLE_UNSET: gone");
+		_ = run.ExitCode.Should().Be(127);
+	}
+
+	/// <summary>
+	/// Checks that <c>${X:=value}</c> leaves the value in <c>X</c> for the commands after it.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithAssigningDefault_KeepsValue()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", ": ${SHARPIE_SAMPLE_UNSET:=v}; echo $SHARPIE_SAMPLE_UNSET"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("v\n");
+		_ = run.Error.Should().BeEmpty();
+		_ = run.ExitCode.Should().Be(0);
+	}
+
+	/// <summary>
+	/// Checks that in a script an expansion error other than <c>${X:?}</c> skips only the rest of its line, even from
+	/// inside a function, and that <c>${X:?}</c> in a subshell ends only the subshell, as in bash.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithExpansionErrorsInScript_SkipsRestOfLine()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var script = ShellEnvironment.CreateFile(folder, "sample.sh", executable: false, "X=abc\necho ${X:1:-9}; echo same\necho next $?\n"
+			+ "f() { echo ${X:1:-9}; echo inf; }; f; echo afterf\n( : ${SHARPIE_SAMPLE_UNSET:?boom}; echo in ); echo after $?\n");
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, arguments: [script]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("next 1\nafter 1\n");
+			_ = run.Error.Should().Contain("-9: substring expression < 0").And.Contain("SHARPIE_SAMPLE_UNSET: boom");
+			_ = run.ExitCode.Should().Be(0);
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
 }
