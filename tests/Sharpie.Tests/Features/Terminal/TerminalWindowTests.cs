@@ -177,7 +177,8 @@ public sealed class TerminalWindowTests : IDisposable
 
 		this.window.MouseDown(point, MouseButton.Left, RawInputModifiers.None);
 		this.window.MouseUp(point, MouseButton.Left, RawInputModifiers.None);
-		WaitFor(() => this.ScreenText.Contains("got:", StringComparison.Ordinal), "the program should have read the click");
+		// The typed command holds got: too, so only the [ of the report shows the program printed it.
+		WaitFor(() => this.ScreenText.Contains("got:[", StringComparison.Ordinal), "the program should have read the click");
 
 		// Assert
 		_ = this.ScreenText.Should().Contain("got:[<0;1;1M");
@@ -199,7 +200,8 @@ public sealed class TerminalWindowTests : IDisposable
 
 		// Act
 		this.RightClick();
-		WaitFor(() => this.ScreenText.Contains("got:", StringComparison.Ordinal), "the program should have read the click");
+		// The typed command holds got: too, so only the [ of the report shows the program printed it.
+		WaitFor(() => this.ScreenText.Contains("got:[", StringComparison.Ordinal), "the program should have read the click");
 
 		// Assert
 		_ = this.ScreenText.Should().Contain("got:[<2;1;1M[<2;1;1");
