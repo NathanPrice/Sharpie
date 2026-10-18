@@ -58,17 +58,22 @@ internal sealed partial class TerminalView
 	/// Sends the clipboard's text to the program, bracketed when it asked for that, so a shell or editor can tell a
 	/// paste from typing.
 	/// </summary>
+	/// <param name="key">
+	/// The encoded Ctrl+V key when Ctrl+V or the menu asked for the paste, sent instead of the text when the
+	/// clipboard holds an image; <see langword="null" /> for Ctrl+Shift+V.
+	/// </param>
 	/// <returns>
-	/// A task that completes once the text is sent.
+	/// A task that completes once the text or the key is sent, or nothing is.
 	/// </returns>
-	public async Task PasteAsync()
-	{
-		if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard
-			|| await clipboard.TryGetTextAsync().ConfigureAwait(true) is not { Length: > 0 } text)
-		{
-			return;
-		}
+	public Task PasteAsync(string? key = null) => TerminalPaste.FromClipboardAsync(this, key);
 
+	/// <summary>
+	/// Sends pasted text to the program, bracketed when it asked for that, so a shell or editor can tell a paste from
+	/// typing.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	public void PasteText(string text)
+	{
 		// Terminals send pasted line breaks as Enter. The end marker is taken out of the text so a paste can't end the
 		// bracket early and have the rest typed as commands.
 		text = text.Replace("\r\n", "\r", StringComparison.Ordinal).Replace('\n', '\r');
@@ -91,7 +96,8 @@ internal sealed partial class TerminalView
 		e.Handled = true;
 
 		// Ctrl+C copies when text is selected and interrupts otherwise, as in the old screen. Ctrl+Shift+C and V are
-		// the usual terminal shortcuts, and Ctrl+V pastes too, as it did before.
+		// the usual terminal shortcuts, and Ctrl+V pastes too, as it did before. With an image on the clipboard, plain
+		// Ctrl+V goes through to the program instead, so a program that takes images can read it from the clipboard.
 		if (control && e.Key == Key.C && (shift || this.anchor is not null) && this.CopySelection())
 		{
 			return;
@@ -99,7 +105,7 @@ internal sealed partial class TerminalView
 
 		if (control && e.Key == Key.V)
 		{
-			_ = this.PasteAsync();
+			_ = this.PasteAsync(shift ? null : KeyEncoder.Encode(e.Key, e.KeyModifiers, e.KeySymbol, this.Screen.ApplicationCursorKeys, (this.Screen.KeyboardFlags & 1) != 0));
 
 			return;
 		}

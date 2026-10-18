@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Input;
+using Sharpie.Features.Vt;
 
 namespace Sharpie.Features.Terminal;
 
@@ -22,7 +23,8 @@ internal static class TerminalMenu
 		var menu = new ContextMenu { ItemsSource = new[] { copy, paste } };
 
 		copy.Click += (_, _) => _ = view.CopySelection();
-		paste.Click += (_, _) => _ = view.PasteAsync();
+		// Paste does what Ctrl+V does, so an image on the clipboard reaches a program that reads it.
+		paste.Click += (_, _) => _ = view.PasteAsync(KeyEncoder.Encode(Key.V, KeyModifiers.Control, null, view.Screen.ApplicationCursorKeys, (view.Screen.KeyboardFlags & 1) != 0));
 		menu.Opening += (_, _) => copy.IsEnabled = view.SelectedText() is not null;
 
 		return menu;

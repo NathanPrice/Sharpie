@@ -86,6 +86,7 @@ internal sealed partial class TerminalView : Control
 		};
 		this.Screen.StylesRenumbered += (_, _) => this.rows.Clear();
 		this.ContextMenu = TerminalMenu.Create(this);
+		TerminalPaste.AttachDrop(this);
 
 		this.blink = new DispatcherTimer(BlinkInterval, DispatcherPriority.Background, (_, _) =>
 		{
