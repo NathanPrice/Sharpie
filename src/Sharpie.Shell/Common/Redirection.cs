@@ -187,6 +187,11 @@ internal sealed class Redirection : IDisposable
 	{
 		var (stream, operatorText, target) = redirect;
 
+		if (target.Ambiguous)
+		{
+			return Report(line, target, $"`{target.Text}`: ambiguous redirect", "this gives more than one name, or none", "put it in double quotes to keep it one name");
+		}
+
 		try
 		{
 			switch (operatorText)

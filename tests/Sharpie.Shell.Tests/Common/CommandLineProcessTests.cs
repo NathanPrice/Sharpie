@@ -1144,6 +1144,46 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks that an unquoted variable passes each of its words as its own argument, as bash does.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithUnquotedVariable_SplitsIntoArguments()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "F=\"-l -a\"; printf '[%s]' $F"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("[-l][-a]");
+		_ = run.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that a redirect to a variable that splits into two words is refused as ambiguous, failing only that
+	/// command with 1, as bash does, and creating no file.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithAmbiguousRedirect_FailsOnlyThatCommand()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", $"cd {CommandLine.Quote(folder)}; F=\"a b\"; echo hi > $F; echo \"status $?\""]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("status 1\n");
+			_ = run.Error.Should().Contain("ambiguous redirect").And.Contain("$F");
+			_ = Directory.GetFileSystemEntries(folder).Should().BeEmpty();
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that <c>${X:?message}</c> with <c>X</c> unset reports the message and ends a script with 127, as bash
 	/// does, running nothing after it.
 	/// </summary>

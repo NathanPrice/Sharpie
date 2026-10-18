@@ -119,7 +119,8 @@ public sealed class CommandLineTests
 	[InlineData("echo $10 ${10}", new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "ten" }, new[] { "echo", "10", "ten" })]
 	[InlineData("echo \"$1\" $3", new[] { "a b" }, new[] { "echo", "a b" })]
 	[InlineData("echo $# $#x", new string[0], new[] { "echo", "0", "0x" })]
-	[InlineData("echo $@", new[] { "a", "b c" }, new[] { "echo", "a", "b c" })]
+	[InlineData("echo $@", new[] { "a", "b c" }, new[] { "echo", "a", "b", "c" })]
+	[InlineData("echo $*", new[] { "a b", "c" }, new[] { "echo", "a", "b", "c" })]
 	[InlineData("echo ${@} ${*}", new[] { "a", "b" }, new[] { "echo", "a", "b", "a", "b" })]
 	[InlineData("echo \"$@\"", new[] { "a", "", "b" }, new[] { "echo", "a", "", "b" })]
 	[InlineData("echo $@", new[] { "a", "", "b" }, new[] { "echo", "a", "b" })]
@@ -134,6 +135,8 @@ public sealed class CommandLineTests
 	[InlineData("echo \"$*\"", new string[0], new[] { "echo", "" })]
 	[InlineData("echo '$@' \\$@ ${@", new[] { "a" }, new[] { "echo", "$@", "$@", "${@" })]
 	[InlineData("echo \"$@\" | wc", new[] { "a", "b" }, new[] { "echo", "a", "b", "|", "wc" })]
+	[InlineData("echo ${N:-\"$@\"}", new[] { "a b", "c" }, new[] { "echo", "a b", "c" })]
+	[InlineData("echo ${N:-$@}", new[] { "a b", "c" }, new[] { "echo", "a", "b", "c" })]
 	public void Split_WithPositionalParameters_ExpandsThem(string line, string[] parameters, string[] expected)
 	{
 		// Arrange
@@ -147,6 +150,225 @@ public sealed class CommandLineTests
 
 		// Assert
 		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that an unquoted variable splits on space, tab and newline when <c>IFS</c> isn't set, except where bash
+	/// keeps it whole: inside double quotes, in an assignment and in a here-string.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="expected">The words the line should produce.</param>
+	[Theory]
+	[InlineData("ls $F", new[] { "ls", "-l", "-a" })]
+	[InlineData("echo \"$F\"", new[] { "echo", "-l -a" })]
+	[InlineData("echo x${S}y", new[] { "echo", "x", "a", "b", "y" })]
+	[InlineData("A=$F", new[] { "A=-l -a" })]
+	[InlineData("export A=$F", new[] { "export", "A=-l -a" })]
+	[InlineData("echo A=$F", new[] { "echo", "A=-l", "-a" })]
+	[InlineData("cat <<< $S", new[] { "cat", "<<<", "  a  b  " })]
+	[InlineData("echo > $O", new[] { "echo", ">", "out" })]
+	[InlineData("echo ${N:-$G}", new[] { "echo", "a", "b", "c" })]
+	[InlineData("A=${N:-a  b}", new[] { "A=a  b" })]
+	[InlineData("echo ${F#-l}", new[] { "echo", "-a" })]
+	[InlineData("echo $E x", new[] { "echo", "x" })]
+	public void Split_WithUnquotedVariable_SplitsOnIfs(string line, string[] expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["F"] = "-l -a", ["S"] = "  a  b  ", ["G"] = "a b\tc", ["E"] = string.Empty, ["O"] = "  out  " };
+
+		// Act
+		var words = CommandLine.Split(line, variables);
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that unquoted expansions split on <c>IFS</c> as bash splits them, where blanks run together and any
+	/// other separator ends a field by itself.
+	/// </summary>
+	/// <param name="ifs">The value of <c>IFS</c>, or <see langword="null" /> to leave it unset.</param>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="expected">The words the line should produce.</param>
+	[Theory]
+	[InlineData(":", "p $V", new[] { "p", "a", "", "b" })]
+	[InlineData(":", "p $L", new[] { "p", "", "a" })]
+	[InlineData(":", "p x$L", new[] { "p", "x", "a" })]
+	[InlineData(":", "$L x", new[] { "", "a", "x" })]
+	[InlineData(":", "p \"\"$L", new[] { "p", "", "a" })]
+	[InlineData(":", "p $B", new[] { "p", "a b" })]
+	[InlineData(" :", "p $C", new[] { "p", "a", "b" })]
+	[InlineData(" :", "p $D", new[] { "p", "", "a" })]
+	[InlineData(" :", "p $H", new[] { "p", "a", "", "b" })]
+	[InlineData(" :", "p $X$Y", new[] { "p", "a", "b" })]
+	[InlineData(" :", "p $X $Y", new[] { "p", "a", "", "b" })]
+	[InlineData("", "p $B", new[] { "p", "a b" })]
+	[InlineData("", "p ${N:-a b}", new[] { "p", "a b" })]
+	[InlineData(null, "p $T", new[] { "p", "a", "b", "c" })]
+	[InlineData(":", "p $(x)", new[] { "p", "a", "b" })]
+	[InlineData(":", "p ${N:-a b}", new[] { "p", "a b" })]
+	[InlineData(":", "p ${N:-a:b}", new[] { "p", "a", "b" })]
+	[InlineData(":", "p ${N:-a::b}", new[] { "p", "a", "", "b" })]
+	[InlineData(":", "p ${N:-\"a:b\":c}", new[] { "p", "a:b", "c" })]
+	[InlineData(":", "p ${N:-a\\:b}", new[] { "p", "a:b" })]
+	[InlineData(":", "p ${N:-:a}", new[] { "p", "", "a" })]
+	[InlineData(":", "p x${N:-:a}", new[] { "p", "x", "a" })]
+	[InlineData(":", "A=${N:-a:b}", new[] { "A=a:b" })]
+	[InlineData(" :", "p $X${N:-:b}", new[] { "p", "a", "b" })]
+	[InlineData(" :", "p ${N:-a :b}", new[] { "p", "a", "b" })]
+	[InlineData(null, "p x${N:- a}", new[] { "p", "x", "a" })]
+	[InlineData(null, "p ${N:-a }y", new[] { "p", "a", "y" })]
+	[InlineData(null, "p ${N:-\"$B\"}", new[] { "p", "a b" })]
+	[InlineData(null, "p ${N:-a \"b c\"  d}", new[] { "p", "a", "b c", "d" })]
+	[InlineData(null, "p ${N:-\"\"}", new[] { "p", "" })]
+	[InlineData(null, "p ${N:- }", new[] { "p" })]
+	[InlineData(null, "p ${N:-\"\" x}", new[] { "p", "", "x" })]
+	[InlineData(null, "p ${N:-$X}y", new[] { "p", "a", "y" })]
+	[InlineData(null, "p ${N:-${M:-\"\"} x}", new[] { "p", "", "x" })]
+	public void Split_WithIfs_SplitsAsBash(string? ifs, string line, string[] expected)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string>
+		{
+			["V"] = "a::b:",
+			["L"] = ":a",
+			["B"] = "a b",
+			["C"] = "a : b",
+			["D"] = " :a",
+			["H"] = "a: :b",
+			["X"] = "a ",
+			["Y"] = ":b",
+			["T"] = "a\tb\nc",
+		};
+
+		if (ifs is not null)
+		{
+			variables["IFS"] = ifs;
+		}
+
+		// Act
+		var words = CommandLine.Split(line, variables, substitute: _ => "a:b");
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>"$*"</c> joins the parameters with the first character of <c>IFS</c>, as unquoted <c>$*</c> does
+	/// where nothing splits, and that a here-document joins them with spaces, as bash does.
+	/// </summary>
+	/// <param name="ifs">The value of <c>IFS</c>, or <see langword="null" /> to leave it unset.</param>
+	/// <param name="line">The command line to split, with <c>a</c>, <c>b</c> and <c>c</c> as the parameters.</param>
+	/// <param name="expected">The words the line should produce.</param>
+	[Theory]
+	[InlineData(":", "echo \"$*\"", new[] { "echo", "a:b:c" })]
+	[InlineData(":", "echo \"${*}\"", new[] { "echo", "a:b:c" })]
+	[InlineData(":", "echo \"${*#a}\"", new[] { "echo", ":b:c" })]
+	[InlineData(":", "echo \"${*:-z}\"", new[] { "echo", "a:b:c" })]
+	[InlineData(":", "echo \"$@\"", new[] { "echo", "a", "b", "c" })]
+	[InlineData(":", "echo $*", new[] { "echo", "a", "b", "c" })]
+	[InlineData(", ", "echo \"$*\"", new[] { "echo", "a,b,c" })]
+	[InlineData("", "echo \"$*\"", new[] { "echo", "abc" })]
+	[InlineData(null, "echo \"$*\"", new[] { "echo", "a b c" })]
+	[InlineData(":", "A=$*", new[] { "A=a:b:c" })]
+	[InlineData(":", "A=$@", new[] { "A=a b c" })]
+	[InlineData(":", "[[ $* ]]", new[] { "[[", "a:b:c", "]]" })]
+	[InlineData(":", "cat <<< $*", new[] { "cat", "<<<", "a:b:c" })]
+	[InlineData(":", "cat <<EOF\n$* ${*#a} $@\nEOF", new[] { "cat", "<<", "a b c  b c a b c\n" })]
+	public void Split_WithStarParameter_JoinsOnIfs(string? ifs, string line, string[] expected)
+	{
+		// Arrange
+		var declare = new DeclareCommand(new ShellSettings());
+
+		declare.SetPositional(["a", "b", "c"]);
+
+		if (ifs is not null)
+		{
+			declare.Set("IFS", ifs);
+		}
+
+		// Act
+		var words = CommandLine.Split(line, declare.Variables);
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that a redirect's file name or stream that splits into more than one word or into none comes back as one
+	/// ambiguous word holding it as typed, and one that gives exactly one word doesn't.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="target">The text the word after the operator should have.</param>
+	/// <param name="ambiguous">Whether it should be ambiguous.</param>
+	[Theory]
+	[InlineData("echo > $F", "$F", true)]
+	[InlineData("echo > ${F}", "${F}", true)]
+	[InlineData("echo > x$F", "x$F", true)]
+	[InlineData("echo > $E", "$E", true)]
+	[InlineData("echo 2>&$X", "$X", true)]
+	[InlineData("echo > $O", "out", false)]
+	[InlineData("echo > \"$F\"", "a b", false)]
+	[InlineData("echo > ''", "", false)]
+	[InlineData("cat <<< $F", "a b", false)]
+	public void Split_WithSplitRedirectTarget_MarksItAmbiguous(string line, string target, bool ambiguous)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["F"] = "a b", ["E"] = string.Empty, ["O"] = "  out  ", ["X"] = "1 2" };
+
+		// Act
+		var words = CommandLine.Split(line, variables);
+
+		// Assert
+		_ = words.Should().HaveCount(3);
+		_ = (words[2].Text, words[2].Ambiguous).Should().Be((target, ambiguous));
+	}
+
+	/// <summary>
+	/// Checks that an ambiguous redirect target covers only the word typed after the operator, so the words after it
+	/// stay arguments, and that it points at that word.
+	/// </summary>
+	[Fact]
+	public void Split_WithAmbiguousRedirectBeforeArgument_KeepsArgument()
+	{
+		// Act
+		var words = CommandLine.Split("echo >$F x", new Dictionary<string, string> { ["F"] = "a b" });
+
+		// Assert
+		_ = words.Should().Equal(
+			new Word("echo", IsOperator: false, 0, 4),
+			new Word(">", IsOperator: true, 5, 6),
+			new Word("$F", IsOperator: false, 6, 8, Ambiguous: true),
+			new Word("x", IsOperator: false, 9, 10));
+	}
+
+	/// <summary>
+	/// Checks that a redirect to a wildcard that matches more than one file is ambiguous, and one that matches a single
+	/// file names it.
+	/// </summary>
+	[Fact]
+	public void Split_WithRedirectToWildcard_IsAmbiguousOnlyForSeveralFiles()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+
+		try
+		{
+			File.WriteAllText(Path.Combine(folder, "x1.tmp"), string.Empty);
+			File.WriteAllText(Path.Combine(folder, "x2.tmp"), string.Empty);
+
+			// Act
+			var several = CommandLine.Split($"echo > {folder}/*.tmp", new Dictionary<string, string>());
+			var one = CommandLine.Split($"echo > {folder}/x1*", new Dictionary<string, string>());
+
+			// Assert
+			_ = (several[2].Text, several[2].Ambiguous).Should().Be(($"{folder}/*.tmp", true));
+			_ = (one[2].Text, one[2].Ambiguous).Should().Be((Path.Combine(folder, "x1.tmp"), false));
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
 	}
 
 	/// <summary>
@@ -1427,7 +1649,8 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
-	/// Checks that <c>${X:=value}</c> stores the value in the shell's variables.
+	/// Checks that <c>${X:=value}</c> stores the value in the shell's variables whole, while the unquoted expansion
+	/// splits, as in bash.
 	/// </summary>
 	[Fact]
 	public void Split_WithAssigningDefault_StoresVariable()
@@ -1439,7 +1662,7 @@ public sealed class CommandLineTests
 		var words = CommandLine.Split("echo ${SHARPIE_SAMPLE_UNSET:=v w}", declare.Variables);
 
 		// Assert
-		_ = words.Select(word => word.Text).Should().Equal("echo", "v w");
+		_ = words.Select(word => word.Text).Should().Equal("echo", "v", "w");
 		_ = declare.Variables["SHARPIE_SAMPLE_UNSET"].Should().Be("v w");
 	}
 

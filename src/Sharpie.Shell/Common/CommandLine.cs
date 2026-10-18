@@ -21,7 +21,11 @@ namespace Sharpie.Shell.Common;
 /// backslash, for <c>==</c>, or for the word after <c>=~</c>, with quoted text escaped by
 /// <see cref="System.Text.RegularExpressions.Regex.Escape" />. <see langword="null" /> everywhere else.
 /// </param>
-internal readonly record struct Word(string Text, bool IsOperator, int Start = 0, int End = 0, string? Pattern = null);
+/// <param name="Ambiguous">
+/// <see langword="true" /> for a redirect's file name or stream that split into more than one word or into none, which
+/// bash refuses as an "ambiguous redirect". <see cref="Text" /> then holds it as typed, such as <c>$F</c>.
+/// </param>
+internal readonly record struct Word(string Text, bool IsOperator, int Start = 0, int End = 0, string? Pattern = null, bool Ambiguous = false);
 
 /// <summary>
 /// One redirect taken out of a command's words, such as <c>2&gt;&amp;1</c> or <c>&lt; in.txt</c>.
@@ -66,6 +70,27 @@ internal static partial class CommandLine
 	/// The highest stream number a redirect may name. A bigger one is refused rather than handed to the system.
 	/// </summary>
 	internal const int MaxStream = 255;
+
+	/// <summary>
+	/// The separators used when <c>IFS</c> isn't set: space, tab and newline.
+	/// </summary>
+	private const string DefaultSeparators = " \t\n";
+
+	/// <summary>
+	/// Marks a quoted character of a <see cref="WordForm.Value" /> word.
+	/// </summary>
+	private const char QuotedMark = 'q';
+
+	/// <summary>
+	/// Marks an unquoted character of a <see cref="WordForm.Value" /> word, which splits and matches file names.
+	/// </summary>
+	private const char UnquotedMark = 'u';
+
+	/// <summary>
+	/// Marks where a quoted part starts in a <see cref="WordForm.Value" /> word, for no character of it, so an empty
+	/// one like <c>""</c> still makes a word.
+	/// </summary>
+	private const char EmptyQuoteMark = 'e';
 
 	/// <summary>
 	/// The characters of a stream number typed before a redirect operator.
@@ -142,14 +167,29 @@ internal static partial class CommandLine
 	/// <c>${A:offset}</c> and <c>${A:offset:length}</c> take a substring, with a negative offset counting from the end.
 	/// Any other form throws <see cref="ExpansionError" />. <c>$?</c> is the last command's exit status,
 	/// <c>$$</c> the shell's process id, <c>$!</c> the last background program's and <c>$-</c> the letters of the
-	/// options that are on. Values aren't split on spaces.
+	/// options that are on.
 	/// </para>
 	/// <para>
 	/// <c>$1</c> to <c>$9</c> and <c>${10}</c> onwards are the positional parameters, <c>$#</c> their count and
 	/// <c>$0</c> the shell or script name. <c>$@</c> and <c>$*</c> give one word per parameter, with the text touching
 	/// them joined to the first and last, so <c>"a$@b"</c> with <c>1</c> and <c>2</c> gives <c>a1</c> and <c>2b</c>.
-	/// <c>"$*"</c> gives one word with the parameters separated by spaces. <c>"$@"</c> with no parameters gives no word
-	/// at all, as in bash.
+	/// <c>"$*"</c> gives one word with the parameters separated by the first character of <c>IFS</c>, a space when
+	/// <c>IFS</c> isn't set and nothing when it's empty. Where nothing is split, as in <c>A=$*</c>, unquoted <c>$*</c>
+	/// joins the same way and <c>$@</c> joins with spaces. <c>"$@"</c> with no parameters gives no word at all, as in
+	/// bash.
+	/// </para>
+	/// <para>
+	/// When <paramref name="variables" /> is given, an unquoted expansion's value, each parameter of <c>$@</c> and
+	/// <c>$*</c> included, is split into words on the characters of <c>IFS</c>, or on space, tab and newline when
+	/// <c>IFS</c> isn't set, so <c>ls $F</c> with <c>F="-l -a"</c> passes two arguments. Spaces, tabs and newlines in
+	/// <c>IFS</c> run together and add nothing at either end; any other character ends a word by itself, so with
+	/// <c>IFS=:</c> the value <c>a::b</c> gives <c>a</c>, an empty word and <c>b</c>. An empty <c>IFS</c> splits
+	/// nothing. As in bash, nothing is split inside double quotes, in a <c>NAME=value</c> word before the command or
+	/// after <c>export</c> or <c>declare</c>, between <c>[[</c> and <c>]]</c> or in a here-string. In an unquoted
+	/// <c>${A:-word}</c> the word's unquoted text splits on <c>IFS</c> too, together with the text around it, and its
+	/// quoted text doesn't, so with <c>IFS=:</c> the default <c>a b</c> stays one word. A redirect's file name or
+	/// stream that splits into more than one word or into none, or matches more than one file, comes back as one
+	/// <see cref="Word.Ambiguous" /> word, which bash refuses as an "ambiguous redirect".
 	/// </para>
 	/// <para>
 	/// When <paramref name="variables" /> is given, an unquoted <c>~</c> at the start of a word becomes the home
@@ -169,10 +209,9 @@ internal static partial class CommandLine
 	/// gives for the list, with NUL characters and trailing newlines removed. Inside backquotes a backslash before
 	/// <c>`</c>, <c>\</c> or <c>$</c> is dropped, and before <c>"</c> too inside double quotes, as in bash. Inside double
 	/// quotes the output stays one word, so <c>"$(true)"</c> is an empty argument. In a <c>NAME=value</c> word it isn't
-	/// split either, so <c>A=$(cmd)</c> keeps its spaces. Anywhere else a space, tab or newline in the output ends the
-	/// word, as with bash's default <c>IFS</c>, and wildcards in it match file names, so <c>kill $(pgrep x)</c> passes
-	/// each id as its own argument and an empty output adds none. <c>$((</c> is arithmetic, not a substitution, and
-	/// stays as typed.
+	/// split either, so <c>A=$(cmd)</c> keeps its spaces. Anywhere else the output splits on <c>IFS</c> as a value does,
+	/// and wildcards in it match file names, so <c>kill $(pgrep x)</c> passes each id as its own argument and an empty
+	/// output adds none. <c>$((</c> is arithmetic, not a substitution, and stays as typed.
 	/// </para>
 	/// <para>
 	/// An unquoted newline ends the words, and the here-document bodies follow it. The word after each <c>&lt;&lt;</c>
@@ -190,7 +229,7 @@ internal static partial class CommandLine
 	/// </remarks>
 	public static Word[] Split(string line, IReadOnlyDictionary<string, string>? variables = null, Action<Word>? unset = null, Func<string, string>? substitute = null)
 	{
-		var words = SplitWords(line, variables, unset, substitute, out var position);
+		var words = SplitWords(line, variables, unset, substitute, variables is null ? null : FieldSeparators(variables), out var position);
 
 		foreach (var index in HereDocumentTargets(words))
 		{
@@ -222,8 +261,13 @@ internal static partial class CommandLine
 		/// <summary>The word as a pattern for <see cref="Glob.IsMatch" />, its quoted parts escaped.</summary>
 		Pattern,
 
-		/// <summary>The word with its quotes removed, and as a pattern in <see cref="Word.Pattern" />.</summary>
-		Spliced,
+		/// <summary>
+		/// The word with its quotes removed, and in <see cref="Word.Pattern" /> a <see cref="QuotedMark" /> or
+		/// <see cref="UnquotedMark" /> for each character and an <see cref="EmptyQuoteMark" /> where each quoted part
+		/// starts, for an unquoted <c>${X:-word}</c>. Blanks don't end it, and
+		/// nothing in it splits, since the word it's spliced into splits it.
+		/// </summary>
+		Value,
 	}
 
 	/// <summary>
@@ -237,7 +281,7 @@ internal static partial class CommandLine
 	/// The word with its variables and substitutions expanded and its quotes removed, but no wildcards matched.
 	/// </returns>
 	internal static string ExpandText(string typed, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset = null, Func<string, string>? substitute = null) =>
-		string.Join(' ', SplitWords(typed, variables, unset, substitute, out _, WordForm.Text).Select(word => word.Text));
+		string.Join(' ', SplitWords(typed, variables, unset, substitute, separators: null, out _, WordForm.Text).Select(word => word.Text));
 
 	/// <summary>
 	/// Expands a <c>case</c> pattern into a pattern for <see cref="Glob.IsMatch" />.
@@ -251,7 +295,7 @@ internal static partial class CommandLine
 	/// backslash so it matches only itself, as in bash, where <c>"*")</c> matches only a <c>*</c>.
 	/// </returns>
 	internal static string Pattern(string typed, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset = null, Func<string, string>? substitute = null) =>
-		string.Join(' ', SplitWords(typed, variables, unset, substitute, out _, WordForm.Pattern).Select(word => word.Text));
+		string.Join(' ', SplitWords(typed, variables, unset, substitute, separators: null, out _, WordForm.Pattern).Select(word => word.Text));
 
 	/// <summary>
 	/// Splits the first line of <paramref name="line" /> into words, as <see cref="Split" /> describes, leaving each
@@ -261,6 +305,10 @@ internal static partial class CommandLine
 	/// <param name="variables">The shell variables, or <see langword="null" /> to expand nothing.</param>
 	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
 	/// <param name="substitute">Runs a command substitution, as <see cref="Split" /> describes.</param>
+	/// <param name="separators">
+	/// The characters an unquoted expansion splits on, as <see cref="FieldSeparators" /> gives them, or
+	/// <see langword="null" /> to split none.
+	/// </param>
 	/// <param name="bodyStart">
 	/// Where the text after the first unquoted newline starts, or the line's length when there is none.
 	/// </param>
@@ -268,241 +316,122 @@ internal static partial class CommandLine
 	/// <returns>
 	/// The words.
 	/// </returns>
-	private static Word[] SplitWords(string line, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset, Func<string, string>? substitute, out int bodyStart, WordForm form = WordForm.Expanded)
+	private static Word[] SplitWords(string line, IReadOnlyDictionary<string, string>? variables, Action<Word>? unset, Func<string, string>? substitute, string? separators, out int bodyStart, WordForm form = WordForm.Expanded) =>
+		new WordReader(line.ArgumentNotNull(), variables, unset, substitute, separators, form).Read(out bodyStart);
+
+	/// <summary>
+	/// Gets what an unquoted expansion read at this point splits on.
+	/// </summary>
+	/// <param name="quote">The quote that's open, or <see langword="null" />.</param>
+	/// <param name="inCondition"><see langword="true" /> between <c>[[</c> and <c>]]</c>.</param>
+	/// <param name="word">The word read so far.</param>
+	/// <param name="words">The words before it.</param>
+	/// <param name="separators">What expansions split on elsewhere, or <see langword="null" />.</param>
+	/// <returns>
+	/// <paramref name="separators" />, or <see langword="null" /> inside quotes, between <c>[[</c> and <c>]]</c>, in an
+	/// assignment as <see cref="IsAssignmentWord" /> describes, and in a here-string or here-document delimiter.
+	/// </returns>
+	private static string? SeparatorsHere(char? quote, bool inCondition, string word, List<Word> words, string? separators) =>
+		quote is null && !inCondition && !IsAssignmentWord(word, words) && TargetAfter(words) != TargetKind.Text ? separators : null;
+
+	/// <summary>
+	/// Works out what a separator in an unquoted expansion does to the word being read.
+	/// </summary>
+	/// <param name="blank"><see langword="true" /> for a space, tab or newline.</param>
+	/// <param name="hasWord"><see langword="true" /> when a word is being read.</param>
+	/// <param name="blankEnded"><see langword="true" /> when an expansion's blank ended the last word.</param>
+	/// <returns>
+	/// <c>Ends</c> is <see langword="true" /> when there's a word to end, or the separator isn't a blank and closes an
+	/// empty field, as the second <c>:</c> in <c>a::b</c> does. A separator such as <c>:</c> right after a blank that
+	/// ended a word goes with that blank instead, as in bash. <c>BlankEnded</c> is what the next separator sees.
+	/// </returns>
+	private static (bool Ends, bool BlankEnded) Separate(bool blank, bool hasWord, bool blankEnded)
 	{
-		_ = line.ArgumentNotNull();
+		var ends = hasWord || !(blank || blankEnded);
 
-		// Where the here-document bodies start, after the first unquoted newline.
-		var body = line.Length;
-		var words = new List<Word>();
+		return (ends, blank && (ends || blankEnded));
+	}
 
-		// The variables and substitutions the word being read expands, which are none in a here-document's delimiter.
-		var expand = variables;
-		var run = substitute;
-		var word = new StringBuilder();
-
-		// The quote character that's currently open, or null outside quotes.
-		char? quote = null;
-
-		// True right after an escaping backslash, so the next character goes into the word with no special meaning.
-		var escaped = false;
-
-		// Tracked apart from word.Length because '' on its own is still an argument, just an empty one.
-		var hasWord = false;
-
-		// Where the current word starts in the line, so digits typed right before a redirect can be told apart.
-		var wordStart = 0;
-
-		// The word again for Glob.Expand, with each quoted or escaped wildcard behind a backslash so it matches only
-		// itself.
-		var pattern = new StringBuilder();
-
-		// Just past the last $NAME or substitution, so a # right after one that added nothing isn't a comment.
-		var afterExpansion = -1;
-
-		// Where the words are between [[ and ]], which read differently.
-		var condition = new ConditionWords();
-
-		for (var index = 0; index < line.Length; index++)
+	/// <summary>
+	/// Cuts an expansion's text at each separator.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	/// <param name="separators">The characters that split it, or <see langword="null" /> to keep it whole.</param>
+	/// <returns>
+	/// In order, each run of text between separators as <c>Run</c>, and each separator as a <see langword="null" />
+	/// <c>Run</c>, with <c>Blank</c> telling whether it's a space, tab or newline.
+	/// </returns>
+	private static IEnumerable<(string? Run, bool Blank)> SeparatorRuns(string text, string? separators)
+	{
+		for (var start = 0; start < text.Length;)
 		{
-			var character = line[index];
+			var length = text.AsSpan(start).IndexOfAny(separators) is var found and >= 0 ? found : text.Length - start;
 
-			if (!hasWord)
+			if (length > 0)
 			{
-				StartWord(index);
-			}
-
-			if (escaped)
-			{
-				Append(KeptBackslash(quote, character), quoted: true);
-				Append(line.AsSpan(index, 1), quoted: true);
-				escaped = false;
+				yield return (text.Substring(start, length), false);
+				start += length;
 			}
 			else
 			{
-				switch (quote)
-				{
-					case null or '"' when character == '\\':
-						escaped = true;
-						hasWord = true;
-
-						break;
-					case null or '"' when SubstitutionEnd(line, index) is var close and >= 0:
-						Substitute(index, close);
-						index = close;
-
-						break;
-					case null or '"' when TryExpand(line, index, expand, quote is not null, unset, run, out var parts, out var patterns, out var end):
-						AppendParts(parts, quoted: quote is not null, end, patterns);
-						afterExpansion = end + 1;
-						index = end;
-
-						break;
-					case null when TryExpandTilde(line, index, word, hasWord, expand, out var home, out var tildeEnd):
-						Append(home, quoted: true);
-						hasWord = true;
-						index = tildeEnd;
-
-						break;
-					case null when StartsComment(character, hasWord, index, afterExpansion):
-						index = LineEnd(line, index) - 1;
-
-						break;
-					case null when character is '\'' or '"':
-						quote = character;
-						hasWord = true;
-
-						break;
-					default:
-						index = ReadPlain(character, index);
-
-						break;
-				}
-			}
-		}
-
-		if (escaped)
-		{
-			Append("\\", quoted: true);
-		}
-
-		EndWord(line.Length);
-		bodyStart = body;
-
-		return [.. words];
-
-		// Gets ready for a word that may start at index.
-		void StartWord(int index)
-		{
-			wordStart = index;
-			_ = pattern.Clear();
-
-			// A here-document's delimiter is matched as typed, so <<$X ends at a line holding $X, and <<$(x) at $(x).
-			(expand, run) = IsDelimiter(words) ? (null, null) : (variables, substitute);
-		}
-
-		// Reads a character that isn't a quote opening, an escape or an expansion, and gives the position of the last
-		// character it used.
-		int ReadPlain(char character, int index)
-		{
-			if (character == quote)
-			{
-				quote = null;
-			}
-			else if (quote is null && condition.OperatorAt(line, index) is { } typed)
-			{
-				// With no word yet the span is empty, since wordStart is then this very index.
-				var stream = condition.IsStreamNumber(line.AsSpan(wordStart, index - wordStart), typed) ? TakeWord() : string.Empty;
-				// Taken digits are exactly the text typed before the operator, since IsStreamNumber allows nothing else.
-				var start = index - stream.Length;
-
-				EndWord(index);
-				words.Add(new Word(stream + typed, IsOperator: true, start, index + typed.Length));
-
-				return index + typed.Length - 1;
-			}
-			else if (quote is null && condition.EndsWord(character))
-			{
-				EndWord(index);
-
-				return character == '\n' ? EndLine(index) : index;
-			}
-			else
-			{
-				Append(line.AsSpan(index, 1), quoted: quote is not null);
-
-				hasWord = true;
-			}
-
-			return index;
-		}
-
-		// Ends the words at the newline at index, since the here-document bodies follow it, and gives the position
-		// that ends the loop.
-		int EndLine(int index)
-		{
-			body = index + 1;
-
-			return line.Length;
-		}
-
-		// Gives the word read so far and starts a new one.
-		string TakeWord()
-		{
-			var text = word.ToString();
-
-			_ = word.Clear();
-			hasWord = false;
-
-			return text;
-		}
-
-		// Adds the output of the substitution that runs from start to close, or the text as typed with no substitute,
-		// split into words the way a $@ expansion is.
-		void Substitute(int start, int close)
-		{
-			var (fields, quoted) = SubstitutionFields(line, start, close, quote, word.ToString(), words, run, condition.Active);
-
-			AppendParts(fields, quoted, close);
-			afterExpansion = close + 1;
-		}
-
-		// Adds text to the word and to its pattern, which for the word after =~ is a regular expression.
-		void Append(ReadOnlySpan<char> text, bool quoted)
-		{
-			_ = word.Append(text);
-			AppendPattern(pattern, text, quoted, condition.Regex);
-		}
-
-		// Adds what a $ expansion gave, each part as a word of its own, the first joined to the text before it and the
-		// last to the text after it. An unquoted empty part adds no word, and a quoted one adds an empty word. Parts that
-		// come with patterns are words of an unquoted ${X:-word}, which bash reads as if typed there.
-		void AppendParts(string[] parts, bool quoted, int end, string[]? patterns = null)
-		{
-			for (var part = 0; part < parts.Length; part++)
-			{
-				if (part > 0)
-				{
-					EndWord(end + 1);
-					_ = pattern.Clear();
-				}
-
-				// shortcut: after =~ a spliced part's pattern escapes quoted text as a glob, not a regular expression; add a regex form to Spliced if a quoted default there needs it.
-				if (patterns is null)
-				{
-					Append(parts[part], quoted);
-					hasWord |= condition.KeepsPart(parts[part], quoted);
-				}
-				else
-				{
-					_ = word.Append(parts[part]);
-					_ = pattern.Append(patterns[part]);
-					hasWord = true;
-				}
-			}
-
-			// "$@" with no parameters is no word at all, not an empty one, unless more text touches it.
-			hasWord &= parts.Length > 0 || word.Length > 0;
-		}
-
-		// Adds the word read so far, if there is one, ending at end, or the file names its wildcards match. An unquoted
-		// [[ first and the ]] after it are operators, and the words between them keep their pattern instead.
-		void EndWord(int end)
-		{
-			if (hasWord)
-			{
-				var text = TakeWord();
-
-				words.AddRange(form switch
-				{
-					WordForm.Text => [new Word(text, IsOperator: false, wordStart, end)],
-					WordForm.Pattern => [new Word(pattern.ToString(), IsOperator: false, wordStart, end)],
-					WordForm.Spliced => [new Word(text, IsOperator: false, wordStart, end, pattern.ToString())],
-					WordForm.Expanded or _ => FinishedWords(condition, text, wordStart, end, pattern, line, variables, words),
-				});
+				yield return (null, text[start] is ' ' or '\t' or '\n');
+				start++;
 			}
 		}
 	}
+
+	/// <summary>
+	/// Cuts a <see cref="WordForm.Value" /> word into its quoted and unquoted runs.
+	/// </summary>
+	/// <param name="text">The word.</param>
+	/// <param name="quoting">
+	/// A <see cref="QuotedMark" /> or <see cref="UnquotedMark" /> for each character, and an
+	/// <see cref="EmptyQuoteMark" /> where each quoted part starts.
+	/// </param>
+	/// <returns>
+	/// In order, each longest run of characters that are all quoted or all unquoted, and an empty quoted run for each
+	/// <see cref="EmptyQuoteMark" />.
+	/// </returns>
+	private static IEnumerable<(string Run, bool Quoted)> QuotedRuns(string text, string quoting)
+	{
+		for (int mark = 0, start = 0; mark < quoting.Length;)
+		{
+			var kind = quoting[mark];
+			var length = kind == EmptyQuoteMark ? 0 : quoting.AsSpan(mark).IndexOfAnyExcept(kind) is var found and >= 0 ? found : quoting.Length - mark;
+
+			yield return (text.Substring(start, length), kind != UnquotedMark);
+			mark += Math.Max(length, 1);
+			start += length;
+		}
+	}
+
+	/// <summary>
+	/// Gets what <c>$*</c> joins its parameters with where it gives one word.
+	/// </summary>
+	/// <param name="variables">The shell variables.</param>
+	/// <returns>
+	/// The first character of <c>IFS</c>, a space when <c>IFS</c> isn't set, or nothing when it's empty, as in bash.
+	/// </returns>
+	private static string ParameterJoiner(IReadOnlyDictionary<string, string> variables) =>
+		FieldSeparators(variables) is [var first, ..] ? first.ToString() : string.Empty;
+
+	/// <summary>
+	/// Gets the words <c>$@</c> or <c>$*</c> gives, or the <c>${@...}</c> and <c>${*...}</c> forms.
+	/// </summary>
+	/// <param name="parameters">The positional parameters, each already changed by the form's operator.</param>
+	/// <param name="star"><see langword="true" /> for <c>*</c>.</param>
+	/// <param name="quoted"><see langword="true" /> inside double quotes or a here-document.</param>
+	/// <param name="separators">What the words split on, or <see langword="null" /> where they aren't split.</param>
+	/// <param name="joiner">What <c>*</c> joins the parameters with.</param>
+	/// <returns>
+	/// One word per parameter, except that <c>"$*"</c> joins them with <paramref name="joiner" />. Unquoted where
+	/// nothing is split, as in <c>A=$*</c> or <c>[[ $@ ]]</c>, both give one word, <c>*</c> joined with
+	/// <paramref name="joiner" /> and <c>@</c> with spaces, as in bash.
+	/// </returns>
+	private static string[] ListParts(IEnumerable<string> parameters, bool star, bool quoted, string? separators, string joiner) =>
+		star && quoted ? [string.Join(joiner, parameters)]
+		: quoted || separators is not null ? [.. parameters]
+		: [string.Join(star ? joiner : " ", parameters)];
 
 	/// <summary>
 	/// Gets the words a finished word adds.
@@ -671,36 +600,22 @@ internal static partial class CommandLine
 		line[index] == '`' || (line.AsSpan(index).StartsWith("$(", StringComparison.Ordinal) && !line.AsSpan(index).StartsWith("$((", StringComparison.Ordinal));
 
 	/// <summary>
-	/// Runs the substitution from <paramref name="start" /> to <paramref name="close" /> and cuts its output into the
-	/// words it adds.
+	/// Runs the substitution from <paramref name="start" /> to <paramref name="close" />.
 	/// </summary>
 	/// <param name="line">The command line being split.</param>
 	/// <param name="start">The position of the <c>$(</c> or backquote.</param>
 	/// <param name="close">The position of the closing <c>)</c> or backquote.</param>
 	/// <param name="quote">The quote the substitution is inside, or <see langword="null" />.</param>
-	/// <param name="word">The word read so far.</param>
-	/// <param name="words">The words before it, which tell whether it's an assignment, as <see cref="IsAssignmentWord" /> describes.</param>
 	/// <param name="substitute">Runs the command list, or <see langword="null" /> to run nothing.</param>
-	/// <param name="inCondition"><see langword="true" /> between <c>[[</c> and <c>]]</c>, where nothing is split.</param>
+	/// <param name="separators">What the output splits on, as <see cref="SeparatorsHere" /> gives it.</param>
 	/// <returns>
-	/// The substitution as typed when <paramref name="substitute" /> is <see langword="null" />. Otherwise its output
-	/// with NUL characters and trailing newlines removed. Outside quotes, assignments and conditions it's split on spaces, tabs and
-	/// newlines into fields, where an empty field marks blanks with nothing between them. <c>Quoted</c> tells whether
-	/// wildcards in the fields only match themselves.
+	/// The substitution as typed when <paramref name="substitute" /> is <see langword="null" />, which isn't split.
+	/// Otherwise its output with NUL characters and trailing newlines removed, split on <c>Separators</c>.
+	/// <c>Quoted</c> tells whether its wildcards only match themselves.
 	/// </returns>
-	private static (string[] Fields, bool Quoted) SubstitutionFields(string line, int start, int close, char? quote, string word, List<Word> words, Func<string, string>? substitute, bool inCondition)
-	{
-		if (substitute is null)
-		{
-			return ([line[start..(close + 1)]], true);
-		}
-
-		var output = SubstitutionOutput(line, start, close, inDoubleQuotes: quote == '"', substitute);
-
-		var split = quote is null && !inCondition && !IsAssignmentWord(word, words);
-
-		return (split ? output.Split([' ', '\t', '\n']) : [output], quote is not null);
-	}
+	private static (string[] Fields, bool Quoted, string? Separators) SubstitutionFields(string line, int start, int close, char? quote, Func<string, string>? substitute, string? separators) =>
+		substitute is null ? ([line[start..(close + 1)]], true, null)
+		: ([SubstitutionOutput(line, start, close, inDoubleQuotes: quote == '"', substitute)], quote is not null, separators);
 
 	/// <summary>
 	/// Runs the substitution from <paramref name="start" /> to <paramref name="close" />.
@@ -819,30 +734,38 @@ internal static partial class CommandLine
 	/// <param name="variables">
 	/// The shell variables, or <see langword="null" /> when <see cref="Split" /> expands nothing, wildcards included.
 	/// </param>
-	/// <param name="words">The words before it, which tell whether it names a redirect's file or sets a variable.</param>
+	/// <param name="words">The words before it, which tell whether it's the text of a here-string or sets a variable.</param>
 	/// <returns>
-	/// The matching paths, or just <paramref name="text" /> when nothing matches, the word is a <c>NAME=value</c> in
-	/// front of the command or the text of a here-document or here-string, or it's a redirect's file that matches more
-	/// than one path.
+	/// The matching paths, or just <paramref name="text" /> when nothing matches or the word is a <c>NAME=value</c> in
+	/// front of the command or the text of a here-document or here-string.
 	/// </returns>
 	/// <remarks>
 	/// POSIX expands no wildcards in the <c>NAME=value</c> words in front of a command, so <c>A=*</c> keeps its
-	/// <c>*</c>, and bash expands none in <c>&lt;&lt;&lt; *</c>. Bash refuses a redirect to a pattern that matches more
-	/// than one file with "ambiguous redirect". Keeping the pattern as the file name at least never writes over the
-	/// first match; add that error if the message is missed.
+	/// <c>*</c>, and bash expands none in <c>&lt;&lt;&lt; *</c>. A redirect's file that matches more than one path is
+	/// refused as ambiguous once the word ends, as <see cref="Word.Ambiguous" /> says.
 	/// </remarks>
 	private static string[] ExpandWildcards(string text, StringBuilder pattern, IReadOnlyDictionary<string, string>? variables, List<Word> words)
 	{
-		var previous = words is [.., { IsOperator: true, Text: var typed }] ? RedirectKind(typed) : null;
+		var previous = TargetAfter(words);
 
 		// Operators are never assignments, so the command has no name yet when the last other word is one, or none is.
 		var last = words.FindLastIndex(word => !DeclareCommand.IsAssignment(word.Text));
 		var expand = variables is not null && previous != TargetKind.Text && !(DeclareCommand.IsAssignment(text) && (last < 0 || words[last].IsOperator));
 		var matches = expand ? Glob.Expand(pattern.ToString()) : [];
-		var redirect = previous is not null;
 
-		return matches.Length == 0 || (redirect && matches.Length > 1) ? [text] : matches;
+		return matches.Length == 0 ? [text] : matches;
 	}
+
+	/// <summary>
+	/// Gets what the word being read names when it comes right after a redirect operator.
+	/// </summary>
+	/// <param name="words">The words before it.</param>
+	/// <returns>
+	/// The kind of target, as <see cref="RedirectKind" /> gives it, or <see langword="null" /> when the last word isn't
+	/// a redirect.
+	/// </returns>
+	private static TargetKind? TargetAfter(List<Word> words) =>
+		words is [.., { IsOperator: true, Text: var typed }] ? RedirectKind(typed) : null;
 
 	/// <summary>
 	/// Reads the operator that starts at <paramref name="index" />, which the caller has checked is outside quotes and
@@ -898,22 +821,27 @@ internal static partial class CommandLine
 	/// The shell variables, positional parameters included, or <see langword="null" /> to leave every <c>$</c> as typed.
 	/// </param>
 	/// <param name="quoted"><see langword="true" /> inside double quotes, where <c>$*</c> joins its parameters.</param>
+	/// <param name="separators">
+	/// What the expansion splits on, which an unquoted <c>${X:-word}</c> needs for the expansions in its word, or
+	/// <see langword="null" /> where it isn't split.
+	/// </param>
+	/// <param name="joiner">What <c>$*</c> joins its parameters with, as <see cref="ListParts" /> says.</param>
 	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
 	/// <param name="substitute">Runs a command substitution inside a <c>${...}</c>, as <see cref="Split" /> describes.</param>
 	/// <param name="parts">
-	/// The words the expansion gives: one for a variable, one per parameter for <c>$@</c> and <c>$*</c>, and one for
-	/// <c>"$*"</c>.
+	/// The words the expansion gives: one for a variable, and for <c>$@</c> and <c>$*</c> what
+	/// <see cref="ListParts" /> gives.
 	/// </param>
-	/// <param name="patterns">The parts as patterns, as <see cref="TryExpandBraced" /> gives them, or <see langword="null" />.</param>
+	/// <param name="quoting">Which characters of the parts were quoted, as <see cref="TryExpandBraced" /> gives them, or <see langword="null" />.</param>
 	/// <param name="end">The position of the last character the expansion used.</param>
 	/// <returns>
 	/// <see langword="false" /> when no form follows the <c>$</c>, so it stays as typed.
 	/// </returns>
 	/// <exception cref="ExpansionError">A <c>${...}</c> can't be expanded, as <see cref="TryExpandBraced" /> says.</exception>
-	private static bool TryExpand(string line, int index, IReadOnlyDictionary<string, string>? variables, bool quoted, Action<Word>? unset, Func<string, string>? substitute, out string[] parts, out string[]? patterns, out int end)
+	private static bool TryExpand(string line, int index, IReadOnlyDictionary<string, string>? variables, bool quoted, string? separators, string joiner, Action<Word>? unset, Func<string, string>? substitute, out string[] parts, out string[]? quoting, out int end)
 	{
 		parts = [];
-		patterns = null;
+		quoting = null;
 		end = index;
 
 		if (line[index] != '$' || variables is null)
@@ -923,16 +851,14 @@ internal static partial class CommandLine
 
 		if (TryReadParameterList(line, index, out var star, out end))
 		{
-			var parameters = DeclareCommand.ReadPositional(variables);
-
-			parts = star && quoted ? [string.Join(' ', parameters)] : [.. parameters];
+			parts = ListParts(DeclareCommand.ReadPositional(variables), star, quoted, separators, joiner);
 
 			return true;
 		}
 
 		if (index + 1 < line.Length && line[index + 1] == '{')
 		{
-			return TryExpandBraced(line, index, variables, quoted, unset, substitute, out parts, out patterns, out end);
+			return TryExpandBraced(line, index, variables, quoted, separators, joiner, unset, substitute, out parts, out quoting, out end);
 		}
 
 		if (!TryReadVariableName(line, index, out var name, out end))
@@ -1129,6 +1055,17 @@ internal static partial class CommandLine
 		variables.TryGetValue(name, out var value) ? value : Environment.GetEnvironmentVariable(name) ?? string.Empty;
 
 	/// <summary>
+	/// Gets the characters that split an unquoted expansion's value into words.
+	/// </summary>
+	/// <param name="variables">The shell variables, which win over the environment.</param>
+	/// <returns>
+	/// The value of <c>IFS</c>, or <see cref="DefaultSeparators" /> when it isn't set. An empty <c>IFS</c> splits
+	/// nothing.
+	/// </returns>
+	internal static string FieldSeparators(IReadOnlyDictionary<string, string> variables) =>
+		IsSet(variables, "IFS") ? Lookup(variables, "IFS") : DefaultSeparators;
+
+	/// <summary>
 	/// Gets what the word after a redirect operator names.
 	/// </summary>
 	/// <param name="typed">The operator, with or without the stream number typed before it.</param>
@@ -1250,7 +1187,7 @@ internal static partial class CommandLine
 	/// </returns>
 	internal static (string Delimiter, bool Quoted, bool StripTabs)[] HereDocuments(string command)
 	{
-		var words = SplitWords(command, null, null, null, out _);
+		var words = SplitWords(command, null, null, null, null, out _);
 
 		return [.. HereDocumentTargets(words).Select(index => (words[index].Text, IsQuoted(command, words[index]), words[index - 1].Text.EndsWith('-')))];
 	}
@@ -1329,7 +1266,7 @@ internal static partial class CommandLine
 				_ = text.Append(substitute is null ? body[index..(close + 1)] : SubstitutionOutput(body, index, close, inDoubleQuotes: false, substitute));
 				index = close;
 			}
-			else if (TryExpand(body, index, variables, quoted: true, unset, substitute, out var parts, out _, out var end))
+			else if (TryExpand(body, index, variables, quoted: true, separators: null, joiner: " ", unset, substitute, out var parts, out _, out var end))
 			{
 				_ = text.AppendJoin(' ', parts);
 				index = end;
@@ -1375,6 +1312,20 @@ internal static partial class CommandLine
 	/// </returns>
 	private static IEnumerable<int> HereDocumentTargets(Word[] words) =>
 		Enumerable.Range(1, Math.Max(words.Length - 1, 0)).Where(index => IsDelimiterOperator(words[index - 1]) && !words[index].IsOperator);
+
+	/// <summary>
+	/// Gets what the word being read right now expands with.
+	/// </summary>
+	/// <param name="words">The words read before it.</param>
+	/// <param name="variables">The shell variables, or <see langword="null" /> to expand nothing.</param>
+	/// <param name="substitute">Runs a command substitution, as <see cref="Split" /> describes.</param>
+	/// <returns>
+	/// <paramref name="variables" /> and <paramref name="substitute" />, or neither for a here-document's delimiter,
+	/// which is matched as typed, so <c>&lt;&lt;$X</c> ends at a line holding <c>$X</c>, and <c>&lt;&lt;$(x)</c> at
+	/// <c>$(x)</c>.
+	/// </returns>
+	private static (IReadOnlyDictionary<string, string>? Variables, Func<string, string>? Substitute) ExpansionsFor(List<Word> words, IReadOnlyDictionary<string, string>? variables, Func<string, string>? substitute) =>
+		IsDelimiter(words) ? (null, null) : (variables, substitute);
 
 	/// <summary>
 	/// Checks whether the word being read right now is a here-document delimiter, which expands nothing.

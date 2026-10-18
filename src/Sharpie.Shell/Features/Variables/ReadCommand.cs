@@ -26,11 +26,6 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 	internal const int InterruptedStatus = 130;
 
 	/// <summary>
-	/// The separators used when <c>IFS</c> isn't set: space, tab and newline.
-	/// </summary>
-	private const string DefaultSeparators = " \t\n";
-
-	/// <summary>
 	/// Gets or sets where a redirect of stream 0 points <c>read</c>, as in <c>read x &lt; file</c> or
 	/// <c>while read l; do ...; done &lt; file</c>.
 	/// </summary>
@@ -98,7 +93,7 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 		}
 		else
 		{
-			var separators = declare.Variables.TryGetValue("IFS", out var ifs) ? ifs : Environment.GetEnvironmentVariable("IFS") ?? DefaultSeparators;
+			var separators = CommandLine.FieldSeparators(declare.Variables);
 			var fields = Split(text.ToString(), [.. escaped], separators, names.Length);
 
 			for (var index = 0; index < names.Length; index++)

@@ -100,15 +100,20 @@ internal static partial class CommandLine
 	/// <param name="index">The position of the <c>$</c>, with a <c>{</c> after it.</param>
 	/// <param name="variables">The shell variables, positional parameters included.</param>
 	/// <param name="quoted"><see langword="true" /> inside double quotes.</param>
+	/// <param name="separators">
+	/// What an unquoted default's word splits on, or <see langword="null" /> where it isn't split, as
+	/// <see cref="TryExpand" /> says.
+	/// </param>
+	/// <param name="joiner">What <c>*</c> joins the parameters with, as <see cref="ListParts" /> says.</param>
 	/// <param name="unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
 	/// <param name="substitute">Runs a command substitution in a word, as <see cref="Split" /> describes.</param>
 	/// <param name="parts">
 	/// The words it gives: one, one per positional parameter for <c>@</c> and <c>*</c>, or for an unquoted default such
 	/// as <c>${X:-a b}</c>, one per word of the default.
 	/// </param>
-	/// <param name="patterns">
-	/// For an unquoted default, each part as a pattern, with the wildcards that were quoted in the word behind a
-	/// backslash; otherwise, <see langword="null" />.
+	/// <param name="quoting">
+	/// For an unquoted default, which characters of each part were quoted, as <see cref="WordForm.Value" /> gives
+	/// them; otherwise, <see langword="null" />.
 	/// </param>
 	/// <param name="end">The position of the closing <c>}</c>.</param>
 	/// <returns>
@@ -123,10 +128,10 @@ internal static partial class CommandLine
 	/// expanded as a word is, and inside double quotes as if it were quoted too. A pattern's quoted wildcards match
 	/// only themselves, and one from a variable stays a wildcard, as in bash.
 	/// </remarks>
-	private static bool TryExpandBraced(string line, int index, IReadOnlyDictionary<string, string> variables, bool quoted, Action<Word>? unset, Func<string, string>? substitute, out string[] parts, out string[]? patterns, out int end)
+	private static bool TryExpandBraced(string line, int index, IReadOnlyDictionary<string, string> variables, bool quoted, string? separators, string joiner, Action<Word>? unset, Func<string, string>? substitute, out string[] parts, out string[]? quoting, out int end)
 	{
 		parts = [];
-		patterns = null;
+		quoting = null;
 		end = BraceEnd(line, index, quoted);
 
 		if (end < 0)
@@ -149,7 +154,7 @@ internal static partial class CommandLine
 		var positional = name is "@" or "*";
 		var parameters = positional ? DeclareCommand.ReadPositional(variables) : null;
 		var value = parameters is null ? Lookup(variables, name) : string.Join(' ', parameters);
-		var expansion = new BracedExpansion(line, index, end, name, value, parameters, quoted, variables, unset, substitute);
+		var expansion = new BracedExpansion(line, index, end, name, value, parameters, quoted, separators, joiner, variables, unset, substitute);
 
 		// The default forms decide what an unset name gives, so set -u leaves them alone, as bash does.
 		if (!BracedExpansion.IsDefault(operation) && unset is not null && !positional && !IsSet(variables, name))
@@ -157,7 +162,7 @@ internal static partial class CommandLine
 			unset(new Word(name, IsOperator: false, index, end + 1));
 		}
 
-		parts = !length ? expansion.Apply(operation, out patterns)
+		parts = !length ? expansion.Apply(operation, out quoting)
 			: [(parameters?.Count ?? Runes(value).Length).ToString(CultureInfo.InvariantCulture)];
 
 		return true;
@@ -173,10 +178,12 @@ internal static partial class CommandLine
 	/// <param name="Value">The name's value: for <c>@</c> and <c>*</c>, the positional parameters joined by spaces.</param>
 	/// <param name="Parameters">For <c>@</c> and <c>*</c>, the positional parameters; otherwise, <see langword="null" />.</param>
 	/// <param name="Quoted"><see langword="true" /> inside double quotes.</param>
+	/// <param name="Separators">What an unquoted default's word splits on, or <see langword="null" /> where it isn't split.</param>
+	/// <param name="Joiner">What <c>*</c> joins the parameters with, as <see cref="ListParts" /> says.</param>
 	/// <param name="Variables">The shell variables.</param>
 	/// <param name="Unset">Called for a variable that isn't set, as <see cref="Split" /> describes.</param>
 	/// <param name="Substitute">Runs a command substitution, as <see cref="Split" /> describes.</param>
-	private sealed record BracedExpansion(string Line, int Start, int Close, string Name, string Value, IReadOnlyList<string>? Parameters, bool Quoted, IReadOnlyDictionary<string, string> Variables, Action<Word>? Unset, Func<string, string>? Substitute)
+	private sealed record BracedExpansion(string Line, int Start, int Close, string Name, string Value, IReadOnlyList<string>? Parameters, bool Quoted, string? Separators, string Joiner, IReadOnlyDictionary<string, string> Variables, Action<Word>? Unset, Func<string, string>? Substitute)
 	{
 		/// <summary>
 		/// Checks whether an operator is one of <c>-</c>, <c>=</c>, <c>?</c> or <c>+</c>, with or without a colon.
@@ -192,7 +199,7 @@ internal static partial class CommandLine
 		/// Gets what the operator gives.
 		/// </summary>
 		/// <param name="operation">The text after the name, empty for <c>${NAME}</c>.</param>
-		/// <param name="patterns">Each word as a pattern, for an unquoted default, as <see cref="TryExpandBraced" /> says.</param>
+		/// <param name="quoting">Which characters of each word were quoted, for an unquoted default, as <see cref="TryExpandBraced" /> says.</param>
 		/// <returns>
 		/// The words.
 		/// </returns>
@@ -200,16 +207,16 @@ internal static partial class CommandLine
 		/// <remarks>
 		/// For <c>@</c> and <c>*</c> the patterns apply to each parameter, as in bash.
 		/// </remarks>
-		public string[] Apply(string operation, out string[]? patterns)
+		public string[] Apply(string operation, out string[]? quoting)
 		{
-			patterns = null;
+			quoting = null;
 
 			return operation switch
 			{
 				_ when this.Name.Length == 0 || (this.Name is "@" or "*" && operation is [':', ..] && !IsDefault(operation)) => throw this.Unsupported(),
 				"" => this.Map(value => value),
-				[':', '-' or '=' or '?' or '+', .. var word] => this.Default(colon: true, operation[1], word, out patterns),
-				['-' or '=' or '?' or '+', .. var word] => this.Default(colon: false, operation[0], word, out patterns),
+				[':', '-' or '=' or '?' or '+', .. var word] => this.Default(colon: true, operation[1], word, out quoting),
+				['-' or '=' or '?' or '+', .. var word] => this.Default(colon: false, operation[0], word, out quoting),
 				['#', '#', .. var pattern] => this.Remove(pattern, suffix: false, longest: true),
 				['#', .. var pattern] => this.Remove(pattern, suffix: false, longest: false),
 				['%', '%', .. var pattern] => this.Remove(pattern, suffix: true, longest: true),
@@ -228,16 +235,16 @@ internal static partial class CommandLine
 		/// <param name="colon"><see langword="true" /> when an empty value counts as unset.</param>
 		/// <param name="form">The operator after the colon, if any.</param>
 		/// <param name="word">The word after the operator, as typed.</param>
-		/// <param name="patterns">Each word as a pattern, for an unquoted <c>-</c> or <c>+</c> word.</param>
+		/// <param name="quoting">Which characters of each word were quoted, for an unquoted <c>-</c> or <c>+</c> word.</param>
 		/// <returns>
 		/// The value, or the word in its place.
 		/// </returns>
 		/// <exception cref="ExpansionError"><c>?</c> finds the name unset, or <c>=</c> a name that can't be assigned.</exception>
-		private string[] Default(bool colon, char form, string word, out string[]? patterns)
+		private string[] Default(bool colon, char form, string word, out string[]? quoting)
 		{
 			var given = IsSet(this.Variables, this.Name) && !(colon && this.Value.Length == 0);
 
-			patterns = null;
+			quoting = null;
 
 			switch (form)
 			{
@@ -248,11 +255,12 @@ internal static partial class CommandLine
 				case '+' or '-' when this.Quoted:
 					return [this.Text(word)];
 				case '+' or '-':
-					// Unquoted, the word splits as bash's does, though a variable's value never does here, and each word
-					// keeps which of its wildcards were quoted.
-					var words = this.Nested(unset => SplitWords(Protect(word, split: true), this.Variables, unset, this.Substitute, out _, WordForm.Spliced));
+					// Unquoted, bash reads the word as if typed in place of the ${...}, except that a blank in it doesn't
+					// end a word: its unquoted text splits on IFS together with the text around it, and wildcards in
+					// it match file names. So each word keeps which of its characters were quoted.
+					var words = this.Nested(unset => SplitWords(Protect(word, split: true), this.Variables, unset, this.Substitute, this.Separators, out _, WordForm.Value));
 
-					patterns = [.. words.Select(part => part.Pattern!)];
+					quoting = [.. words.Select(part => part.Pattern!)];
 
 					return [.. words.Select(part => part.Text)];
 				case '=' when !DeclareCommand.IsIdentifier(this.Name):
@@ -324,12 +332,11 @@ internal static partial class CommandLine
 		/// </summary>
 		/// <param name="change">What to make of one value.</param>
 		/// <returns>
-		/// One word, or one per parameter, except <c>"${*...}"</c>, which joins them with spaces.
+		/// One word, or for <c>@</c> and <c>*</c> what <see cref="ListParts" /> gives.
 		/// </returns>
 		private string[] Map(Func<string, string> change) =>
 			this.Parameters is null ? [change(this.Value)]
-			: this.Name == "*" && this.Quoted ? [string.Join(' ', this.Parameters.Select(change))]
-			: [.. this.Parameters.Select(change)];
+			: ListParts(this.Parameters.Select(change), this.Name == "*", this.Quoted, this.Separators, this.Joiner);
 
 		/// <summary>
 		/// Removes the shortest or longest start or end that a pattern matches, as <c>#</c>, <c>##</c>, <c>%</c> and
