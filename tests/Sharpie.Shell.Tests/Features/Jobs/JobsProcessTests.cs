@@ -142,7 +142,8 @@ public sealed class JobsProcessTests
 
 	/// <summary>
 	/// Checks that <c>kill %1</c> ends a background job in a shell without job control, and that <c>wait %1</c> then
-	/// gives 143 for SIGTERM, as in bash. With <c>-s INT</c> it gives 130.
+	/// gives 143 for SIGTERM, as in bash. With <c>-s INT</c> it gives 130. Both are on one line, since the shell reports
+	/// and forgets a finished job between lines, which a busy machine could let happen before <c>wait</c> runs.
 	/// </summary>
 	/// <param name="option">The signal option, or empty for the default TERM.</param>
 	/// <param name="expected">The status <c>wait</c> gives.</param>
@@ -152,10 +153,10 @@ public sealed class JobsProcessTests
 	public async Task Shell_WithKillAndWait_GivesSignalStatus(string option, int expected)
 	{
 		// Act
-		var run = await ShellProcess.RunAsync($"sleep 30 &\nkill {option}%1\nwait %1\necho $?\nexit\n").ConfigureAwait(true);
+		var run = await ShellProcess.RunAsync($"sleep 30 &\nkill {option}%1; wait %1; echo $?\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().MatchRegex($@"^\$ \[1\] \d+\n\$ \$ \$ {expected}\n\$ $");
+		_ = run.Output.Should().MatchRegex($@"^\$ \[1\] \d+\n\$ {expected}\n\$ $");
 		_ = run.Error.Should().BeEmpty();
 	}
 
