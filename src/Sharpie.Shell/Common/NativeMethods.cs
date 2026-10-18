@@ -32,6 +32,32 @@ internal static partial class NativeMethods
 	// GetFileType's answer for a file on a disk.
 	private const uint FileTypeDisk = 1;
 
+	// NtQueryInformationProcess's class for ProcessBasicInformation.
+	private const int ProcessBasicInformationClass = 0;
+
+	/// <summary>
+	/// Gets the id of the process that started the shell, which <c>$PPID</c> expands to.
+	/// </summary>
+	/// <returns>
+	/// The parent's process id, or 0 when Windows won't tell.
+	/// </returns>
+	/// <remarks>
+	/// .NET has no API for it. Windows keeps the id in the process's basic information, which only ntdll gives out.
+	/// </remarks>
+	internal static unsafe int ParentProcessId()
+	{
+		if (!OperatingSystem.IsWindows())
+		{
+			return GetParentProcessId();
+		}
+
+		// PROCESS_BASIC_INFORMATION is six pointer-sized fields on both 32-bit and 64-bit Windows, and the parent's id
+		// is the last.
+		var information = stackalloc nint[6];
+
+		return QueryInformationProcess(GetCurrentProcess(), ProcessBasicInformationClass, information, 6 * sizeof(nint), out _) == 0 ? (int)information[5] : 0;
+	}
+
 	/// <summary>
 	/// Turns on escape sequence handling for the console the shell writes to, so the colors and cursor moves of the
 	/// line editor and the colors of error reports work on Windows.
@@ -174,4 +200,19 @@ internal static partial class NativeMethods
 	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static partial bool SetConsoleMode(nint handle, uint mode);
+
+	/// <summary>
+	/// Reads one kind of information about a process.
+	/// </summary>
+	/// <param name="process">The process handle.</param>
+	/// <param name="informationClass">Which kind, here <see cref="ProcessBasicInformationClass" />.</param>
+	/// <param name="information">Receives the information.</param>
+	/// <param name="length">The size of <paramref name="information" /> in bytes.</param>
+	/// <param name="returnLength">Receives how many bytes were written.</param>
+	/// <returns>
+	/// 0 on success, or an NTSTATUS error code.
+	/// </returns>
+	[LibraryImport("ntdll", EntryPoint = "NtQueryInformationProcess")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+	private static unsafe partial int QueryInformationProcess(nint process, int informationClass, nint* information, int length, out int returnLength);
 }

@@ -74,6 +74,16 @@ internal sealed class ShellSettings
 	public int TestDepth { get; set; }
 
 	/// <summary>
+	/// Gets the letters of the options that are on, which <c>$-</c> expands to.
+	/// </summary>
+	/// <value>
+	/// The <c>set -</c> letter of each option that's on, in <see cref="Options" /> order, then <c>i</c> when the shell
+	/// is interactive. Empty when none apply.
+	/// </value>
+	public string Flags =>
+		string.Concat(Options.Where(option => option.Letter is not null && this.on.Contains(option.Name)).Select(option => option.Letter)) + (this.Interactive ? "i" : string.Empty);
+
+	/// <summary>
 	/// Gets the option that <c>set -</c> takes <paramref name="letter" /> for.
 	/// </summary>
 	/// <param name="letter">The letter after <c>-</c> or <c>+</c>.</param>

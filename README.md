@@ -44,7 +44,9 @@ and mouse reporting all work.
   command lists joined by `;`, `&&` and `||`.
 - **Expansions.** `$NAME`, `~`, wildcards like `*.tmp`, and command substitution with `$(...)` or backquotes, so
   `cd $(git rev-parse --show-toplevel)` and `export GPG_TTY=$(tty)` work. A substitution runs in the shell itself, and
-  the folder, variables and aliases it changes are put back afterwards, as a subshell would leave them.
+  the folder, variables and aliases it changes are put back afterwards, as a subshell would leave them. The special
+  parameters work as in bash: `$1` to `$9`, `${10}`, `$#`, `"$@"`, `$*`, `$?`, `$$`, `$!`, `$-` and `$0`, along with
+  `RANDOM`, `SECONDS`, `LINENO`, `SHLVL` and `PPID`.
 - **Redirects.** Bash's redirects work on builtins, programs and every stage of a pipeline: `<`, `>`, `>>`, `>|`,
   `&>`, `&>>`, any stream number as in `3> f`, copies and closes like `2>&1` and `2>&-`, here-documents
   (`<<EOF` and `<<-EOF`) and here-strings (`<<< text`). `ls /nope 2>&1 | wc -l` counts the error line, and

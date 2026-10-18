@@ -26,14 +26,6 @@ internal partial class DeclareCommand : ICommand
 	private readonly Dictionary<string, string> variables = new() { ["#"] = "0" };
 
 	/// <summary>
-	/// Gets the shell variables set so far, keyed by name.
-	/// </summary>
-	/// <value>
-	/// A live view, so a later <c>declare</c> shows up without fetching it again.
-	/// </value>
-	public IReadOnlyDictionary<string, string> Variables => this.variables;
-
-	/// <summary>
 	/// Gets or sets the last command's exit status.
 	/// </summary>
 	/// <value>
@@ -69,7 +61,7 @@ internal partial class DeclareCommand : ICommand
 		{
 			foreach (var name in names)
 			{
-				if (this.variables.TryGetValue(name, out var value))
+				if (this.Variables.TryGetValue(name, out var value))
 				{
 					Console.WriteLine($@"{this.Name} -- {name}=""{value}""");
 				}
@@ -141,7 +133,8 @@ internal partial class DeclareCommand : ICommand
 	{
 		_ = value.ArgumentNotNull();
 
-		this.variables[name.ArgumentNotNull()] = value;
+		this.AssignComputed(name.ArgumentNotNull(), value);
+		this.variables[name] = value;
 
 		if (Environment.GetEnvironmentVariable(name) is not null)
 		{
@@ -257,6 +250,7 @@ internal partial class DeclareCommand : ICommand
 	public void Remove(string name)
 	{
 		_ = this.variables.Remove(name.ArgumentNotNull());
+		_ = this.computed.Remove(name);
 		Environment.SetEnvironmentVariable(name, null);
 	}
 

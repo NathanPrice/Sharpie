@@ -63,7 +63,8 @@ internal static class CommandList
 	/// operator rules, so <c>don't</c>, <c>#</c>, <c>;</c> and an unclosed <c>$(</c> in them are text.
 	/// </para>
 	/// </remarks>
-	public static IReadOnlyList<(string Operator, string Command)>? Split(string line) => SplitOrRefuse(line, out _, out _, out _);
+	public static IReadOnlyList<(string Operator, string Command)>? Split(string line) =>
+		SplitOrRefuse(line, out _, out _, out _)?.Select(command => (command.Operator, command.Command)).ToArray();
 
 	/// <summary>
 	/// Finds what <paramref name="line" /> leaves open at its end, which the next line of a file goes on with, as
@@ -111,9 +112,10 @@ internal static class CommandList
 	/// <see langword="null" /> when every body was closed.
 	/// </param>
 	/// <returns>
-	/// The commands, or <see langword="null" /> when the line is refused.
+	/// The commands, each with where it starts in <paramref name="line" />, or <see langword="null" /> when the line is
+	/// refused. A list joined at its <c>&amp;</c> starts where its first command does.
 	/// </returns>
-	private static List<(string Operator, string Command)>? SplitOrRefuse(string line, out int refused, out char? openQuote, out string? unclosed)
+	private static List<(string Operator, string Command, int Start)>? SplitOrRefuse(string line, out int refused, out char? openQuote, out string? unclosed)
 	{
 		_ = line.ArgumentNotNull();
 
@@ -125,9 +127,12 @@ internal static class CommandList
 		// The first command since the last newline, whose here-documents' bodies start after the next one.
 		var lineStart = 0;
 
-		var commands = new List<(string Operator, string Command)>();
+		var commands = new List<(string Operator, string Command, int Start)>();
 		var command = new StringBuilder();
 		var before = Sequence;
+
+		// Where the text of the command being read starts, right after the operator before it.
+		var textStart = 0;
 
 		// Where the and-or list being read starts in commands, for a & at its end to join it into one command.
 		var listStart = 0;
@@ -189,6 +194,8 @@ internal static class CommandList
 					lineStart = commands.Count;
 				}
 
+				textStart = index + 1;
+
 				continue;
 			}
 
@@ -223,11 +230,13 @@ internal static class CommandList
 		// the and-or list it ends are joined into one, and the next command always runs.
 		void Cut(string after)
 		{
-			var text = command.ToString().Trim();
+			var typed = command.ToString();
+			var text = typed.Trim();
 
 			if (text.Length > 0)
 			{
-				commands.Add((before, text));
+				// Blanks are kept as typed, so skipping the leading ones finds the command's first character in the line.
+				commands.Add((before, text, textStart + typed.Length - typed.TrimStart().Length));
 				before = after;
 
 				if (after == Background)
@@ -235,7 +244,7 @@ internal static class CommandList
 					var list = commands[listStart..];
 
 					commands.RemoveRange(listStart, list.Count);
-					commands.Add((list[0].Operator, list[0].Command + string.Concat(list.Skip(1).Select(next => $" {next.Operator} {next.Command}"))));
+					commands.Add((list[0].Operator, list[0].Command + string.Concat(list.Skip(1).Select(next => $" {next.Operator} {next.Command}")), list[0].Start));
 					before = Sequence;
 				}
 
@@ -266,11 +275,11 @@ internal static class CommandList
 	/// <returns>
 	/// Where the line after the last body starts.
 	/// </returns>
-	private static int ReadBodies(string line, int position, List<(string Operator, string Command)> commands, int first, ref string? unclosed)
+	private static int ReadBodies(string line, int position, List<(string Operator, string Command, int Start)> commands, int first, ref string? unclosed)
 	{
 		for (var index = first; index < commands.Count; index++)
 		{
-			var (before, owner) = commands[index];
+			var (before, owner, start) = commands[index];
 
 			foreach (var (delimiter, _, stripTabs) in CommandLine.HereDocuments(owner))
 			{
@@ -283,7 +292,7 @@ internal static class CommandList
 				position = end;
 			}
 
-			commands[index] = (before, owner);
+			commands[index] = (before, owner, start);
 		}
 
 		return position;
@@ -347,10 +356,14 @@ internal static class CommandList
 	/// line that <c>eval</c> or <c>.</c> runs for the command.
 	/// </param>
 	/// <param name="failed">Called with the status of a failed command that isn't tested, or <see langword="null" />.</param>
+	/// <param name="starting">
+	/// Called before each command runs with the number of line breaks in <paramref name="line" /> before it, for
+	/// <c>$LINENO</c>, or <see langword="null" /> for nothing. Here-document bodies count.
+	/// </param>
 	/// <returns>
 	/// The status of the last command that ran, or <see cref="UnsupportedStatus" /> when the line is refused.
 	/// </returns>
-	public static int Run(string line, int status, Func<string, bool, int> run, Action<int>? failed = null)
+	public static int Run(string line, int status, Func<string, bool, int> run, Action<int>? failed = null, Action<int>? starting = null)
 	{
 		_ = run.ArgumentNotNull();
 
@@ -388,7 +401,7 @@ internal static class CommandList
 
 		for (var index = 0; index < commands.Count; index++)
 		{
-			var (before, command) = commands[index];
+			var (before, command, start) = commands[index];
 
 			if (before != Sequence && before != (status == 0 ? And : Or))
 			{
@@ -397,6 +410,7 @@ internal static class CommandList
 
 			var tested = index + 1 < commands.Count && commands[index + 1].Operator != Sequence;
 
+			starting?.Invoke(line.AsSpan(0, start).Count('\n'));
 			status = run(command, tested);
 
 			if (status != 0 && !tested)

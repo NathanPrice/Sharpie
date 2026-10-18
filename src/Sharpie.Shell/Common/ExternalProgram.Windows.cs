@@ -188,6 +188,9 @@ internal static partial class ExternalProgram
 	private static void StartJob(Process process, string command, Task[] copies, Redirection? owned, Stream? unlisted)
 	{
 		var files = owned?.Detach();
+
+		LastBackground = process.Id;
+
 		var done = Task.Run(async () =>
 		{
 			await process.WaitForExitAsync().ConfigureAwait(false);

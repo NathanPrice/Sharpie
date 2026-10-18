@@ -68,6 +68,11 @@ internal static partial class ExternalProgram
 
 		job.Add(pid);
 
+		if (background)
+		{
+			LastBackground = pid;
+		}
+
 		if (detached)
 		{
 			Detached.Add((output ?? Stream.Null, plumbing.Detach()));

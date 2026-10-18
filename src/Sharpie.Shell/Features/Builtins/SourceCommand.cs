@@ -91,7 +91,7 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 		{
 			var status = 0;
 
-			foreach (var line in JoinContinuedLines(lines))
+			foreach (var (number, line) in JoinContinuedLines(lines))
 			{
 				if (CommandList.Unfinished(line) is var quote and ('\'' or '"'))
 				{
@@ -103,6 +103,7 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 					return CommandList.UnsupportedStatus;
 				}
 
+				declare.LineNumber = number;
 				status = runLine(line);
 			}
 
@@ -152,7 +153,8 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 	/// </summary>
 	/// <param name="lines">The lines of the file.</param>
 	/// <returns>
-	/// The command lines, with each joining backslash and its line break removed. Lines joined for an open quote,
+	/// The command lines, each with the number of the file line it starts on, counted from 1, and with each joining
+	/// backslash and its line break removed. Lines joined for an open quote,
 	/// substitution or here-document keep the line break between them, so <c>X=$(</c> on one line and <c>pwd)</c> on
 	/// the next run as one command.
 	/// </returns>
@@ -162,17 +164,24 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 	/// trailing backslashes and quotes included, for <see cref="CommandLine.Split" /> to read by the here-document's
 	/// rules.
 	/// </remarks>
-	internal static IEnumerable<string> JoinContinuedLines(IEnumerable<string> lines)
+	internal static IEnumerable<(int Line, string Text)> JoinContinuedLines(IEnumerable<string> lines)
 	{
 		_ = lines.ArgumentNotNull();
 
 		var pending = string.Empty;
+		var number = 0;
+
+		// The line the command being read starts on, or null between commands.
+		int? start = null;
 
 		// The command read so far while a here-document's body is still open.
 		string? body = null;
 
 		foreach (var line in lines)
 		{
+			number++;
+			start ??= number;
+
 			if (body is not null)
 			{
 				body += "\n" + line;
@@ -203,16 +212,18 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 
 			if (!CommandList.IsHereDocumentOpen(body))
 			{
-				yield return body;
+				yield return (start.Value, body);
 
 				body = null;
+				start = null;
 			}
 		}
 
 		// Whatever is still open at the end of the file, which Run reports.
 		if ((body ?? pending.TrimEnd('\n')) is { Length: > 0 } rest)
 		{
-			yield return rest;
+			// Stryker disable once NullCoalescing : a command still open at the end always has its start line.
+			yield return (start ?? number, rest);
 		}
 	}
 }

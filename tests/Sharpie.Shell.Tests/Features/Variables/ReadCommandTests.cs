@@ -14,7 +14,7 @@ public sealed class ReadCommandTests : IDisposable
 	private readonly ShellEnvironment environment = new();
 	[SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The process-wide reader, borrowed only to put it back.")]
 	private readonly TextReader originalIn = Console.In;
-	private readonly DeclareCommand declare = new();
+	private readonly DeclareCommand declare = new(new ShellSettings());
 	private readonly Queue<ConsoleKeyInfo> keys = new();
 
 	/// <summary>

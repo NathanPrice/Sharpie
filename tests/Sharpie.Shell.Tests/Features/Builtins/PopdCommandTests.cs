@@ -23,7 +23,7 @@ public sealed class PopdCommandTests : IDisposable
 	/// </summary>
 	public PopdCommandTests()
 	{
-		this.sut = new PopdCommand(this.dirs, new CdCommand(new DeclareCommand()));
+		this.sut = new PopdCommand(this.dirs, new CdCommand(new DeclareCommand(new ShellSettings())));
 		this.home = this.environment.CreateFolder();
 		this.other = this.environment.CreateFolder();
 		ShellEnvironment.SetHome(this.home);

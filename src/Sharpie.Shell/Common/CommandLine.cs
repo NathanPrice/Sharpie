@@ -127,8 +127,9 @@ internal static class CommandLine
 	/// no shell variable has that name, and a name set in neither gives nothing. An
 	/// unquoted <c>$NAME</c> that comes out empty adds no argument, like bash. A <c>$</c> followed by none of the forms
 	/// below stays as typed. <c>${NAME}</c> marks where the name ends, so <c>${A}b</c> expands <c>A</c> and keeps
-	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. <c>$?</c> is the last command's exit status. Values
-	/// aren't split on spaces.
+	/// <c>b</c>; a <c>${</c> that is never closed stays as typed. <c>$?</c> is the last command's exit status,
+	/// <c>$$</c> the shell's process id, <c>$!</c> the last background program's and <c>$-</c> the letters of the
+	/// options that are on. Values aren't split on spaces.
 	/// </para>
 	/// <para>
 	/// <c>$1</c> to <c>$9</c> and <c>${10}</c> onwards are the positional parameters, <c>$#</c> their count and
@@ -823,8 +824,8 @@ internal static class CommandLine
 	}
 
 	/// <summary>
-	/// Reads the variable name of the <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c>, <c>$#</c> or <c>$0</c> to <c>$9</c>
-	/// that starts at the <c>$</c> at <paramref name="index" />.
+	/// Reads the variable name of the <c>$NAME</c>, <c>${NAME}</c>, <c>$?</c>, <c>$#</c>, <c>$$</c>, <c>$!</c>,
+	/// <c>$-</c> or <c>$0</c> to <c>$9</c> that starts at the <c>$</c> at <paramref name="index" />.
 	/// </summary>
 	/// <param name="line">The command line being split.</param>
 	/// <param name="index">The position of the <c>$</c>.</param>
@@ -836,7 +837,7 @@ internal static class CommandLine
 	private static bool TryReadVariableName(string line, int index, out string name, out int end)
 	{
 		// Only one digit counts, so $10 is $1 followed by 0, as in POSIX. ${10} goes through the braces below.
-		if (index + 1 < line.Length && (line[index + 1] is '?' or '#' || char.IsAsciiDigit(line[index + 1])))
+		if (index + 1 < line.Length && (line[index + 1] is '?' or '#' or '$' or '!' or '-' || char.IsAsciiDigit(line[index + 1])))
 		{
 			name = line[index + 1].ToString();
 			end = index + 1;

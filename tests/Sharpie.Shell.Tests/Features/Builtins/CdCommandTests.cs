@@ -12,7 +12,7 @@ namespace Sharpie.Shell.Tests.Features.Builtins;
 public sealed class CdCommandTests : IDisposable
 {
 	private readonly ShellEnvironment environment = new();
-	private readonly DeclareCommand declare = new();
+	private readonly DeclareCommand declare = new(new ShellSettings());
 	private readonly CdCommand sut;
 	private readonly string home;
 	private readonly string start;

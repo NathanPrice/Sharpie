@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Jobs;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Features.Builtins;
 
@@ -29,6 +30,19 @@ internal sealed class ExecCommand : ICommand
 	/// The action, or <see langword="null" /> for none.
 	/// </value>
 	public Action? BeforeReplace { get; set; }
+
+	/// <summary>
+	/// Gets the assignment that hands the program the shell's <c>SHLVL</c> minus one, put before the typed ones so a
+	/// typed <c>SHLVL=</c> still wins.
+	/// </summary>
+	/// <value>
+	/// <c>SHLVL=</c> and the level below this shell's.
+	/// </value>
+	/// <remarks>
+	/// The program takes the shell's place, so a shell started this way raises it back to the same level, as bash's
+	/// <c>exec</c> does.
+	/// </remarks>
+	private static string[] LevelBelow => [$"SHLVL={DeclareCommand.ShellLevel - 1}"];
 
 	/// <inheritdoc />
 	/// <remarks>
@@ -77,6 +91,8 @@ internal sealed class ExecCommand : ICommand
 
 			return 0;
 		}
+
+		assignments = [.. LevelBelow, .. assignments];
 
 		if (PathFinder.FindExecutable(arguments[0], ExternalProgram.AssignedPath(assignments)) is not { } path)
 		{
@@ -130,7 +146,7 @@ internal sealed class ExecCommand : ICommand
 			return 1;
 		}
 
-		if (ExternalProgram.Run(arguments[0], arguments[1..], output, error, assignments: assignments) is not { } status)
+		if (ExternalProgram.Run(arguments[0], arguments[1..], output, error, assignments: [.. LevelBelow, .. assignments]) is not { } status)
 		{
 			ReportNotFound(arguments[0]);
 			status = ExternalProgram.NotFound;

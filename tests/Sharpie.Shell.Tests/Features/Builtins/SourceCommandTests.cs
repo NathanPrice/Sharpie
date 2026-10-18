@@ -13,7 +13,7 @@ public sealed class SourceCommandTests : IDisposable
 {
 	private readonly ShellEnvironment environment = new();
 	private readonly List<string> ran = [];
-	private readonly DeclareCommand declare = new();
+	private readonly DeclareCommand declare = new(new ShellSettings());
 	private readonly string folder;
 	private readonly SourceCommand sut;
 
@@ -325,7 +325,55 @@ public sealed class SourceCommandTests : IDisposable
 		var joined = SourceCommand.JoinContinuedLines(lines);
 
 		// Assert
-		_ = joined.Should().Equal(expected);
+		_ = joined.Select(command => command.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that each command line comes with the file line it starts on, past lines joined by a backslash, a quote
+	/// or a here-document's body.
+	/// </summary>
+	/// <param name="lines">The lines of the file.</param>
+	/// <param name="expected">The line number each command line should start on.</param>
+	[Theory]
+	[InlineData(new[] { "one", "two" }, new[] { 1, 2 })]
+	[InlineData(new[] { "", "one" }, new[] { 1, 2 })]
+	[InlineData(new[] { @"echo a \", "b", "c" }, new[] { 1, 3 })]
+	[InlineData(new[] { "echo 'a", "b'", "c" }, new[] { 1, 3 })]
+	[InlineData(new[] { "cat <<EOF", "x", "EOF", "next" }, new[] { 1, 4 })]
+	[InlineData(new[] { "one", "echo 'open" }, new[] { 1, 2 })]
+	[InlineData(new[] { "one", @"two \" }, new[] { 1, 2 })]
+	public void JoinContinuedLines_WithLines_GivesStartLines(string[] lines, int[] expected)
+	{
+		// Act
+		var joined = SourceCommand.JoinContinuedLines(lines);
+
+		// Assert
+		_ = joined.Select(command => command.Line).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>$LINENO</c> holds the file line each command line starts on while it runs.
+	/// </summary>
+	[Fact]
+	public void Run_WithFile_SetsLineNumberForEachLine()
+	{
+		// Arrange
+		var path = Path.Combine(this.folder, "lines.sh");
+		var seen = new List<int>();
+		var sut = new SourceCommand(".", this.declare, _ =>
+		{
+			seen.Add(this.declare.LineNumber);
+
+			return 0;
+		});
+
+		File.WriteAllLines(path, ["one", "echo a \\", "b", "", "two"]);
+
+		// Act
+		_ = sut.Run([path]);
+
+		// Assert
+		_ = seen.Should().Equal(1, 2, 4, 5);
 	}
 
 	/// <summary>

@@ -16,7 +16,7 @@ public sealed class UnsetCommandTests : IDisposable
 	private const string SampleVariable = "SHARPIE_SAMPLE_UNSET";
 
 	private readonly ShellEnvironment environment = new();
-	private readonly DeclareCommand declare = new();
+	private readonly DeclareCommand declare = new(new ShellSettings());
 	private readonly UnsetCommand sut;
 
 	/// <summary>

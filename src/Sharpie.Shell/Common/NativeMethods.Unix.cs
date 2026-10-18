@@ -509,6 +509,16 @@ internal static unsafe partial class NativeMethods
 	internal static partial int GetProcessId();
 
 	/// <summary>
+	/// Gets the id of the process that started this one.
+	/// </summary>
+	/// <returns>
+	/// The parent's process id.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "getppid")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial int GetParentProcessId();
+
+	/// <summary>
 	/// Moves a process into a process group.
 	/// </summary>
 	/// <param name="pid">The process, 0 for this one.</param>

@@ -63,7 +63,7 @@ public sealed class ExitCommandTests : IDisposable
 	public void Run_InSubshell_ThrowsSubshellExitWithCode()
 	{
 		// Arrange
-		var sut = new ExitCommand(new DeclareCommand(), () => true);
+		var sut = new ExitCommand(new DeclareCommand(new ShellSettings()), () => true);
 
 		// Act
 		var act = () => sut.Run(["259"]);

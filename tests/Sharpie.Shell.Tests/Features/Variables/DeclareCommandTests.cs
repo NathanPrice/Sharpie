@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentAssertions;
 using Sharpie.Shell.Features.Variables;
 using Sharpie.Shell.Common;
@@ -16,7 +17,7 @@ public sealed class DeclareCommandTests : IDisposable
 	private const string SampleVariable = "SHARPIE_SAMPLE_DECLARED";
 
 	private readonly ShellEnvironment environment = new();
-	private readonly DeclareCommand sut = new();
+	private readonly DeclareCommand sut = new(new ShellSettings());
 
 	/// <summary>
 	/// Checks that <see cref="DeclareCommand.Run" /> stores a variable whose name is a valid identifier.
@@ -335,7 +336,322 @@ public sealed class DeclareCommandTests : IDisposable
 		this.sut.Restore(saved);
 
 		// Assert
-		_ = this.sut.Variables.Should().Equal(saved);
+		_ = this.sut.Variables.Keys.Should().BeEquivalentTo(saved.Keys);
 		_ = this.sut.Variables["kept"].Should().Be("old");
+	}
+
+	/// <summary>
+	/// Checks that <c>RANDOM=N</c> seeds <c>RANDOM</c>, so the same seed gives the same numbers, each from 0 to 32767,
+	/// and that a seed that isn't a number counts as 0.
+	/// </summary>
+	[Fact]
+	public void Set_WithRandomSeed_RepeatsNumbers()
+	{
+		// Arrange
+		this.sut.Set("RANDOM", "5");
+		var first = Enumerable.Range(0, 50).Select(_ => int.Parse(this.sut.Variables["RANDOM"], CultureInfo.InvariantCulture)).ToArray();
+
+		this.sut.Set("RANDOM", "0");
+		var zero = this.sut.Variables["RANDOM"];
+
+		// Act
+		this.sut.Set("RANDOM", "5");
+		var second = Enumerable.Range(0, 50).Select(_ => int.Parse(this.sut.Variables["RANDOM"], CultureInfo.InvariantCulture)).ToArray();
+
+		this.sut.Set("RANDOM", "x");
+
+		// Assert
+		_ = second.Should().Equal(first);
+		_ = first.Should().OnlyContain(number => number >= 0 && number < 32768).And.Contain(number => number > 16383);
+		_ = this.sut.Variables["RANDOM"].Should().Be(zero);
+		_ = this.sut.Variables.Keys.Should().Contain("RANDOM");
+	}
+
+	/// <summary>
+	/// Checks that <c>SECONDS=N</c> starts the count again from N.
+	/// </summary>
+	[Fact]
+	public void Set_WithSeconds_CountsFromValue()
+	{
+		// Act
+		this.sut.Set("SECONDS", "100");
+
+		// Assert
+		_ = this.sut.Variables["SECONDS"].Should().Be("100");
+		_ = this.sut.Variables.Should().Contain("SECONDS", "100");
+	}
+
+	/// <summary>
+	/// Checks that <c>SECONDS</c> counts whole seconds from when it was set.
+	/// </summary>
+	[Fact]
+	public async Task Variables_AfterASecond_CountsSeconds()
+	{
+		// Arrange
+		this.sut.Set("SECONDS", "7");
+
+		// Act
+		await Task.Delay(TimeSpan.FromMilliseconds(1100)).ConfigureAwait(true);
+
+		// Assert
+		_ = this.sut.Variables["SECONDS"].Should().Be("8");
+	}
+
+	/// <summary>
+	/// Checks that an exported <c>SECONDS</c> hands the value it's given to the environment, while the shell still
+	/// counts from it.
+	/// </summary>
+	[Fact]
+	public void Set_WithExportedSeconds_UpdatesEnvironment()
+	{
+		// Arrange
+		var saved = Environment.GetEnvironmentVariable("SECONDS");
+
+		try
+		{
+			this.sut.Export("SECONDS", "1");
+
+			// Act
+			this.sut.Set("SECONDS", "50");
+
+			// Assert
+			_ = Environment.GetEnvironmentVariable("SECONDS").Should().Be("50");
+			_ = this.sut.Variables["SECONDS"].Should().Be("50");
+		}
+		finally
+		{
+			Environment.SetEnvironmentVariable("SECONDS", saved);
+		}
+	}
+
+	/// <summary>
+	/// Checks that after <c>unset RANDOM</c>, <c>RANDOM</c> is an ordinary variable that keeps what it's given.
+	/// </summary>
+	[Fact]
+	public void Remove_WithRandom_MakesItOrdinary()
+	{
+		// Arrange
+		this.sut.Remove("RANDOM");
+
+		// Act
+		this.sut.Set("RANDOM", "x");
+
+		// Assert
+		_ = this.sut.Variables["RANDOM"].Should().Be("x");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.LineNumber" /> is what <c>LINENO</c> gives, and that <c>LINENO=N</c> sets
+	/// it.
+	/// </summary>
+	[Fact]
+	public void LineNumber_WhenSet_IsLineno()
+	{
+		// Arrange
+		this.sut.LineNumber = 7;
+		var seven = this.sut.Variables["LINENO"];
+
+		// Act
+		this.sut.Set("LINENO", "9");
+
+		// Assert
+		_ = seven.Should().Be("7");
+		_ = this.sut.LineNumber.Should().Be(9);
+		_ = this.sut.Variables.ContainsKey("LINENO").Should().BeTrue();
+	}
+
+	/// <summary>
+	/// Checks that only a worked-out <c>LINENO</c> moves <see cref="DeclareCommand.LineNumber" />: neither another
+	/// name nor <c>LINENO</c> after <c>unset</c> does.
+	/// </summary>
+	[Fact]
+	public void Set_WithOtherNameOrUnsetLineno_KeepsLineNumber()
+	{
+		// Arrange
+		this.sut.LineNumber = 2;
+
+		// Act
+		this.sut.Set("other", "8");
+		this.sut.Remove("LINENO");
+		this.sut.Set("LINENO", "9");
+
+		// Assert
+		_ = this.sut.LineNumber.Should().Be(2);
+		_ = this.sut.Variables["LINENO"].Should().Be("9");
+	}
+
+	/// <summary>
+	/// Checks that <c>declare -p</c> prints a worked-out variable too.
+	/// </summary>
+	[Fact]
+	public void Run_WithPrintLineno_PrintsIt()
+	{
+		// Arrange
+		this.sut.LineNumber = 3;
+
+		// Act
+		_ = this.sut.Run(["-p", "LINENO"]);
+
+		// Assert
+		_ = this.environment.Output.Should().Be($"declare -- LINENO=\"3\"{Environment.NewLine}");
+	}
+
+	/// <summary>
+	/// Checks that <c>$</c> is the shell's process id and <c>-</c> follows the options as they change.
+	/// </summary>
+	[Fact]
+	public void Variables_WithOptions_GivesProcessIdAndFlags()
+	{
+		// Arrange
+		var settings = new ShellSettings();
+		var sut = new DeclareCommand(settings);
+		var before = sut.Variables["-"];
+
+		// Act
+		_ = settings.Set("errexit", true);
+
+		// Assert
+		_ = before.Should().BeEmpty();
+		_ = sut.Variables["-"].Should().Be("e");
+		_ = sut.Variables["$"].Should().Be(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+		_ = sut.Variables.Should().ContainKeys("$", "PPID", "-", "SECONDS", "LINENO");
+	}
+
+	/// <summary>
+	/// Checks that <c>!</c> is unset until a program runs in the background, then gives its process id.
+	/// </summary>
+	[Fact]
+	public void Variables_WithLastBackground_GivesItsId()
+	{
+		// Arrange
+		var saved = ExternalProgram.LastBackground;
+
+		try
+		{
+			ExternalProgram.LastBackground = null;
+			var before = this.sut.Variables.ContainsKey("!");
+
+			// Act
+			ExternalProgram.LastBackground = 42;
+
+			// Assert
+			_ = before.Should().BeFalse();
+			_ = this.sut.Variables.Should().Contain("!", "42");
+		}
+		finally
+		{
+			ExternalProgram.LastBackground = saved;
+		}
+	}
+
+	/// <summary>
+	/// Checks that the action <see cref="DeclareCommand.SaveDynamic" /> gives puts back what a command substitution
+	/// changed: an unset <c>RANDOM</c>, a <c>SECONDS</c> count and <c>$!</c>.
+	/// </summary>
+	[Fact]
+	public void SaveDynamic_WhenRestored_PutsBackComputedNames()
+	{
+		// Arrange
+		var saved = ExternalProgram.LastBackground;
+
+		try
+		{
+			ExternalProgram.LastBackground = 7;
+			this.sut.Set("RANDOM", "3");
+			var expected = this.sut.Variables["RANDOM"];
+
+			this.sut.Set("RANDOM", "3");
+			var restore = this.sut.SaveDynamic();
+
+			this.sut.Set("SECONDS", "100");
+			this.sut.Set("RANDOM", "4");
+			this.sut.Remove("RANDOM");
+			this.sut.Set("RANDOM", "x");
+			ExternalProgram.LastBackground = 8;
+
+			// Act
+			restore();
+
+			// Assert
+			_ = this.sut.Variables["RANDOM"].Should().Be(expected);
+			_ = int.Parse(this.sut.Variables["SECONDS"], CultureInfo.InvariantCulture).Should().BeLessThan(100);
+			_ = this.sut.Variables["!"].Should().Be("7");
+		}
+		finally
+		{
+			ExternalProgram.LastBackground = saved;
+		}
+	}
+
+	/// <summary>
+	/// Checks that the view counts the stored variables and the worked-out ones that are set, and enumerates each
+	/// name once.
+	/// </summary>
+	[Fact]
+	public void Variables_WithStoredAndComputed_CountsEachOnce()
+	{
+		// Arrange
+		this.sut.Set("PPID", "1");
+
+		// Act
+		var keys = this.sut.Variables.Keys.ToArray();
+
+		// Assert
+		_ = keys.Should().OnlyHaveUniqueItems();
+		_ = this.sut.Variables.Count.Should().Be(keys.Length);
+		_ = this.sut.Variables.Values.Should().HaveCount(keys.Length);
+		_ = this.sut.Variables["PPID"].Should().NotBe("1");
+	}
+
+	/// <summary>
+	/// Checks that reading a name that isn't set through the indexer throws.
+	/// </summary>
+	[Fact]
+	public void Variables_WithMissingName_Throws()
+	{
+		// Act
+		var read = () => this.sut.Variables["SHARPIE_SAMPLE_MISSING"];
+
+		// Assert
+		_ = read.Should().Throw<KeyNotFoundException>().WithMessage("*`SHARPIE_SAMPLE_MISSING`*");
+	}
+
+	/// <summary>
+	/// Checks that <see cref="DeclareCommand.ShellLevel" /> reads <c>SHLVL</c>, counting one that's missing, not a
+	/// number or below 0 as 0, and that <see cref="DeclareCommand.RaiseShellLevel" /> exports one more.
+	/// </summary>
+	/// <param name="level">The <c>SHLVL</c> in the environment, or <see langword="null" /> for none.</param>
+	/// <param name="expected">The level it should read as.</param>
+	[Theory]
+	[InlineData("3", 3)]
+	[InlineData("0", 0)]
+	[InlineData("-2", 0)]
+	[InlineData("x", 0)]
+	[InlineData(null, 0)]
+	public void ShellLevel_WithEnvironment_ReadsAndRaisesIt(string? level, int expected)
+	{
+		// Arrange
+		var saved = Environment.GetEnvironmentVariable("SHLVL");
+
+		try
+		{
+			Environment.SetEnvironmentVariable("SHLVL", level);
+
+			// Act
+			var read = DeclareCommand.ShellLevel;
+
+			this.sut.RaiseShellLevel();
+
+			// Assert
+			var raised = (expected + 1).ToString(CultureInfo.InvariantCulture);
+
+			_ = read.Should().Be(expected);
+			_ = Environment.GetEnvironmentVariable("SHLVL").Should().Be(raised);
+			_ = this.sut.Variables["SHLVL"].Should().Be(raised);
+		}
+		finally
+		{
+			Environment.SetEnvironmentVariable("SHLVL", saved);
+		}
 	}
 }

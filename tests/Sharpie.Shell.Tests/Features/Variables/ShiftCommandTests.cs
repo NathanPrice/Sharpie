@@ -11,7 +11,7 @@ namespace Sharpie.Shell.Tests.Features.Variables;
 public sealed class ShiftCommandTests : IDisposable
 {
 	private readonly ShellEnvironment environment = new();
-	private readonly DeclareCommand declare = new();
+	private readonly DeclareCommand declare = new(new ShellSettings());
 	private readonly ShiftCommand sut;
 
 	/// <summary>

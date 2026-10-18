@@ -1,3 +1,4 @@
+using System.Text;
 using FluentAssertions;
 using Microsoft.Win32.SafeHandles;
 using Sharpie.Shell.Features.Builtins;
@@ -128,6 +129,39 @@ public sealed class ExecCommandTests : IDisposable
 		_ = this.environment.Error.Should().Contain("sharpie::exec::cannot_start");
 		_ = File.ReadAllText(redirect).Should().BeEmpty();
 		_ = IgnoredSignals().Should().Be(signalsBefore);
+	}
+
+	/// <summary>
+	/// Checks that the program <c>exec</c> starts gets the shell's <c>SHLVL</c> minus one, so a shell started that way
+	/// lands on the same level, and that a typed <c>SHLVL=</c> wins.
+	/// </summary>
+	/// <param name="assignments">The words typed in front of <c>exec</c>.</param>
+	/// <param name="expected">The <c>SHLVL</c> the program should see.</param>
+	[Theory]
+	[InlineData(new string[0], "4\n")]
+	[InlineData(new[] { "SHLVL=9" }, "9\n")]
+	public void RunInSubstitution_WithProgram_HandsDownLevelBelow(string[] assignments, string expected)
+	{
+		// Arrange
+		var saved = Environment.GetEnvironmentVariable("SHLVL");
+
+		using var output = new MemoryStream();
+
+		try
+		{
+			Environment.SetEnvironmentVariable("SHLVL", "5");
+
+			// Act
+			var run = () => ExecCommand.RunInSubstitution(["/usr/bin/printenv", "SHLVL"], assignments, output, null);
+
+			// Assert
+			_ = run.Should().Throw<ExitCommand.SubshellExit>();
+			_ = Encoding.UTF8.GetString(output.ToArray()).Should().Be(expected);
+		}
+		finally
+		{
+			Environment.SetEnvironmentVariable("SHLVL", saved);
+		}
 	}
 
 	/// <summary>

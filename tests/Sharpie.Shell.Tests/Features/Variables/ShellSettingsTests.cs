@@ -23,6 +23,37 @@ public sealed class ShellSettingsTests
 	}
 
 	/// <summary>
+	/// Checks that <see cref="ShellSettings.Flags" /> lists the letter of each option that's on, in order, then
+	/// <c>i</c> for an interactive shell.
+	/// </summary>
+	/// <param name="options">The options to turn on.</param>
+	/// <param name="interactive">Whether the shell is interactive.</param>
+	/// <param name="expected">The letters.</param>
+	[Theory]
+	[InlineData(new string[0], false, "")]
+	[InlineData(new[] { "errexit" }, false, "e")]
+	[InlineData(new[] { "pipefail" }, false, "")]
+	[InlineData(new[] { "xtrace", "nounset", "noclobber", "errexit" }, false, "eCux")]
+	[InlineData(new[] { "errexit" }, true, "ei")]
+	[InlineData(new string[0], true, "i")]
+	public void Flags_WithOptions_ListsLetters(string[] options, bool interactive, string expected)
+	{
+		// Arrange
+		var settings = new ShellSettings { Interactive = interactive };
+
+		foreach (var option in options)
+		{
+			_ = settings.Set(option, true);
+		}
+
+		// Act
+		var flags = settings.Flags;
+
+		// Assert
+		_ = flags.Should().Be(expected);
+	}
+
+	/// <summary>
 	/// Checks that a name that isn't an option is refused and turns nothing on.
 	/// </summary>
 	[Fact]

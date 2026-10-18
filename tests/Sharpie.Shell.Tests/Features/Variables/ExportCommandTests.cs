@@ -16,7 +16,7 @@ public sealed class ExportCommandTests : IDisposable
 	private const string SampleVariable = "SHARPIE_SAMPLE_EXPORTED";
 
 	private readonly ShellEnvironment environment = new();
-	private readonly DeclareCommand declare = new();
+	private readonly DeclareCommand declare = new(new ShellSettings());
 	private readonly ExportCommand sut;
 
 	/// <summary>

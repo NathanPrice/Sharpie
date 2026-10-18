@@ -35,6 +35,15 @@ internal static partial class ExternalProgram
 	internal static List<Job> Jobs { get; } = [];
 
 	/// <summary>
+	/// Gets or sets the process id of the last program started in the background.
+	/// </summary>
+	/// <value>
+	/// The id <c>$!</c> expands to, or <see langword="null" /> before any program ran in the background, which leaves
+	/// <c>$!</c> unset. Only the main thread touches it.
+	/// </value>
+	internal static int? LastBackground { get; set; }
+
+	/// <summary>
 	/// Gets the output copies of the background programs that command substitutions started, each with the stream
 	/// it fills.
 	/// </summary>

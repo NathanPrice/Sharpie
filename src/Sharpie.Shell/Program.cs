@@ -170,6 +170,7 @@ internal static class Program
 
 		// The parent may have passed a PWD from before it changed folders, so $PWD starts out right.
 		declare.Export("PWD", Directory.GetCurrentDirectory());
+		declare.RaiseShellLevel();
 
 		var aliases = (AliasCommand)commands["alias"];
 		var interactive = options.IsInteractive(terminal);
@@ -207,9 +208,14 @@ internal static class Program
 				RunRcFile(commands["."]);
 			}
 
-			return options.Command is not null
-				? RunLine(commands, aliases, declare, options.Command)
-				: commands["."].Run([options.ScriptFile!, .. options.Arguments]);
+			if (options.Command is null)
+			{
+				return commands["."].Run([options.ScriptFile!, .. options.Arguments]);
+			}
+
+			declare.LineNumber = 1;
+
+			return RunLine(commands, aliases, declare, options.Command);
 		}
 
 		return RunPrompts(commands, declare, aliases, terminal, interactive && !options.NoRc);
@@ -299,6 +305,9 @@ internal static class Program
 		// prompt right after clear.
 		var blankLine = bannerShown;
 
+		// The lines typed so far, here-document bodies included, for $LINENO.
+		var typed = 0;
+
 		while (true)
 		{
 			// Every path through the loop comes back here, so a finished job's Done line lands after the last
@@ -325,6 +334,8 @@ internal static class Program
 			}
 
 			line = command;
+			declare.LineNumber = typed + 1;
+			typed += line.Split('\n').Length;
 
 			if (inWindow && editor is not null && CommandLine.PagedCommand(line) is { } paged
 				&& (paged[0] == "man" ? ManPageExists(paged[1..]) : DmanCommand.Find(paged[1..])))
@@ -543,6 +554,9 @@ internal static class Program
 		var settings = ((SetCommand)commands["set"]).Settings;
 		var outer = standardOutput;
 
+		// An eval or $(...) counts from the line it's on, as bash's eval does.
+		var first = declare.LineNumber;
+
 		standardOutput = output ?? standardOutput;
 
 		try
@@ -575,7 +589,8 @@ internal static class Program
 					{
 						Environment.Exit(status);
 					}
-				});
+				},
+				offset => declare.LineNumber = first + offset);
 		}
 		finally
 		{
@@ -585,8 +600,8 @@ internal static class Program
 
 	/// <summary>
 	/// Runs the command list of a <c>$(...)</c> or backquotes with its output captured, then puts back the folder,
-	/// the shell variables and positional parameters, the environment, the aliases, the <c>set</c> options, the
-	/// <c>pushd</c> stack and the umask, as bash's subshell would leave them.
+	/// the shell variables and positional parameters, <c>$!</c>, <c>RANDOM</c> and <c>SECONDS</c>, the environment, the
+	/// aliases, the <c>set</c> options, the <c>pushd</c> stack and the umask, as bash's subshell would leave them.
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin.</param>
@@ -606,6 +621,7 @@ internal static class Program
 	{
 		var folder = Directory.GetCurrentDirectory();
 		var variables = declare.Variables.ToDictionary();
+		var restoreDynamic = declare.SaveDynamic();
 		var aliasValues = aliases.Aliases.ToDictionary();
 		var environment = Environment.GetEnvironmentVariables();
 		var options = ShellSettings.Options.Where(option => settings.IsOn(option.Name)).Select(option => option.Name).ToHashSet();
@@ -650,6 +666,7 @@ internal static class Program
 				Log.Debug(exception, "Can't go back to {Folder} after a command substitution", folder);
 			}
 
+			restoreDynamic();
 			declare.Restore(variables);
 			aliases.Restore(aliasValues);
 			stack.Clear();
@@ -760,7 +777,10 @@ internal static class Program
 
 			using var none = Redirection.Open([], line, noClobber: false)!;
 
-			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), [.. noClobber, "-c", line.EndsWith('&') ? line[..^1] : line], [], standardOutput, background: true, none);
+			// One level down, since the copy raises it again and bash's background subshell stays on the same level.
+			string[] level = [$"SHLVL={DeclareCommand.ShellLevel - 1}"];
+
+			return RunProgram(new Word(Environment.ProcessPath!, IsOperator: false), [.. noClobber, "-c", line.EndsWith('&') ? line[..^1] : line], level, standardOutput, background: true, none);
 		}
 
 		// Operators the shell can't run yet, like <>, are refused rather than passed on as arguments.

@@ -37,7 +37,8 @@ internal static class BuiltinCommands
 	internal static ICommand[] Create(Dictionary<string, ICommand> commands, Func<string, int> runLine, Func<bool>? inSubshell = null)
 	{
 		var alias = new AliasCommand();
-		var declare = new DeclareCommand();
+		var settings = new ShellSettings();
+		var declare = new DeclareCommand(settings);
 
 		// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
 		var type = new TypeCommand(commands, alias.Aliases);
@@ -56,7 +57,7 @@ internal static class BuiltinCommands
 			new DmanCommand(),
 			new UmaskCommand(NativeMethods.SetFileMask),
 			new UlimitCommand(),
-			.. CreateVariableCommands(declare, runLine, inSubshell),
+			.. CreateVariableCommands(declare, settings, runLine, inSubshell),
 			.. CreateFolderCommands(declare),
 			.. CreateJobCommands(),
 			new CommandCommand(type),
@@ -69,18 +70,19 @@ internal static class BuiltinCommands
 	/// Creates the builtins that work on shell variables, and the ones that run lines, which share them.
 	/// </summary>
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
+	/// <param name="settings">The shell options, which <c>set</c> changes and <c>$-</c> lists.</param>
 	/// <param name="runLine">Runs one command line the way the shell runs a typed one and gives its status.</param>
 	/// <param name="inSubshell">Tells whether a command substitution is running, for <c>exit</c>.</param>
 	/// <returns>
 	/// <c>declare</c> and the builtins built around it.
 	/// </returns>
-	private static ICommand[] CreateVariableCommands(DeclareCommand declare, Func<string, int> runLine, Func<bool>? inSubshell) =>
+	private static ICommand[] CreateVariableCommands(DeclareCommand declare, ShellSettings settings, Func<string, int> runLine, Func<bool>? inSubshell) =>
 		[
 			declare,
 			new ExitCommand(declare, inSubshell),
 			new ExportCommand(declare),
 			new UnsetCommand(declare),
-			new SetCommand(declare, new ShellSettings()),
+			new SetCommand(declare, settings),
 			new ShiftCommand(declare),
 			new ReadCommand(declare, Console.IsInputRedirected ? null : () => Console.ReadKey(intercept: true)),
 			new SourceCommand(".", declare, runLine),

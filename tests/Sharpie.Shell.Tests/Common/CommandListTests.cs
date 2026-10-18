@@ -317,6 +317,31 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that each command is announced before it runs with how many line breaks come before it, which a here-
+	/// document's body, a joined list and a comment line all count toward.
+	/// </summary>
+	/// <param name="line">The text to run.</param>
+	/// <param name="expected">The offset given for each command, in order.</param>
+	[Theory]
+	[InlineData("a; b\nc", new[] { 0, 0, 1 })]
+	[InlineData("a &&\nb", new[] { 0, 1 })]
+	[InlineData("cat <<E\nx\nE\nb", new[] { 0, 3 })]
+	[InlineData("  a\n\n  # c\n  b", new[] { 0, 3 })]
+	[InlineData("a\n  b && c &\nd", new[] { 0, 1, 2 })]
+	[InlineData("a \\\nb; c", new[] { 0, 1 })]
+	public void Run_WithStarting_GivesLineOffsets(string line, int[] expected)
+	{
+		// Arrange
+		var offsets = new List<int>();
+
+		// Act
+		_ = CommandList.Run(line, 0, (_, _) => 0, starting: offsets.Add);
+
+		// Assert
+		_ = offsets.Should().Equal(expected);
+	}
+
+	/// <summary>
 	/// Checks that each here-document's body, up to its delimiter line, goes on the end of the command that starts it,
 	/// with the operators around it kept, and that quotes, comments, substitutions and operators in a body are text.
 	/// </summary>

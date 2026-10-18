@@ -16,14 +16,19 @@ public sealed class SetCommandTests : IDisposable
 	private const string SampleVariable = "SHARPIE_SAMPLE_SET";
 
 	private readonly ShellEnvironment environment = new();
-	private readonly DeclareCommand declare = new();
 	private readonly ShellSettings settings = new();
+	private readonly DeclareCommand declare;
 	private readonly SetCommand sut;
 
 	/// <summary>
-	/// Initializes a new instance of the <see cref="SetCommandTests" /> class.
+	/// Initializes a new instance of the <see cref="SetCommandTests" /> class, whose <c>declare</c> reads the same
+	/// options as <c>set</c>, as in the shell.
 	/// </summary>
-	public SetCommandTests() => this.sut = new SetCommand(this.declare, this.settings);
+	public SetCommandTests()
+	{
+		this.declare = new DeclareCommand(this.settings);
+		this.sut = new SetCommand(this.declare, this.settings);
+	}
 
 	/// <summary>
 	/// Checks that words after <c>--</c> or <c>-</c>, or with neither, become the positional parameters, and that

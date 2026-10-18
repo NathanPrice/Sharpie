@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentAssertions;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Variables;
@@ -89,7 +90,8 @@ public sealed class CommandLineTests
 	[InlineData("echo a$", new[] { "echo", "a$" })]
 	[InlineData("echo a$1", new[] { "echo", "a" })]
 	[InlineData("echo _$1", new[] { "echo", "_" })]
-	[InlineData("echo $-", new[] { "echo", "$-" })]
+	[InlineData("echo $%", new[] { "echo", "$%" })]
+	[InlineData("echo $-", new[] { "echo" })]
 	[InlineData("echo {$A}", new[] { "echo", "{one}" })]
 	[InlineData("echo }${A}", new[] { "echo", "}one" })]
 	[InlineData("echo $Ab", new[] { "echo" })]
@@ -135,7 +137,7 @@ public sealed class CommandLineTests
 	public void Split_WithPositionalParameters_ExpandsThem(string line, string[] parameters, string[] expected)
 	{
 		// Arrange
-		var declare = new DeclareCommand();
+		var declare = new DeclareCommand(new ShellSettings());
 
 		declare.Set("0", "name");
 		declare.SetPositional(parameters);
@@ -155,7 +157,7 @@ public sealed class CommandLineTests
 	public void Split_WithUnsetCallback_ReportsUnsetNames()
 	{
 		// Arrange
-		var declare = new DeclareCommand();
+		var declare = new DeclareCommand(new ShellSettings());
 		var unset = new List<Word>();
 
 		declare.Set("A", "one");
@@ -169,13 +171,45 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
+	/// Checks that <c>$$</c>, <c>${$}</c> and <c>$-</c> expand to the shell's process id and option letters, and that
+	/// <c>$!</c> counts as unset before any background program.
+	/// </summary>
+	[Fact]
+	public void Split_WithSpecialParameters_ExpandsThem()
+	{
+		// Arrange
+		var settings = new ShellSettings();
+		var declare = new DeclareCommand(settings);
+		var unset = new List<Word>();
+		var saved = ExternalProgram.LastBackground;
+		var id = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+
+		_ = settings.Set("nounset", true);
+		ExternalProgram.LastBackground = null;
+
+		try
+		{
+			// Act
+			var words = CommandLine.Split("echo $$ ${$} $-x \"$$\" $!", declare.Variables, unset.Add);
+
+			// Assert
+			_ = words.Select(word => word.Text).Should().Equal("echo", id, id, "ux", id);
+			_ = unset.Should().Equal(new Word("!", false, 22, 24));
+		}
+		finally
+		{
+			ExternalProgram.LastBackground = saved;
+		}
+	}
+
+	/// <summary>
 	/// Checks that the words <c>$@</c> gives all point at the expansion, so an error can show where they came from.
 	/// </summary>
 	[Fact]
 	public void Split_WithParameterList_PointsEachWordAtIt()
 	{
 		// Arrange
-		var declare = new DeclareCommand();
+		var declare = new DeclareCommand(new ShellSettings());
 
 		declare.SetPositional(["a", "b"]);
 
