@@ -30,13 +30,29 @@ public sealed class SpecialVariablesProcessTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that <c>$!</c> is the process id the shell printed for the last background program.
+	/// Checks that <c>$!</c> is the last background program's process id.
 	/// </summary>
 	[Fact]
 	public async Task Shell_WithBackgroundProgram_GivesItsIdAsBang()
 	{
 		// Act
 		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "sleep 0 & echo $!"]).ConfigureAwait(true);
+
+		// Assert
+		var lines = run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+		// A shell that isn't interactive doesn't print the job's number and id, as in bash.
+		_ = lines.Should().ContainSingle().Which.Should().MatchRegex("^[1-9][0-9]*$");
+	}
+
+	/// <summary>
+	/// Checks that an interactive shell prints a background program's job number and process id, which is <c>$!</c>.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithBackgroundProgramInteractive_PrintsJob()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-i", "--norc", "-c", "sleep 0 & echo $!"]).ConfigureAwait(true);
 
 		// Assert
 		var lines = run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -156,7 +172,7 @@ public sealed class SpecialVariablesProcessTests : IDisposable
 		var run = await ShellProcess.RunAsync(string.Empty, environment: environment, arguments: ["-c", "echo $SHLVL &\nwait"]).ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().EndWith("\n4\n");
+		_ = run.Output.Should().Be("4\n");
 	}
 
 	/// <summary>

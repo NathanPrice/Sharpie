@@ -43,12 +43,13 @@ internal static partial class ExternalProgram
 	/// counts as failed.
 	/// </param>
 	/// <param name="output">Where the last program writes, or <see langword="null" /> for the terminal.</param>
+	/// <param name="input">What the first program reads, or <see langword="null" /> for the terminal.</param>
 	/// <returns>
 	/// The status as <see cref="RunPipeline" /> gives it.
 	/// </returns>
 	[SupportedOSPlatform("windows")]
-	private static int RunPipelineWithProcesses(string[][] stages, string[] paths, string[][] assignments, StreamTarget[][] targets, bool pipeFail, Stream? output) =>
-		RunProcesses(stages, paths, assignments, targets, [null, output, null], null, background: false, pipeFail: pipeFail);
+	private static int RunPipelineWithProcesses(string[][] stages, string[] paths, string[][] assignments, StreamTarget[][] targets, bool pipeFail, Stream? output, Stream? input) =>
+		RunProcesses(stages, paths, assignments, targets, [input, output, null], null, background: false, pipeFail: pipeFail);
 
 	/// <summary>
 	/// Starts each stage's program, copies its streams to and from where its redirects send them, and waits for all of
@@ -208,7 +209,11 @@ internal static partial class ExternalProgram
 		var job = new Job(0, process.Id, command, process);
 
 		AddJob(job);
-		Console.WriteLine($@"[{job.Number}] {job.ProcessId}");
+
+		if (AnnounceJobs)
+		{
+			Console.WriteLine($@"[{job.Number}] {job.ProcessId}");
+		}
 	}
 
 	/// <summary>

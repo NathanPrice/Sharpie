@@ -105,6 +105,14 @@ internal sealed class ShellHooks(Func<string, bool, int> run)
 	public Func<IReadOnlyList<string>> Positional { get; init; } = () => [];
 
 	/// <summary>
+	/// Gets the hook that shows a <c>for</c> or <c>case</c> header under <c>set -x</c>, as typed, before each pass.
+	/// </summary>
+	/// <value>
+	/// The hook. By default it does nothing.
+	/// </value>
+	public Action<string> Trace { get; init; } = _ => { };
+
+	/// <summary>
 	/// Gets the hook that runs a list as a subshell, so whatever it changes is undone after.
 	/// </summary>
 	/// <value>
@@ -409,6 +417,9 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 				return this.Repeat(tested, () => next < values.Count && Assign(values[next++]), loop.Body);
 			default:
 				var match = (Case)command;
+
+				hooks.Trace($"case {match.Word} in");
+
 				var word = hooks.ExpandWord(match.Word);
 
 				foreach (var (patterns, body) in match.Items)
@@ -424,7 +435,10 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 
 		bool Assign(string value)
 		{
-			hooks.Assign(((For)command).Name, value);
+			var loop = (For)command;
+
+			hooks.Trace($"for {loop.Name} in {loop.Words ?? "\"$@\""}");
+			hooks.Assign(loop.Name, value);
 
 			return true;
 		}

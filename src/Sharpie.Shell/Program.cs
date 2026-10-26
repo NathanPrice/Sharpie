@@ -93,7 +93,7 @@ internal static class Program
 	/// <paramref name="commands" /> holds them.
 	/// </remarks>
 	internal static ICommand[] CreateBuiltins(Dictionary<string, ICommand> commands) =>
-		BuiltinCommands.Create(commands, line => RunLine(commands, (AliasCommand)commands["alias"], (DeclareCommand)commands["declare"], line), () => CompoundCommands.SubshellDepth > 0);
+		BuiltinCommands.Create(commands, line => CompoundCommands.Nested(() => RunLine(commands, (AliasCommand)commands["alias"], (DeclareCommand)commands["declare"], line)), () => CompoundCommands.SubshellDepth > 0);
 
 	/// <summary>
 	/// Registers the builtins, then runs the <c>-c</c> command or the script file, or else reads and runs one command
@@ -176,6 +176,7 @@ internal static class Program
 		var settings = ((SetCommand)commands["set"]).Settings;
 
 		settings.Interactive = interactive;
+		ExternalProgram.AnnounceJobs = interactive;
 		_ = settings.Set("noclobber", options.NoClobber);
 
 		// -c takes $0 from the first word after the command, as sh does. The script file's arguments become its
@@ -669,72 +670,73 @@ internal static class Program
 		{
 			var stages = stageWords.Select(stage => stage.Select(word => word.Text).ToArray()).ToArray();
 
-			Trace(settings, stages);
-
 			// A line of nothing but NAME=VALUE words sets shell variables, as in POSIX.
 			if (stages is [var only] && Array.TrueForAll(only, DeclareCommand.IsAssignment))
 			{
+				CompoundCommands.Trace(declare, settings, stages);
+
 				return AssignmentStatus(declare.Run(only), substituted);
 			}
 
 			// NAME=VALUE words in front of a command go into that command's environment only, as in POSIX. The last
-			// word is always kept as the command, so A=1 | cat still reports A=1 as not found rather than running
-			// nothing.
+			// word is always kept as the command, so a stage of only NAME=VALUE words still has one to run.
 			var assignments = stages.Select(stage => stage.TakeWhile(DeclareCommand.IsAssignment).Take(stage.Length - 1).ToArray()).ToArray();
-
-			stages = [.. stages.Select((stage, index) => stage[assignments[index].Length..])];
 
 			// The word each stage's command name came from, in stage order, for a not-found report to point at.
 			var names = stageWords.Select((stage, index) => stage[assignments[index].Length]).ToArray();
+
+			// As one stage of a longer pipeline a function, or a stage of only NAME=VALUE words, runs in a copy of the
+			// shell, like any compound stage, so it can read the stage before it and runs beside the others, as bash
+			// runs every stage in a subshell. The copy shows its own stage under set -x.
+			bool[] copied = [.. names.Select(name => stages.Length > 1 && (Find(name) is FunctionCommand || DeclareCommand.IsAssignment(name.Text)))];
+
+			CompoundCommands.Trace(declare, settings, stages.Where((_, index) => !copied[index]));
+
+			stages = [.. stages.Select((stage, index) => stage[assignments[index].Length..])];
+
 			var arguments = stages[0][1..];
 
-			// As one stage of a longer pipeline a function runs in a copy of the shell, like any compound stage, so it
-			// can read the stage before it and runs beside the others, as bash runs every stage in a subshell.
-			stages = CompoundCommands.CopyFunctionStages(commands, aliases, declare, settings, stages, [.. names.Select(name => stages.Length > 1 && Find(name) is FunctionCommand)]);
+			stages = CompoundCommands.CopyStages(commands, aliases, declare, settings, stages, copied);
 			names = [.. names.Select((name, index) => name with { Text = stages[index][0] })];
 
-			return stages.Length > 1 ? RunPipeline(stages, assignments, names, redirections)
+			return stages.Length > 1 ? RunPipeline(stages, assignments, names, redirections, .., null, StandardOutput)
 				: Find(names[0]) is { } command ? RunBuiltinOrExec(command, declare, settings, arguments, assignments[0], redirections[0].Targets)
 				: RunProgram(names[0], arguments, assignments[0], StandardOutput, background, redirections[0]);
 		}
 
-		// Runs the stages as a pipeline, the last one writing to StandardOutput. A two-stage pipeline, left | right, may have a builtin on either side. No
-		// builtin reads standard input, so nothing has to run side by side once one is involved: a builtin on the
-		// left writes everything into a buffer that becomes the right program's input, and a builtin on the right
-		// ignores the left side's output, which is thrown away. Builtins run in the shell itself, not a subshell as
-		// in bash, so cd or exit in a pipeline still affects the shell. A left program that never ends, like tail -f,
-		// hangs a pipeline into a builtin, because bash relies on the broken pipe to stop it. With three or more
-		// stages builtins aren't looked up, so echo runs the program on PATH and type isn't found. Handling them
-		// there means running the stages before the last builtin into Stream.Null.
-		// The status is the last stage's, as in bash, or with pipefail the last failing stage's.
-		int RunPipeline(string[][] stages, string[][] assignments, Word[] names, Redirection[] redirections)
+		// Runs the stages in range as a pipeline, the first reading input, or the terminal when it's null, and the last
+		// writing to output. No builtin reads standard input, so nothing has to run side by side once one is involved:
+		// the stages before the last builtin run first, into Stream.Null, then the builtin writes everything into a
+		// buffer that becomes the input of the programs after it. The builtin runs as a subshell, as every stage does in
+		// bash, so cd, read or exit in a pipeline doesn't touch the shell. A program before a builtin that never ends,
+		// like tail -f, hangs the pipeline, because bash relies on the broken pipe to stop it. The status is the last
+		// stage's, as in bash, or with pipefail the last failing stage's, which works out the same taken part by part.
+		int RunPipeline(string[][] stages, string[][] assignments, Word[] names, Redirection[] redirections, Range range, Stream? input, Stream? output)
 		{
-			var left = stages[0];
-			var right = stages[^1];
-			var leftBuiltin = stages.Length == 2 ? Find(names[0]) : null;
-			var rightBuiltin = stages.Length == 2 ? Find(names[^1]) : null;
+			var (from, count) = range.GetOffsetAndLength(stages.Length);
+			var last = Array.FindLastIndex(names, from + count - 1, count, name => Find(name) is not null);
 
-			if (leftBuiltin is null && rightBuiltin is null)
+			if (last < 0)
 			{
-				return ExternalProgram.RunPipeline(stages, index => ReportNotFound(commands, aliases, line, names[index], redirections[index].Targets, null), assignments, settings.PipeFail, StandardOutput, redirections);
+				return ExternalProgram.RunPipeline(stages[range], index => ReportNotFound(commands, aliases, line, names[from + index], redirections[from + index].Targets, null), assignments[range], settings.PipeFail, output, redirections[range], input);
 			}
 
-			if (rightBuiltin is not null)
+			int[] before = last > from ? [RunPipeline(stages, assignments, names, redirections, from..last, input, Stream.Null)] : [];
+			var end = from + count;
+
+			using var buffer = last < end - 1 ? new MemoryStream() : null;
+
+			var targets = last > 0 ? PipeEnd(redirections[last].Targets) : redirections[last].Targets;
+			var status = CompoundCommands.RunIsolated(commands, aliases, declare, settings, () => RunBuiltin(Find(names[last])!, declare, stages[last][1..], assignments[last], buffer ?? output, targets));
+
+			if (buffer is null)
 			{
-				var leftStatus = leftBuiltin is not null
-					? RunBuiltin(leftBuiltin, declare, left[1..], assignments[0], Stream.Null, redirections[0].Targets)
-					: RunProgram(names[0], left[1..], assignments[0], Stream.Null, background: false, redirections[0]);
-
-				return ExternalProgram.PipelineStatus([leftStatus, RunBuiltin(rightBuiltin, declare, right[1..], assignments[^1], StandardOutput, PipeEnd(redirections[^1].Targets))], settings.PipeFail);
+				return ExternalProgram.PipelineStatus([.. before, status], settings.PipeFail);
 			}
-
-			using var buffer = new MemoryStream();
-
-			var builtinStatus = RunBuiltin(leftBuiltin!, declare, left[1..], assignments[0], buffer, redirections[0].Targets);
 
 			buffer.Position = 0;
 
-			return ExternalProgram.PipelineStatus([builtinStatus, RunProgram(names[^1], right[1..], assignments[^1], StandardOutput, background: false, redirections[^1], buffer)], settings.PipeFail);
+			return ExternalProgram.PipelineStatus([.. before, status, RunPipeline(stages, assignments, names, redirections, (last + 1)..end, buffer, output)], settings.PipeFail);
 		}
 
 		// The function or builtin a stage's name runs, past a function when command came before it, or null for a program.
@@ -782,10 +784,7 @@ internal static class Program
 		}
 
 		// bash shows the words of a condition unquoted.
-		if (settings.XTrace)
-		{
-			Console.Error.WriteLine($"+ {string.Join(' ', words.Select(word => word.Text))}");
-		}
+		CompoundCommands.Trace(declare, settings, string.Join(' ', words.Select(word => word.Text)));
 
 		return ConditionalCommand.Run(words, line, declare.Variables, settings.NoUnset);
 	}
@@ -1073,39 +1072,6 @@ internal static class Program
 		command is not ExecCommand exec ? RunBuiltin(command, declare, arguments, assignments, StandardOutput, targets)
 		: CompoundCommands.SubshellDepth > 0 ? ExecCommand.RunInSubstitution(arguments, assignments, targets[1].Opened ?? StandardOutput, targets[2].Opened)
 		: exec.Run(arguments, assignments, targets[1].Opened, targets[2].Opened, settings.Interactive);
-
-	/// <summary>
-	/// Prints each stage of a command to standard error before it runs, when <c>set -x</c> is on.
-	/// </summary>
-	/// <param name="settings">The <c>set</c> options.</param>
-	/// <param name="stages">The stages, each starting with its <c>NAME=VALUE</c> words.</param>
-	/// <remarks>
-	/// Each <c>NAME=VALUE</c> word gets a line of its own, then the command, every line after <c>+ </c>, with the
-	/// words quoted only where needed, the way bash prints them. Redirects aren't shown.
-	/// </remarks>
-	private static void Trace(ShellSettings settings, string[][] stages)
-	{
-		if (!settings.XTrace)
-		{
-			return;
-		}
-
-		foreach (var stage in stages)
-		{
-			var count = stage.TakeWhile(DeclareCommand.IsAssignment).Count();
-
-			foreach (var parts in stage[..count].Select(assignment => assignment.Split('=', 2)))
-			{
-				// bash leaves an empty value as NAME= here, though an empty argument shows as ''.
-				Console.Error.WriteLine($"+ {parts[0]}={(parts[1].Length == 0 ? string.Empty : CommandLine.QuoteIfNeeded(parts[1]))}");
-			}
-
-			if (count < stage.Length)
-			{
-				Console.Error.WriteLine($"+ {string.Join(' ', stage[count..].Select(CommandLine.QuoteIfNeeded))}");
-			}
-		}
-	}
 
 	/// <summary>
 	/// Reports the operator that keeps a command from running, pointing at where it was typed.

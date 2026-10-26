@@ -170,8 +170,8 @@ public sealed class ShellProcessTests
 
 	/// <summary>
 	/// Checks that <c>NAME=VALUE</c> words in front of a program, a builtin or one pipeline stage reach only that
-	/// command, and that the shell keeps none of them afterwards. A stage made only of them is still looked up as a
-	/// command, and not being found, stops the pipeline.
+	/// command, and that the shell keeps none of them afterwards. A stage made only of them runs in a copy of the
+	/// shell, which keeps them, as bash's subshell does.
 	/// </summary>
 	/// <param name="input">The lines piped to the shell.</param>
 	/// <param name="expected">The shell's standard output.</param>
@@ -180,7 +180,7 @@ public sealed class ShellProcessTests
 	[InlineData("SAMPLE_A=hi SAMPLE_B= showenv\nshowenv\n", "$ hi|\n$ unset|unset\n$ ")]
 	[InlineData("SAMPLE_A=hi showenv | showenv\nshowenv | SAMPLE_A=hi showenv\n", "$ unset|unset\n$ hi|unset\n$ ")]
 	[InlineData("PATH=/nonexistent type showenv\ntype showenv\n", "$ showenv: not found\n$ showenv is {0}/showenv\n$ ")]
-	[InlineData("SAMPLE_A=hi | showenv\n", "$ $ ")]
+	[InlineData("SAMPLE_A=hi | showenv\n", "$ unset|unset\n$ ")]
 	public async Task Shell_WithAssignmentsBeforeCommand_SetsThemForThatCommandOnly(string input, string expected)
 	{
 		// Arrange

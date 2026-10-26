@@ -198,7 +198,6 @@ offline use. Inside the window the page opens in the built-in reader, in another
 > Some of the POSIX shell language is still missing:
 >
 > - **`;&` and `;;&` in `case`, and `select`.** A `case` item has to end with `;;`.
-> - **Builtins in pipelines of three or more stages.** Those stages only run programs found on `PATH`.
 
 ## Development
 

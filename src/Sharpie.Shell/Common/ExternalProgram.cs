@@ -44,6 +44,16 @@ internal static partial class ExternalProgram
 	internal static int? LastBackground { get; set; }
 
 	/// <summary>
+	/// Gets or sets a value indicating whether a job started in the background is announced with its number and process
+	/// id, as <c>[1] 4242</c>.
+	/// </summary>
+	/// <value>
+	/// <see langword="true" /> in an interactive shell. bash says nothing in a script or <c>-c</c>, though the job is
+	/// still tracked for <c>jobs</c>, <c>wait</c> and <c>$!</c>.
+	/// </value>
+	internal static bool AnnounceJobs { get; set; }
+
+	/// <summary>
 	/// Gets the output copies of the background programs that command substitutions started, each with the stream
 	/// it fills.
 	/// </summary>
@@ -149,6 +159,10 @@ internal static partial class ExternalProgram
 	/// Each stage's redirects, in the same order, applied over the pipe ends that are its own streams, or
 	/// <see langword="null" /> for none.
 	/// </param>
+	/// <param name="input">
+	/// What the first program reads as standard input, closed once it's all written, or <see langword="null" /> to
+	/// let it read the terminal.
+	/// </param>
 	/// <remarks>
 	/// If any program isn't on <c>PATH</c>, <paramref name="notFound" /> is called for it and none of them run. Bash
 	/// would still start the others.
@@ -158,7 +172,7 @@ internal static partial class ExternalProgram
 	/// the rightmost program that didn't give 0. 127 when a program isn't on <c>PATH</c>, or 126 when one couldn't
 	/// start.
 	/// </returns>
-	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null, bool pipeFail = false, Stream? output = null, IReadOnlyList<Redirection>? redirections = null)
+	public static int RunPipeline(string[][] stages, Action<int> notFound, string[][]? assignments = null, bool pipeFail = false, Stream? output = null, IReadOnlyList<Redirection>? redirections = null, Stream? input = null)
 	{
 		_ = stages.ArgumentNotNull();
 		_ = notFound.ArgumentNotNull();
@@ -183,7 +197,7 @@ internal static partial class ExternalProgram
 		}
 
 		// Stryker disable once Conditional : each runner only runs on its own OS, so a test run on one OS can't tell them apart.
-		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments, targets, pipeFail, output) : RunPipelineWithSpawn(stages, paths!, assignments, targets, pipeFail, output);
+		return OperatingSystem.IsWindows() ? RunPipelineWithProcesses(stages, paths!, assignments, targets, pipeFail, output, input) : RunPipelineWithSpawn(stages, paths!, assignments, targets, pipeFail, output, input);
 	}
 
 	/// <summary>

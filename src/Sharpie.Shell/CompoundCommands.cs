@@ -31,6 +31,15 @@ internal static class CompoundCommands
 	internal static int SubshellDepth { get; private set; }
 
 	/// <summary>
+	/// Gets how many command substitutions, <c>eval</c>s and sourced files are running, one inside another, which
+	/// <see cref="Trace(DeclareCommand, ShellSettings, string)" /> marks as bash does.
+	/// </summary>
+	/// <value>
+	/// 0 in the shell itself. Subshells and function calls don't raise it.
+	/// </value>
+	internal static int TraceLevel { get; set; }
+
+	/// <summary>
 	/// How many <see cref="RunList" /> calls this thread is inside, so only the outermost one stops an expansion error.
 	/// </summary>
 	[ThreadStatic]
@@ -141,10 +150,7 @@ internal static class CompoundCommands
 			{
 				var expanded = Expand(expression, unset => CommandLine.ExpandExpression(expression, declare.Variables, unset, Substitution));
 
-				if (settings.XTrace)
-				{
-					Console.Error.WriteLine($"+ (( {expanded} ))");
-				}
+				Trace(declare, settings, $"(( {expanded} ))");
 
 				try
 				{
@@ -159,6 +165,7 @@ internal static class CompoundCommands
 			},
 			Assign = declare.Set,
 			Positional = () => declare.Positional,
+			Trace = text => Trace(declare, settings, text),
 			Subshell = body => RunIsolated(commands, aliases, declare, settings, body),
 			Redirected = (redirects, body) => Redirected(commands, aliases, declare, settings, redirects, body),
 			// One SHLVL down, since the copy raises it again and bash's subshell stays on the same level.
@@ -203,7 +210,7 @@ internal static class CompoundCommands
 	/// whatever it changes is undone here instead. shortcut: <c>ulimit</c> limits aren't put back, and a lowered hard
 	/// limit can't be; save and restore them here if a subshell that changes one is ever needed.
 	/// </remarks>
-	private static int RunIsolated(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, Func<int> run)
+	internal static int RunIsolated(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, Func<int> run)
 	{
 		var folder = Directory.GetCurrentDirectory();
 		var variables = declare.Variables.ToDictionary();
@@ -323,7 +330,7 @@ internal static class CompoundCommands
 		{
 			_ = settings.Set("errexit", false);
 
-			return Program.RunLine(commands, aliases, declare, list, output);
+			return Nested(() => Program.RunLine(commands, aliases, declare, list, output));
 		});
 
 		ExternalProgram.WaitForDetached(output);
@@ -495,21 +502,100 @@ internal static class CompoundCommands
 	}
 
 	/// <summary>
-	/// Replaces each stage of a pipeline that calls a function with one that calls it in a copy of the shell, as bash
-	/// runs every stage in a subshell.
+	/// Replaces each stage of a pipeline that calls a function, or holds only <c>NAME=VALUE</c> words, with one that
+	/// runs it in a copy of the shell, as bash runs every stage in a subshell.
 	/// </summary>
 	/// <param name="commands">The builtins and functions, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin.</param>
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
 	/// <param name="settings">The <c>set</c> options.</param>
 	/// <param name="stages">Each stage's command name and arguments.</param>
-	/// <param name="callsFunction">Whether each stage calls a function.</param>
+	/// <param name="copied">Whether each stage runs in a copy.</param>
 	/// <returns>
-	/// The stages, the ones that call a function now running the shell itself.
+	/// The stages, the copied ones now running the shell itself.
 	/// </returns>
-	internal static string[][] CopyFunctionStages(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, string[][] stages, bool[] callsFunction) =>
-		[.. stages.Select((stage, index) => callsFunction[index]
+	internal static string[][] CopyStages(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, string[][] stages, bool[] copied) =>
+		[.. stages.Select((stage, index) => copied[index]
 			? [Environment.ProcessPath!, .. CopyArguments(commands, aliases, declare, settings, string.Join(' ', stage.Select(CommandLine.Quote)), tested: false)]
 			: stage)];
+	/// <summary>
+	/// Runs <paramref name="run" /> one <see cref="TraceLevel" /> deeper, for a command substitution, <c>eval</c> or a
+	/// sourced file.
+	/// </summary>
+	/// <param name="run">What to run, which gives a status.</param>
+	/// <returns>
+	/// The status <paramref name="run" /> gives.
+	/// </returns>
+	internal static int Nested(Func<int> run)
+	{
+		TraceLevel++;
 
+		try
+		{
+			return run();
+		}
+		finally
+		{
+			TraceLevel--;
+		}
+	}
+
+	/// <summary>
+	/// Prints each stage of a command to standard error before it runs, when <c>set -x</c> is on.
+	/// </summary>
+	/// <param name="declare">The <c>declare</c> builtin, which holds <c>PS4</c>.</param>
+	/// <param name="settings">The <c>set</c> options.</param>
+	/// <param name="stages">The stages, each starting with its <c>NAME=VALUE</c> words.</param>
+	/// <remarks>
+	/// Each <c>NAME=VALUE</c> word gets a line of its own, then the command, with the words quoted only where needed,
+	/// the way bash prints them. Redirects aren't shown.
+	/// </remarks>
+	internal static void Trace(DeclareCommand declare, ShellSettings settings, IEnumerable<string[]> stages)
+	{
+		if (!settings.XTrace)
+		{
+			return;
+		}
+
+		foreach (var stage in stages)
+		{
+			var count = stage.TakeWhile(DeclareCommand.IsAssignment).Count();
+
+			foreach (var parts in stage[..count].Select(assignment => assignment.Split('=', 2)))
+			{
+				// bash leaves an empty value as NAME= here, though an empty argument shows as ''.
+				Trace(declare, settings, $"{parts[0]}={(parts[1].Length == 0 ? string.Empty : CommandLine.QuoteIfNeeded(parts[1]))}");
+			}
+
+			if (count < stage.Length)
+			{
+				Trace(declare, settings, string.Join(' ', stage[count..].Select(CommandLine.QuoteIfNeeded)));
+			}
+		}
+	}
+
+	/// <summary>
+	/// Prints one line to standard error after <c>PS4</c>, when <c>set -x</c> is on.
+	/// </summary>
+	/// <param name="declare">The <c>declare</c> builtin, which holds <c>PS4</c>.</param>
+	/// <param name="settings">The <c>set</c> options.</param>
+	/// <param name="text">What runs, as it's shown.</param>
+	/// <remarks>
+	/// <c>PS4</c> is <c>+ </c> when it isn't set, and its variables and <c>$((...))</c> are expanded each time. Its first
+	/// character is repeated once more for each <see cref="TraceLevel" />, so a line inside <c>$(...)</c> starts with
+	/// <c>++ </c>, as in bash. shortcut: a <c>$(...)</c> in <c>PS4</c> isn't run, <c>unset PS4</c> still gives
+	/// <c>+ </c> where bash shows nothing, and a copy of the shell starts back at level 0; run the substitution and pass
+	/// the level on if a script needs them.
+	/// </remarks>
+	internal static void Trace(DeclareCommand declare, ShellSettings settings, string text)
+	{
+		if (!settings.XTrace)
+		{
+			return;
+		}
+
+		var prefix = CommandLine.ExpandBody(declare.Variables.GetValueOrDefault("PS4", "+ "), declare.Variables);
+
+		Console.Error.WriteLine(prefix.Length == 0 ? text : new string(prefix[0], TraceLevel) + prefix + text);
+	}
 }

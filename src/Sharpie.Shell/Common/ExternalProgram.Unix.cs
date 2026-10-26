@@ -92,7 +92,11 @@ internal static partial class ExternalProgram
 		if (background)
 		{
 			AddJob(job);
-			Console.WriteLine($@"[{job.Number}] {job.ProcessId}");
+
+			if (AnnounceJobs)
+			{
+				Console.WriteLine($@"[{job.Number}] {job.ProcessId}");
+			}
 
 			return 0;
 		}
@@ -117,6 +121,7 @@ internal static partial class ExternalProgram
 	/// <param name="targets">Where each stage's streams go, from its redirects, in the same order.</param>
 	/// <param name="pipeFail"><see langword="true" /> for <c>set -o pipefail</c>.</param>
 	/// <param name="output">Where the last program writes, or <see langword="null" /> for the terminal.</param>
+	/// <param name="input">What the first program reads, or <see langword="null" /> for the terminal.</param>
 	/// <returns>
 	/// The status as <see cref="RunPipeline" /> gives it.
 	/// </returns>
@@ -127,11 +132,12 @@ internal static partial class ExternalProgram
 	/// <c>head</c> does in <c>yes | head -n 3</c>, the earlier one gets SIGPIPE on its next write and ends, as in any
 	/// shell.
 	/// </remarks>
-	private static int RunPipelineWithSpawn(string[][] stages, string[] paths, string[][] assignments, StreamTarget[][] targets, bool pipeFail, Stream? output)
+	private static int RunPipelineWithSpawn(string[][] stages, string[] paths, string[][] assignments, StreamTarget[][] targets, bool pipeFail, Stream? output, Stream? input)
 	{
 		using var plumbing = new Plumbing();
 
 		var lastOutput = plumbing.Writer(output, copy: true);
+		var firstInput = plumbing.Reader(input);
 		var pipes = new AnonymousPipeServerStream[stages.Length - 1];
 		Job? job = null;
 		var failed = false;
@@ -145,13 +151,13 @@ internal static partial class ExternalProgram
 
 			for (var index = 0; index < stages.Length; index++)
 			{
-				// The first program reads the terminal and the last one writes to the terminal or output.
-				var input = index > 0 ? (int)pipes[index - 1].SafePipeHandle.DangerousGetHandle() : -1;
+				// The first program reads the terminal or input and the last one writes to the terminal or output.
+				var stageInput = index > 0 ? (int)pipes[index - 1].SafePipeHandle.DangerousGetHandle() : firstInput;
 				var stageOutput = index < pipes.Length ? (int)pipes[index].ClientSafePipeHandle.DangerousGetHandle() : lastOutput;
 				var group = !JobControl.Enabled ? -1 : job?.ProcessId ?? 0;
 				var (streams, closed) = Descriptors(targets[index], stream => stream switch
 				{
-					0 => input,
+					0 => stageInput,
 					1 => stageOutput,
 					_ => -1,
 				});

@@ -47,7 +47,7 @@ public sealed class JobsProcessTests
 		var run = await ShellProcess.RunAsync("sleep 1 &\njobs\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().MatchRegex(@"^\$ \[1\] \d+\n\$ \[1\]\+  Running                 sleep 1 &\n\$ $");
+		_ = run.Output.Should().MatchRegex(@"^\$ \$ \[1\]\+  Running                 sleep 1 &\n\$ $");
 	}
 
 	/// <summary>
@@ -60,7 +60,7 @@ public sealed class JobsProcessTests
 		var run = await ShellProcess.RunAsync("sleep 1 & echo next\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().MatchRegex(@"^\$ \[1\] \d+\nnext\n\$ $");
+		_ = run.Output.Should().MatchRegex(@"^\$ next\n\$ $");
 	}
 
 	/// <summary>
@@ -136,7 +136,7 @@ public sealed class JobsProcessTests
 		// Assert
 		// The Exit line lands before the sleep prompt or the exit prompt, depending on whether cat had already
 		// exited when the shell first checked.
-		_ = run.Output.Should().MatchRegex(@"^\$ \[1\] \d+\n(\[1\]\+  Exit 1 +cat sample-missing-file\n\$ \$ |\$ \[1\]\+  Exit 1 +cat sample-missing-file\n\$ )$");
+		_ = run.Output.Should().MatchRegex(@"^\$ (\[1\]\+  Exit 1 +cat sample-missing-file\n\$ \$ |\$ \[1\]\+  Exit 1 +cat sample-missing-file\n\$ )$");
 		_ = run.Exited.Should().BeTrue();
 	}
 
@@ -156,7 +156,7 @@ public sealed class JobsProcessTests
 		var run = await ShellProcess.RunAsync($"sleep 30 &\nkill {option}%1; wait %1; echo $?\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().MatchRegex($@"^\$ \[1\] \d+\n\$ {expected}\n\$ $");
+		_ = run.Output.Should().MatchRegex($@"^\$ \$ {expected}\n\$ $");
 		_ = run.Error.Should().BeEmpty();
 	}
 
@@ -171,7 +171,7 @@ public sealed class JobsProcessTests
 		var run = await ShellProcess.RunAsync("sleep 0.2 &\nwait\necho done $?\njobs\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().MatchRegex(@"^\$ \[1\] \d+\n\$ \$ done 0\n\$ \$ $");
+		_ = run.Output.Should().MatchRegex(@"^\$ \$ \$ done 0\n\$ \$ $");
 	}
 
 	/// <summary>
@@ -203,7 +203,7 @@ public sealed class JobsProcessTests
 		_ = exited.Should().BeTrue();
 		// The job's Exit 143 line lands before the prompt after kill or the one after echo, depending on when the shell
 		// sees it end.
-		_ = (await output.ConfigureAwait(true)).Should().MatchRegex(@"^\$ \[1\] \d+\n\$ \$ 130\n\$ (\[1\]\+  Exit 143 +sleep 30\n)?\$ 0\n");
+		_ = (await output.ConfigureAwait(true)).Should().MatchRegex(@"^\$ \$ \$ 130\n\$ (\[1\]\+  Exit 143 +sleep 30\n)?\$ 0\n");
 	}
 
 	/// <summary>
@@ -244,6 +244,6 @@ public sealed class JobsProcessTests
 		var run = await ShellProcess.RunAsync("sleep 1 &\ndisown %1\njobs\nexit\n").ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().MatchRegex(@"^\$ \[1\] \d+\n\$ \$ \$ $");
+		_ = run.Output.Should().MatchRegex(@"^\$ \$ \$ \$ $");
 	}
 }

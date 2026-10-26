@@ -140,8 +140,8 @@ public sealed partial class ExternalProgramTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that a background program prints its job number and process id and returns while the program is still
-	/// running.
+	/// Checks that a background program in an interactive shell prints its job number and process id and returns while
+	/// the program is still running.
 	/// </summary>
 	[Fact]
 	public void Run_InBackground_PrintsJobAndPidWithoutWaiting()
@@ -151,9 +151,20 @@ public sealed partial class ExternalProgramTests : IDisposable
 		// at once, so the job could be gone before the test looked it up.
 		_ = ShellEnvironment.CreateFile(this.folder, "napper", executable: true, "#!/bin/sh\nexec /bin/sleep 10\n");
 		var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+		ExternalProgram.AnnounceJobs = true;
 
 		// Act
-		var result = ExternalProgram.Run("napper", [], background: true);
+		int? result;
+
+		try
+		{
+			result = ExternalProgram.Run("napper", [], background: true);
+		}
+		finally
+		{
+			ExternalProgram.AnnounceJobs = false;
+		}
+
 		stopwatch.Stop();
 
 		// Assert
@@ -302,6 +313,31 @@ public sealed partial class ExternalProgramTests : IDisposable
 		// Assert
 		_ = result.Should().Be(0);
 		_ = System.Text.Encoding.UTF8.GetString(output.ToArray()).Trim().Should().Be("2");
+	}
+
+	/// <summary>
+	/// Checks that a pipeline given an input stream feeds it to the first program.
+	/// </summary>
+	[Fact]
+	public void RunPipeline_WithInput_FeedsFirstStage()
+	{
+		// Arrange
+		// The fake programs are shell scripts.
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		_ = ShellEnvironment.CreateFile(this.folder, "pass", executable: true, "#!/bin/sh\nexec /bin/cat\n");
+		using var input = new MemoryStream("fed\n"u8.ToArray());
+		using var output = new MemoryStream();
+
+		// Act
+		var result = ExternalProgram.RunPipeline([["pass"], ["pass"]], _ => { }, output: output, input: input);
+
+		// Assert
+		_ = result.Should().Be(0);
+		_ = System.Text.Encoding.UTF8.GetString(output.ToArray()).Should().Be("fed\n");
 	}
 
 	/// <summary>

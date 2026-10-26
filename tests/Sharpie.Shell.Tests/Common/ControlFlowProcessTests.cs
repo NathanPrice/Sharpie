@@ -226,7 +226,7 @@ public sealed class ControlFlowProcessTests : IDisposable
 		var run = await ShellProcess.RunAsync(string.Empty, this.folder, arguments: ["-c", "y=5; ( sleep 0.1; echo \"bg $y\" ) & wait; echo done"]).ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().MatchRegex(@"^\[1\] \d+\nbg 5\ndone\n$");
+		_ = run.Output.Should().Be("bg 5\ndone\n");
 	}
 
 	/// <summary>

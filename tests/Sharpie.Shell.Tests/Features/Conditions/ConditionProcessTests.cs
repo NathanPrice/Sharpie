@@ -59,7 +59,7 @@ public sealed class ConditionProcessTests
 		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "[[ a && '' ]] &\nwait %1; echo $?"]).ConfigureAwait(true);
 
 		// Assert
-		_ = run.Output.Should().MatchRegex(@"^\[1\] \d+\n1\n$");
+		_ = run.Output.Should().Be("1\n");
 	}
 
 	/// <summary>

@@ -406,6 +406,35 @@ public sealed class CommandRunnerTests
 	}
 
 	/// <summary>
+	/// Checks that a <c>for</c> header goes to the trace hook as typed once per value, and not at all for an empty
+	/// list, and that a <c>case</c> header goes once.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="expected">The lines the trace hook gets.</param>
+	[Theory]
+	[InlineData("for i in $x b; do a; done", new[] { "for i in $x b", "for i in $x b" })]
+	[InlineData("for i; do a; done", new[] { "for i in \"$@\"", "for i in \"$@\"" })]
+	[InlineData("for i in; do a; done", new string[0])]
+	[InlineData("case $x in b) a;; c) a;; esac", new[] { "case $x in" })]
+	public void Run_WithTraceHook_GetsHeaders(string line, string[] expected)
+	{
+		// Arrange
+		var traced = new List<string>();
+		var hooks = new ShellHooks(this.Hooks().Run)
+		{
+			Trace = traced.Add,
+			ExpandWords = words => words.Length == 0 ? [] : ["x", "b"],
+			Positional = () => ["p", "q"],
+		};
+
+		// Act
+		_ = CommandList.Run(line, 0, hooks);
+
+		// Assert
+		_ = traced.Should().Equal(expected);
+	}
+
+	/// <summary>
 	/// Makes hooks that record each command and give it a status.
 	/// </summary>
 	/// <param name="status">
