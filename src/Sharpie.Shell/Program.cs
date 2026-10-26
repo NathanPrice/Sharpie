@@ -326,7 +326,9 @@ internal static class Program
 			// The history file keeps one entry per line, so a here-document's body isn't saved.
 			history.Record(line);
 
-			if (ReadBodies(line, editor) is not { } command)
+			var (command, read) = ReadBodies(line, editor);
+
+			if (command is null)
 			{
 				took = TimeSpan.Zero;
 
@@ -335,7 +337,7 @@ internal static class Program
 
 			line = command;
 			declare.LineNumber = typed + 1;
-			typed += line.Split('\n').Length;
+			typed += read;
 
 			if (inWindow && editor is not null && CommandLine.PagedCommand(line) is { } paged
 				&& (paged[0] == "man" ? ManPageExists(paged[1..]) : DmanCommand.Find(paged[1..])))
@@ -397,35 +399,52 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Reads the bodies of the here-documents <paramref name="line" /> starts, and the rest of a compound command, a
-	/// quote, <c>$(</c> or backquote left open, or a line that ends in <c>&amp;&amp;</c>, <c>||</c> or <c>|</c>, a line
-	/// at a time after a <c>&gt; </c> prompt, until the command is whole.
+	/// Reads the rest of the command <paramref name="line" /> starts, a line at a time after a <c>&gt; </c> prompt,
+	/// until the command is whole: the bodies of its here-documents, a quote, <c>$(</c> or backquote it leaves open, a
+	/// <c>\</c> at its end, a compound command, or a line that ends in <c>&amp;&amp;</c>, <c>||</c> or <c>|</c>.
 	/// </summary>
 	/// <param name="line">The line just read.</param>
 	/// <param name="editor">The line editor, or <see langword="null" /> for plain lines from standard input.</param>
 	/// <returns>
-	/// The command with its bodies. At the end of plain input, the lines read so far, as bash runs them.
+	/// The command, joined as <see cref="CommandList.JoinContinuedLines" /> joins a file's lines, and how many lines
+	/// were read for it, for <c>$LINENO</c>. At the end of plain input, the lines read so far, as bash runs them.
 	/// <see langword="null" /> after Ctrl+C or Ctrl+D in the editor, which drops the command.
 	/// </returns>
 	[SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters", Justification = "bash's PS2 prompt, the same in every language, like the $ prompt.")]
-	private static string? ReadBodies(string line, LineEditor? editor)
+	private static (string? Command, int Read) ReadBodies(string line, LineEditor? editor)
 	{
-		while (CommandList.NeedsMoreLines(line) || CommandList.Unfinished(line) is not null)
+		var read = 0;
+		var cancelled = false;
+		var command = CommandList.JoinContinuedLines(Lines()).FirstOrDefault().Text;
+
+		return (cancelled ? null : command, read);
+
+		// The line just read, then one more each time the joiner asks for it.
+		IEnumerable<string> Lines()
+		{
+			for (var next = line; next is not null; next = ReadNext())
+			{
+				read++;
+
+				yield return next;
+			}
+		}
+
+		string? ReadNext()
 		{
 			if (editor is null)
 			{
 				Console.Write(LineEditor.ContinuationPrompt);
+
+				return Console.ReadLine();
 			}
 
-			if ((editor is null ? Console.ReadLine() : ReadEdited(editor, string.Empty, continuation: true)) is not { } next)
-			{
-				return editor is null ? line : null;
-			}
+			var next = ReadEdited(editor, string.Empty, continuation: true);
 
-			line += "\n" + next;
+			cancelled = next is null;
+
+			return next;
 		}
-
-		return line;
 	}
 
 	/// <summary>

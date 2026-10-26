@@ -123,6 +123,15 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("echo ${q//\\'/_}", '\0')]
 	[InlineData("echo ${A 'b", '\'')]
 	[InlineData("echo \"${X/'\"'/Q}\"", '\0')]
+	[InlineData("echo a\\", '\\')]
+	[InlineData("echo \"a\\", '\\')]
+	[InlineData("echo a # b\\", '\0')]
+	[InlineData("echo 'a\\", '\'')]
+	[InlineData("echo $(a \\", '\\')]
+	[InlineData("echo $(echo 'a\\", '(')]
+	[InlineData("echo $(echo a # b\\", '(')]
+	[InlineData("echo `a \\", '\\')]
+	[InlineData("echo `echo 'a\\\\", '`')]
 	public void Unfinished_WithLine_NamesWhatIsOpen(string line, char expected)
 	{
 		// Act
@@ -476,7 +485,7 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("cat <<E\nx\nE\nb", new[] { 0, 3 })]
 	[InlineData("  a\n\n  # c\n  b", new[] { 0, 3 })]
 	[InlineData("a\n  b && c &\nd", new[] { 0, 1, 2 })]
-	[InlineData("a \\\nb; c", new[] { 0, 1 })]
+	[InlineData("a \\\nb; c", new[] { 0, 0 })]
 	[InlineData("a\nb | { c; }", new[] { 0, 1 })]
 	public void Run_WithStarting_GivesLineOffsets(string line, int[] expected)
 	{
@@ -554,6 +563,66 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a quote still open at the end runs nothing and is reported with status 2, as bash's "unexpected EOF
+	/// while looking for matching" is.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="quote">The quote left open.</param>
+	[Theory]
+	[InlineData("echo \"a", '"')]
+	[InlineData("echo b; echo 'a\nc", '\'')]
+	[InlineData("echo \"a\\", '"')]
+	public void Run_WithQuoteOpenAtEnd_RunsNothingAndReports(string line, char quote)
+	{
+		// Arrange
+		var ran = new List<string>();
+
+		// Act
+		var status = CommandList.Run(line, 0, command =>
+		{
+			ran.Add(command);
+
+			return 0;
+		});
+
+		// Assert
+		_ = ran.Should().BeEmpty();
+		_ = status.Should().Be(CommandList.UnsupportedStatus);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::unclosed_quote", $"`{quote}` is never closed")
+		{
+			Help = $"add the closing {quote}",
+		}.Render(color: false));
+	}
+
+	/// <summary>
+	/// Checks that a backslash before a line break joins the two lines, as in a file, so <c>-c</c> and <c>eval</c> text
+	/// can wrap a command anywhere.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="expected">The commands that should run.</param>
+	[Theory]
+	[InlineData("if true; \\\nthen echo ok; fi", new[] { "true", "echo ok" })]
+	[InlineData("echo a\\\nb", new[] { "echo ab" })]
+	[InlineData("echo 'a\\\nb'", new[] { "echo 'a\\\nb'" })]
+	[InlineData("echo a\\\\\necho b", new[] { "echo a\\\\", "echo b" })]
+	public void Run_WithBackslashBeforeLineBreak_JoinsTheLines(string line, string[] expected)
+	{
+		// Arrange
+		var ran = new List<string>();
+
+		// Act
+		_ = CommandList.Run(line, 0, command =>
+		{
+			ran.Add(command);
+
+			return 0;
+		});
+
+		// Assert
+		_ = ran.Should().Equal(expected);
+	}
+
+	/// <summary>
 	/// Checks that <see cref="CommandList.IsHereDocumentOpen" /> says whether a reader still owes a here-document its
 	/// delimiter line.
 	/// </summary>
@@ -580,6 +649,94 @@ public sealed class CommandListTests : IDisposable
 
 		// Assert
 		_ = open.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that a line ending in an odd number of backslashes joins the next one, and an even number doesn't, and
+	/// that a line leaving a quote, substitution or here-document open joins the lines that close it.
+	/// </summary>
+	/// <param name="lines">The lines of the file.</param>
+	/// <param name="expected">The command lines that should come out.</param>
+	[Theory]
+	[InlineData(new[] { @"echo a \", "b" }, new[] { "echo a b" })]
+	[InlineData(new[] { @"echo a \", @"b \", "c" }, new[] { "echo a b c" })]
+	[InlineData(new[] { @"echo a\\", "b" }, new[] { @"echo a\\", "b" })]
+	[InlineData(new[] { @"echo a\\\", "b" }, new[] { @"echo a\\b" })]
+	[InlineData(new[] { @"echo a\" }, new[] { "echo a" })]
+	[InlineData(new[] { "one", "two" }, new[] { "one", "two" })]
+	[InlineData(new[] { @"\" }, new string[0])]
+	[InlineData(new[] { "X=$(echo a", "echo b)", "echo c" }, new[] { "X=$(echo a\necho b)", "echo c" })]
+	[InlineData(new[] { "echo `a", "b`" }, new[] { "echo `a\nb`" })]
+	[InlineData(new[] { "echo 'a", "", "b'" }, new[] { "echo 'a\n\nb'" })]
+	[InlineData(new[] { @"echo 'a\", "b'" }, new[] { "echo 'a\\\nb'" })]
+	[InlineData(new[] { "echo \"a\\", "b\"" }, new[] { "echo \"ab\"" })]
+	[InlineData(new[] { @"X=$(echo a \", "b)" }, new[] { "X=$(echo a b)" })]
+	[InlineData(new[] { "# don't", "echo hi" }, new[] { "# don't", "echo hi" })]
+	[InlineData(new[] { "# don't\\", "echo hi" }, new[] { "# don't\\", "echo hi" })]
+	[InlineData(new[] { "echo a # b\\", "echo c" }, new[] { "echo a # b\\", "echo c" })]
+	[InlineData(new[] { "echo $(echo 'a\\", "b')" }, new[] { "echo $(echo 'a\\\nb')" })]
+	[InlineData(new[] { "echo $(echo a # c\\", "echo b)" }, new[] { "echo $(echo a # c\\\necho b)" })]
+	[InlineData(new[] { "echo $(cat <<'E'", "x\\", "y", "E", ")" }, new[] { "echo $(cat <<'E'\nx\\\ny\nE\n)" })]
+	[InlineData(new[] { "echo `echo 'a\\", "b'`" }, new[] { "echo `echo 'ab'`" })]
+	[InlineData(new[] { "echo 'open", "" }, new[] { "echo 'open" })]
+	[InlineData(new[] { "cat <<EOF", @"body \", "EOF", "next" }, new[] { "cat <<EOF\nbody \\\nEOF", "next" })]
+	[InlineData(new[] { @"cat \", "<<EOF", "x", "EOF" }, new[] { "cat <<EOF\nx\nEOF" })]
+	[InlineData(new[] { "cat <<A <<B", "1", "A", "2", "B", @"a\", "b" }, new[] { "cat <<A <<B\n1\nA\n2\nB", "ab" })]
+	[InlineData(new[] { "cat <<EOF", "never closed" }, new[] { "cat <<EOF\nnever closed" })]
+	[InlineData(new[] { "cat <<EOF", "don't $(", "EOF", "echo c" }, new[] { "cat <<EOF\ndon't $(\nEOF", "echo c" })]
+	[InlineData(new[] { "if true; then", "  echo a", "fi", "echo b" }, new[] { "if true; then\n  echo a\nfi", "echo b" })]
+	[InlineData(new[] { "f() {", @"  echo a \", "b", "}" }, new[] { "f() {\n  echo a b\n}" })]
+	[InlineData(new[] { "while read l; do", "  cat <<EOF", "fi", "EOF", "done" }, new[] { "while read l; do\n  cat <<EOF\nfi\nEOF\ndone" })]
+	[InlineData(new[] { "if true; then" }, new[] { "if true; then" })]
+	public void JoinContinuedLines_WithLines_JoinsOnOddBackslashes(string[] lines, string[] expected)
+	{
+		// Act
+		var joined = CommandList.JoinContinuedLines(lines);
+
+		// Assert
+		_ = joined.Select(command => command.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that each command line comes with the file line it starts on, past lines joined by a backslash, a quote
+	/// or a here-document's body.
+	/// </summary>
+	/// <param name="lines">The lines of the file.</param>
+	/// <param name="expected">The line number each command line should start on.</param>
+	[Theory]
+	[InlineData(new[] { "one", "two" }, new[] { 1, 2 })]
+	[InlineData(new[] { "", "one" }, new[] { 1, 2 })]
+	[InlineData(new[] { @"echo a \", "b", "c" }, new[] { 1, 3 })]
+	[InlineData(new[] { "echo 'a", "b'", "c" }, new[] { 1, 3 })]
+	[InlineData(new[] { "cat <<EOF", "x", "EOF", "next" }, new[] { 1, 4 })]
+	[InlineData(new[] { "one", "echo 'open" }, new[] { 1, 2 })]
+	[InlineData(new[] { "one", @"two \" }, new[] { 1, 2 })]
+	public void JoinContinuedLines_WithLines_GivesStartLines(string[] lines, int[] expected)
+	{
+		// Act
+		var joined = CommandList.JoinContinuedLines(lines);
+
+		// Assert
+		_ = joined.Select(command => command.Line).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that a function's body is joined to its <c>}</c>, a trailing backslash in it still joins, and one in a
+	/// here-document's body inside it stays for the here-document's rules.
+	/// </summary>
+	/// <param name="lines">The lines of the file.</param>
+	/// <param name="expected">The command lines.</param>
+	[Theory]
+	[InlineData(new[] { "samplefn() {", "echo a \\", "b", "}", "c" }, new[] { "samplefn() {\necho a b\n}", "c" })]
+	[InlineData(new[] { "samplefn() {", "cat <<'EOF'", "a\\", "b", "EOF", "}" }, new[] { "samplefn() {\ncat <<'EOF'\na\\\nb\nEOF\n}" })]
+	[InlineData(new[] { "samplefn() {", "cat <<EOF \\", "x", "a", "EOF", "}" }, new[] { "samplefn() {\ncat <<EOF x\na\nEOF\n}" })]
+	public void JoinContinuedLines_WithFunctionBody_JoinsToItsEnd(string[] lines, string[] expected)
+	{
+		// Act
+		var joined = CommandList.JoinContinuedLines(lines);
+
+		// Assert
+		_ = joined.Select(command => command.Text).Should().Equal(expected);
 	}
 
 	/// <summary>

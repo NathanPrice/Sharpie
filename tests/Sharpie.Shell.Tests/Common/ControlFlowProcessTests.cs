@@ -41,6 +41,36 @@ public sealed class ControlFlowProcessTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a line leaving a quote or <c>$(</c> open, or ending in a backslash, asks for the next line and runs
+	/// the joined command, printing what bash prints.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithLineLeftOpen_PromptsForRest()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("echo \"a\nb\"\necho c\\\nd\nX=$(echo hi\n)\necho $X\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ > a\nb\n$ > cd\n$ > $ hi\n$ ");
+	}
+
+	/// <summary>
+	/// Checks that <c>-c</c> text with a quote never closed runs nothing and exits with 2, as bash does.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithQuoteOpenInCommand_ExitsWithTwo()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "echo \"a"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().BeEmpty();
+		_ = run.ExitCode.Should().Be(CommandList.UnsupportedStatus);
+	}
+
+	/// <summary>
 	/// Checks the status and output of each compound command, run from <c>-c</c>.
 	/// </summary>
 	/// <param name="command">The command.</param>

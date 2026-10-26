@@ -74,6 +74,35 @@ public sealed class SourceProcessTests
 	}
 
 	/// <summary>
+	/// Checks that a backslash ending a comment doesn't join the next line, and a quote still open at the end of the
+	/// file is reported with status 2 after the lines before it ran, as bash does.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithCommentBackslashAndOpenQuote_RunsAsBashDoes()
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-source-").FullName;
+		var path = Path.Combine(folder, "sample.rc");
+
+		await File.WriteAllTextAsync(path, "echo e # f\\\necho g\necho 'open\nstill\n").ConfigureAwait(true);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", $". {path}; echo $?"]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be("e\ng\n2\n");
+			_ = run.Error.Should().Contain("`'` is never closed");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that a shell whose input isn't a terminal skips <c>~/.sharpierc</c>, as bash skips <c>~/.bashrc</c>.
 	/// </summary>
 	[Fact]

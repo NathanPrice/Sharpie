@@ -107,18 +107,8 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 			{
 				var status = 0;
 
-				foreach (var (number, line) in JoinContinuedLines(lines))
+				foreach (var (number, line) in CommandList.JoinContinuedLines(lines))
 				{
-					if (CommandList.Unfinished(line) is var quote and ('\'' or '"'))
-					{
-						new ShellError("sharpie::source::unclosed_quote", $"`{quote}` is never closed in `{args[0]}`")
-						{
-							Help = $"add the closing {quote}",
-						}.Write();
-
-						return CommandList.UnsupportedStatus;
-					}
-
 					declare.LineNumber = number;
 					status = runLine(line);
 				}
@@ -161,87 +151,5 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 		var folders = path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
 
 		return folders.Select(folder => Path.Combine(folder, file)).FirstOrDefault(File.Exists) ?? file;
-	}
-
-	/// <summary>
-	/// Joins each line that ends in an unescaped backslash to the line after it, each line that leaves a quote,
-	/// <c>$(</c> or backquote open to the lines that close it, as POSIX does, a line that starts a here-document to
-	/// the lines of its body, and the lines of a compound command up to its end.
-	/// </summary>
-	/// <param name="lines">The lines of the file.</param>
-	/// <returns>
-	/// The command lines, each with the number of the file line it starts on, counted from 1, and with each joining
-	/// backslash and its line break removed. Lines joined for an open quote, substitution, here-document or compound
-	/// command keep the line break between them, so <c>X=$(</c> on one line and <c>pwd)</c> on the next run as one
-	/// command, and so do <c>if x; then</c> and the lines up to its <c>fi</c>.
-	/// </returns>
-	/// <remarks>
-	/// The backslash counts when there's an odd number of them at the end, so <c>\\</c>, an escaped backslash, doesn't
-	/// join. Inside single quotes a backslash is only itself, so the line break stays. Body lines are kept as they are,
-	/// trailing backslashes and quotes included, for <see cref="CommandLine.Split" /> to read by the here-document's
-	/// rules.
-	/// </remarks>
-	internal static IEnumerable<(int Line, string Text)> JoinContinuedLines(IEnumerable<string> lines)
-	{
-		_ = lines.ArgumentNotNull();
-
-		var pending = string.Empty;
-		var number = 0;
-
-		// The line the command being read starts on, or null between commands.
-		int? start = null;
-
-		// The command read so far while a here-document's body is still open.
-		string? body = null;
-
-		foreach (var line in lines)
-		{
-			number++;
-			start ??= number;
-
-			if (body is not null && CommandList.IsHereDocumentOpen(body))
-			{
-				body += "\n" + line;
-			}
-			else
-			{
-				var joined = pending + line;
-				var open = CommandList.Unfinished(joined);
-
-				// The run of backslashes the line ends with. A here-document's body inside a function that's still open
-				// keeps them, for CommandLine.Split to read by the here-document's rules.
-				if (open != '\'' && joined[joined.TrimEnd('\\').Length..].Length % 2 == 1 && !CommandList.IsHereDocumentOpen(pending))
-				{
-					pending = joined[..^1];
-
-					continue;
-				}
-
-				if (open is not null)
-				{
-					pending = joined + "\n";
-
-					continue;
-				}
-
-				pending = string.Empty;
-				body = body is null ? joined : body + "\n" + joined;
-			}
-
-			if (!CommandList.NeedsMoreLines(body))
-			{
-				yield return (start.Value, body);
-
-				body = null;
-				start = null;
-			}
-		}
-
-		// Whatever is still open at the end of the file, which Run reports.
-		if ((body ?? pending.TrimEnd('\n')) is { Length: > 0 } rest)
-		{
-			// Stryker disable once NullCoalescing : a command still open at the end always has its start line.
-			yield return (start ?? number, rest);
-		}
 	}
 }

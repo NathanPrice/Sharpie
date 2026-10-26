@@ -14,7 +14,10 @@ namespace Sharpie.Shell.Common;
 /// <see langword="true" /> when the text ends inside a compound command or right after <c>&amp;&amp;</c>, <c>||</c>
 /// or <c>|</c>, so a reader with more lines should add the next one.
 /// </param>
-/// <param name="OpenQuote">The quote the text ends inside, or <see langword="null" />.</param>
+/// <param name="OpenQuote">
+/// The quote the text ends inside, <c>\</c> when it ends in a backslash that escapes the line break after it, even
+/// inside an unclosed substitution, or <see langword="null" />.
+/// </param>
 /// <param name="Refused">
 /// Where an unclosed <c>$(</c>, <c>$((</c> or backquote starts; otherwise, -1.
 /// </param>
@@ -100,7 +103,7 @@ internal sealed class CommandParser
 
 		if (refused >= 0)
 		{
-			return new ParseResult(null, RefusalAt(text, refused), Incomplete: false, null, refused, null);
+			return new ParseResult(null, RefusalAt(text, refused), Incomplete: false, quote, refused, null);
 		}
 
 		var parser = new CommandParser(text, tokens);
@@ -941,7 +944,8 @@ internal sealed class CommandParser
 		/// </summary>
 		/// <returns>
 		/// The tokens, ending with <see cref="TokenKind.End" />; where an unclosed substitution starts, or -1; the quote
-		/// left open at the end; and the delimiter of a here-document that never closed.
+		/// left open at the end, or <c>\</c> for a trailing backslash, which is the only quote given for an unclosed
+		/// substitution; and the delimiter of a here-document that never closed.
 		/// </returns>
 		public (List<Token> Tokens, int Refused, char? Quote, string? Unclosed) Scan()
 		{
@@ -959,7 +963,14 @@ internal sealed class CommandParser
 				{
 					if (CommandLine.SubstitutionEnd(text, index) is not (var close and >= 0))
 					{
-						return (this.tokens, index, null, null);
+						// A backquote's text loses each backslash before a line break before it's read, even in quotes,
+						// so only the run of backslashes counts. A $( is read by the usual rules, so its text is scanned.
+						// Stryker disable once Arithmetic : a sum and a difference of the same two numbers are both odd or both even.
+						var escaped = character == '`'
+							? (text.Length - text.TrimEnd('\\').Length) % 2 == 1
+							: new Scanner(text[(index + 2)..]).Scan().Quote == '\\';
+
+						return (this.tokens, index, escaped ? '\\' : null, null);
 					}
 
 					this.StartWord(index);
@@ -987,7 +998,8 @@ internal sealed class CommandParser
 			_ = this.ReadBodies(text.Length);
 			this.tokens.Add(new Token(TokenKind.End, text.Length, text.Length, string.Empty));
 
-			return (this.tokens, -1, this.quote, this.unclosed);
+			// POSIX counts the backslash as a quote, so a trailing one is reported like an open quote.
+			return (this.tokens, -1, this.escaped ? '\\' : this.quote, this.unclosed);
 		}
 
 		/// <summary>
