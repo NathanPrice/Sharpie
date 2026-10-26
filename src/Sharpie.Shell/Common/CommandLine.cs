@@ -185,10 +185,10 @@ internal static partial class CommandLine
 	/// <c>IFS</c> run together and add nothing at either end; any other character ends a word by itself, so with
 	/// <c>IFS=:</c> the value <c>a::b</c> gives <c>a</c>, an empty word and <c>b</c>. An empty <c>IFS</c> splits
 	/// nothing. As in bash, nothing is split inside double quotes, in a <c>NAME=value</c> word before the command or
-	/// after <c>export</c> or <c>declare</c>, between <c>[[</c> and <c>]]</c> or in a here-string. In an unquoted
-	/// <c>${A:-word}</c> the word's unquoted text splits on <c>IFS</c> too, together with the text around it, and its
-	/// quoted text doesn't, so with <c>IFS=:</c> the default <c>a b</c> stays one word. A redirect's file name or
-	/// stream that splits into more than one word or into none, or matches more than one file, comes back as one
+	/// after <c>export</c>, <c>declare</c> or <c>local</c>, between <c>[[</c> and <c>]]</c> or in a here-string. In an
+	/// unquoted <c>${A:-word}</c> the word's unquoted text splits on <c>IFS</c> too, together with the text around it,
+	/// and its quoted text doesn't, so with <c>IFS=:</c> the default <c>a b</c> stays one word. A redirect's file name
+	/// or stream that splits into more than one word or into none, or matches more than one file, comes back as one
 	/// <see cref="Word.Ambiguous" /> word, which bash refuses as an "ambiguous redirect".
 	/// </para>
 	/// <para>
@@ -652,14 +652,14 @@ internal static partial class CommandLine
 	/// <param name="words">The words before it.</param>
 	/// <returns>
 	/// <see langword="true" /> when the word is shaped like an assignment and comes before the command's name, or is
-	/// an argument of <c>export</c> or <c>declare</c>. So <c>export A=$(cmd)</c> keeps its spaces, and
+	/// an argument of <c>export</c>, <c>declare</c> or <c>local</c>. So <c>export A=$(cmd)</c> keeps its spaces, and
 	/// <c>printf A=$(cmd)</c> is split.
 	/// </returns>
 	private static bool IsAssignmentWord(string word, List<Word> words)
 	{
 		var name = words.Skip(words.FindLastIndex(typed => typed.IsOperator) + 1).FirstOrDefault(typed => !DeclareCommand.IsAssignment(typed.Text));
 
-		return DeclareCommand.IsAssignment(word) && name.Text is null or "export" or "declare";
+		return DeclareCommand.IsAssignment(word) && name.Text is null or "export" or "declare" or "local";
 	}
 
 	/// <summary>
