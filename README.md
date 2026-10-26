@@ -54,7 +54,9 @@ and mouse reporting all work.
   parameters work as in bash: `$1` to `$9`, `${10}`, `$#`, `"$@"`, `$*`, `$?`, `$$`, `$!`, `$-` and `$0`, along with
   `RANDOM`, `SECONDS`, `LINENO`, `SHLVL` and `PPID`. Inside braces, `${X:-default}`, `${X:=default}`, `${X:?message}`,
   `${X:+other}` (each also without the colon), `${#X}`, `${X#pattern}`, `${X##pattern}`, `${X%pattern}`,
-  `${X%%pattern}`, `${X/pattern/text}`, `${X//pattern/text}` and `${X:offset:length}` work as in bash.
+  `${X%%pattern}`, `${X/pattern/text}`, `${X//pattern/text}`, `${X/#pattern/text}`, `${X/%pattern/text}` (an `&` in
+  the text stands for the match), `${X^}`, `${X^^}`, `${X,}`, `${X,,}`, `${!X}`, `${X:offset:length}` and
+  `${@:offset:length}` work as in bash.
   `$((...))` works out bash's 64-bit integer arithmetic, so `n=$((n + 1))` counts, and an offset or length and the
   number tests of `[[ ]]` are expressions too.
 - **Redirects.** Bash's redirects work on builtins, programs and every stage of a pipeline: `<`, `>`, `>>`, `>|`,

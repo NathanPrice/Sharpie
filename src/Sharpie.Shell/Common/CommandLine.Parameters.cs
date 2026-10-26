@@ -8,31 +8,30 @@ using Sharpie.Shell.Features.Variables;
 namespace Sharpie.Shell.Common;
 
 /// <summary>
-/// The <c>${...}</c> forms: defaults, lengths, removing or replacing a pattern, and substrings.
+/// The <c>${...}</c> forms: defaults, lengths, indirection, removing or replacing a pattern, case changes and
+/// substrings.
 /// </summary>
 internal static partial class CommandLine
 {
 	/// <summary>
 	/// The forms <c>${...}</c> reads, shown when it meets one it doesn't.
 	/// </summary>
-	private const string ParameterForms = "it reads ${X}, ${#X}, ${X:-d}, ${X:=d}, ${X:?msg}, ${X:+alt}, ${X#pat}, ${X%pat}, ${X/pat/text} and ${X:offset:length}";
+	private const string ParameterForms = "it reads ${X}, ${#X}, ${!X}, ${X:-d}, ${X:=d}, ${X:?msg}, ${X:+alt}, ${X#pat}, ${X%pat}, ${X/pat/text}, ${X/#pat/text}, ${X/%pat/text}, ${X^pat}, ${X,pat}, ${X:offset:length} and ${@:offset:length}";
 
 	/// <summary>
 	/// Finds the <c>}</c> that closes the <c>${</c> at <paramref name="index" />.
 	/// </summary>
 	/// <param name="line">The command line.</param>
 	/// <param name="index">The position of the <c>$</c>.</param>
-	/// <param name="quoted">
-	/// <see langword="true" /> inside double quotes, where a single quote in the <c>${...}</c> is an ordinary character.
-	/// </param>
 	/// <returns>
 	/// The position of the <c>}</c>, or -1 when there is none.
 	/// </returns>
 	/// <remarks>
 	/// Escaped and quoted text, nested <c>${...}</c>, <c>$(...)</c> and backquotes are skipped, so
-	/// <c>${X:-${Y}}</c> and <c>${X:-"}"}</c> end at their last <c>}</c>, as in bash.
+	/// <c>${X:-${Y}}</c> and <c>${X:-"}"}</c> end at their last <c>}</c>, as in bash. Single quotes pair up inside
+	/// double quotes too, so <c>"${X:+'}'}"</c> ends at its last <c>}</c> and <c>"${X:-it's}"</c> never closes.
 	/// </remarks>
-	private static int BraceEnd(string line, int index, bool quoted) => UnquotedIndex(line, index + 2, "}", quoted);
+	internal static int BraceEnd(string line, int index) => UnquotedIndex(line, index + 2, "}");
 
 	/// <summary>
 	/// Finds the first of <paramref name="targets" /> that isn't quoted, escaped or inside a nested expansion.
@@ -40,13 +39,10 @@ internal static partial class CommandLine
 	/// <param name="text">The text to look through.</param>
 	/// <param name="start">Where to start looking, outside any quote.</param>
 	/// <param name="targets">The characters to look for.</param>
-	/// <param name="quoted">
-	/// <see langword="true" /> when the text is inside double quotes, where a single quote is an ordinary character.
-	/// </param>
 	/// <returns>
 	/// The position of the character, or -1 when there is none.
 	/// </returns>
-	internal static int UnquotedIndex(string text, int start, ReadOnlySpan<char> targets, bool quoted)
+	internal static int UnquotedIndex(string text, int start, ReadOnlySpan<char> targets)
 	{
 		char? quote = null;
 
@@ -66,7 +62,7 @@ internal static partial class CommandLine
 			{
 				// Nothing after a nested ${ that never closes can close this one, and scanning on would go over the
 				// nested ones again at every level.
-				index = BraceEnd(text, index, quoted || quote is not null);
+				index = BraceEnd(text, index);
 
 				if (index < 0)
 				{
@@ -81,7 +77,7 @@ internal static partial class CommandLine
 			{
 				quote = quote is null ? '"' : null;
 			}
-			else if (quote is null && character == '\'' && !quoted)
+			else if (quote is null && character == '\'')
 			{
 				quote = '\'';
 			}
@@ -121,11 +117,13 @@ internal static partial class CommandLine
 	/// <see langword="false" /> when the <c>${</c> is never closed, so it stays as typed.
 	/// </returns>
 	/// <exception cref="ExpansionError">
-	/// <c>${X:?}</c> finds <c>X</c> unset, or the <c>${...}</c> can't be expanded.
+	/// <c>${X:?}</c> finds <c>X</c> unset, <c>${!n}</c> finds no name in <c>n</c>, or the <c>${...}</c> can't be
+	/// expanded.
 	/// </exception>
 	/// <remarks>
 	/// The name is a variable name, digits for a positional parameter, or one of <c>? # $ ! - @ *</c>, where
-	/// <c>@</c> and <c>*</c> stand for the positional parameters joined by spaces. The word after an operator is
+	/// <c>@</c> and <c>*</c> stand for the positional parameters joined by spaces. A <c>!</c> before the name reads
+	/// the parameter its value names instead, as in bash. The word after an operator is
 	/// expanded as a word is, and inside double quotes as if it were quoted too. A pattern's quoted wildcards match
 	/// only themselves, and one from a variable stays a wildcard, as in bash.
 	/// </remarks>
@@ -133,7 +131,7 @@ internal static partial class CommandLine
 	{
 		parts = [];
 		quoting = null;
-		end = BraceEnd(line, index, quoted);
+		end = BraceEnd(line, index);
 
 		if (end < 0)
 		{
@@ -143,6 +141,22 @@ internal static partial class CommandLine
 		}
 
 		var inside = line[(index + 2)..end];
+
+		// ${!n} reads the variable n names, then goes on as ${name...} would; ${!} alone is $!, and ${!prefix*} isn't read.
+		if (inside is ['!', _, ..] && ReadName(inside, 1) is { Length: > 0 } pointer and not ("@" or "*") && inside[(1 + pointer.Length)..] is not ("@" or "*"))
+		{
+			var target = Lookup(variables, pointer);
+
+			if (target.Length == 0 || ReadName(target, 0) != target)
+			{
+				var summary = IsSet(variables, pointer) ? $"{target}: invalid variable name" : $"{pointer}: invalid indirect expansion";
+
+				throw new ExpansionError(new ShellError("sharpie::shell::bad_substitution", summary) { Source = line, Start = index, End = end + 1, Label = $"`{pointer}` doesn't hold a name", Help = "${!n} needs n to hold a variable name or a parameter number" }, fatal: false);
+			}
+
+			inside = target + inside[(1 + pointer.Length)..];
+		}
+
 		var name = ReadName(inside, 0);
 
 		// ${#} is the count and ${#NAME} the length, but ${#:-x} is $# with a default.
@@ -206,7 +220,8 @@ internal static partial class CommandLine
 		/// </returns>
 		/// <exception cref="ExpansionError">The operator can't be applied.</exception>
 		/// <remarks>
-		/// For <c>@</c> and <c>*</c> the patterns apply to each parameter, as in bash.
+		/// For <c>@</c> and <c>*</c> the patterns and case changes apply to each parameter, and <c>:offset:length</c>
+		/// picks parameters, as in bash.
 		/// </remarks>
 		public string[] Apply(string operation, out string[]? quoting)
 		{
@@ -214,7 +229,7 @@ internal static partial class CommandLine
 
 			return operation switch
 			{
-				_ when this.Name.Length == 0 || (this.Name is "@" or "*" && operation is [':', ..] && !IsDefault(operation)) => throw this.Unsupported(),
+				_ when this.Name.Length == 0 => throw this.Unsupported(),
 				"" => this.Map(value => value),
 				[':', '-' or '=' or '?' or '+', .. var word] => this.Default(colon: true, operation[1], word, out quoting),
 				['-' or '=' or '?' or '+', .. var word] => this.Default(colon: false, operation[0], word, out quoting),
@@ -222,10 +237,13 @@ internal static partial class CommandLine
 				['#', .. var pattern] => this.Remove(pattern, suffix: false, longest: false),
 				['%', '%', .. var pattern] => this.Remove(pattern, suffix: true, longest: true),
 				['%', .. var pattern] => this.Remove(pattern, suffix: true, longest: false),
-				['/', '#' or '%', ..] => throw this.Unsupported(),
-				['/', '/', .. var rest] => this.Replace(rest, all: true),
-				['/', .. var rest] => this.Replace(rest, all: false),
-				[':', .. var rest] => [this.Substring(rest)],
+				['/', '#' or '%' or '/', .. var rest] => this.Replace(rest, operation[1]),
+				['/', .. var rest] => this.Replace(rest, '\0'),
+				['^', '^', .. var pattern] => this.ChangeCase(pattern, upper: true, all: true),
+				['^', .. var pattern] => this.ChangeCase(pattern, upper: true, all: false),
+				[',', ',', .. var pattern] => this.ChangeCase(pattern, upper: false, all: true),
+				[',', .. var pattern] => this.ChangeCase(pattern, upper: false, all: false),
+				[':', .. var rest] => this.Slice(rest),
 				_ => throw this.Unsupported(),
 			};
 		}
@@ -289,8 +307,9 @@ internal static partial class CommandLine
 		/// </returns>
 		private string Text(string word)
 		{
-			// shortcut: double quotes inside a double-quoted ${...} word end the wrapping quotes, so their spaces collapse; give the word its own quote state if that shows up.
-			var typed = this.Quoted ? $"\"{word}\"" : Protect(word, split: false);
+			// Inside outer double quotes an inner "..." only marks text already double-quoted, so it's dropped before the
+			// word is wrapped, and "${U:-"a  b"}" keeps both spaces, as in bash.
+			var typed = this.Quoted ? $"\"{DropQuotes(word)}\"" : Protect(word, split: false);
 
 			return this.Nested(unset => ExpandText(typed, this.Variables, unset, this.Substitute));
 		}
@@ -359,59 +378,189 @@ internal static partial class CommandLine
 		/// <summary>
 		/// Replaces the pattern before the first unquoted <c>/</c> of <paramref name="rest" /> with the text after it.
 		/// </summary>
-		/// <param name="rest">The text after <c>/</c> or <c>//</c>.</param>
-		/// <param name="all"><see langword="true" /> to replace every match.</param>
+		/// <param name="rest">The text after <c>/</c>, <c>//</c>, <c>/#</c> or <c>/%</c>.</param>
+		/// <param name="mode">
+		/// <c>/</c> to replace every match, <c>#</c> or <c>%</c> for the longest match at the start or end, or anything
+		/// else for the first match.
+		/// </param>
 		/// <returns>
 		/// The words, with the matches replaced, or removed when no <c>/</c> gives a replacement.
 		/// </returns>
-		private string[] Replace(string rest, bool all)
+		private string[] Replace(string rest, char mode)
 		{
-			var slash = UnquotedIndex(rest, 0, "/", quoted: false);
-			var pattern = this.Pattern(slash < 0 ? rest : rest[..slash]);
-			var replacement = slash < 0 ? string.Empty : this.Text(rest[(slash + 1)..]);
+			// An empty pattern matches an empty value, but bash leaves an unset one alone.
+			if (this.Parameters is null && !IsSet(this.Variables, this.Name))
+			{
+				return [string.Empty];
+			}
 
-			return this.Map(value => ReplacePattern(value, pattern, replacement, all));
+			var slash = UnquotedIndex(rest, 0, "/");
+			var pattern = this.Pattern(slash < 0 ? rest : rest[..slash]);
+			var pieces = slash < 0 ? [string.Empty] : this.Pieces(rest[(slash + 1)..]);
+
+			return this.Map(value => mode switch
+			{
+				'#' => Cut(value, pattern, suffix: false, longest: true) is var cut and >= 0 ? string.Join(value[..cut], pieces) + value[cut..] : value,
+				'%' => Cut(value, pattern, suffix: true, longest: true) is var cut and >= 0 ? value[..cut] + string.Join(value[cut..], pieces) : value,
+				_ => ReplacePattern(value, pattern, pieces, all: mode == '/'),
+			});
 		}
 
 		/// <summary>
-		/// Takes a substring of the value, counted in runes as <c>${#NAME}</c> counts.
+		/// Expands a replacement and splits it at each <c>&amp;</c> that isn't quoted or escaped, which stands for the
+		/// matched text.
 		/// </summary>
-		/// <param name="rest">The offset, then optionally <c>:</c> and the length, as typed.</param>
+		/// <param name="word">The replacement as typed.</param>
 		/// <returns>
-		/// The substring. An offset past either end gives an empty string, as in bash.
+		/// The pieces, which the matched text joins.
 		/// </returns>
-		/// <exception cref="ExpansionError">The offset or length isn't a number, or the length ends before the offset.</exception>
 		/// <remarks>
-		/// A negative offset counts from the end, and a negative length is where to stop, counted from the end.
+		/// bash 5.2's patsub_replacement, on by default, looks for the <c>&amp;</c> after expansion, so one from a
+		/// variable counts, and an unquoted backslash there escapes a <c>&amp;</c> or a backslash after it. The word
+		/// expands as if it weren't inside double quotes, so <c>"${X/l/'x'}"</c> drops the single quotes, as bash 5.3
+		/// does.
 		/// </remarks>
-		private string Substring(string rest)
+		private string[] Pieces(string word)
 		{
-			var colon = UnquotedIndex(rest, 0, ":", quoted: false);
-			var runes = Runes(this.Value);
-			var start = this.Number(colon < 0 ? rest : rest[..colon], out _);
+			var pieces = new List<string>();
+			var piece = new StringBuilder();
 
-			start += start < 0 ? runes.Length : 0;
-
-			if (start < 0 || start > runes.Length)
+			// A typed & is split off first, since Protect escapes it so the reader doesn't take it for an operator.
+			for (int from = 0, amp; from <= word.Length; from = amp + 1)
 			{
-				return string.Empty;
-			}
+				amp = UnquotedIndex(word, from, "&") is var found and >= 0 ? found : word.Length;
 
-			var stop = (long)runes.Length;
+				var words = this.Nested(unset => SplitWords(Protect(word[from..amp], split: false), this.Variables, unset, this.Substitute, separators: null, out _, WordForm.Value));
 
-			if (colon >= 0)
-			{
-				var count = this.Number(rest[(colon + 1)..], out var typed);
-
-				stop = count < 0 ? runes.Length + count : start + Math.Min(count, runes.Length - start);
-
-				if (stop < start)
+				foreach (var (run, quoted) in words is [var expanded] ? QuotedRuns(expanded.Text, expanded.Pattern!) : [])
 				{
-					throw this.Failure("sharpie::shell::bad_substitution", fatal: false, $"{typed}: substring expression < 0", "ends before its offset", "a negative length counts back from the end, which has to stay after the offset");
+					for (var index = 0; index < run.Length; index++)
+					{
+						if (!quoted && run[index] == '&')
+						{
+							pieces.Add(piece.ToString());
+							_ = piece.Clear();
+						}
+						else
+						{
+							var escaped = !quoted && run[index] == '\\' && index + 1 < run.Length && run[index + 1] is '&' or '\\';
+
+							_ = piece.Append(run[escaped ? ++index : index]);
+						}
+					}
+				}
+
+				if (amp < word.Length)
+				{
+					pieces.Add(piece.ToString());
+					_ = piece.Clear();
 				}
 			}
 
-			return string.Concat(runes[(int)start..(int)stop]);
+			pieces.Add(piece.ToString());
+
+			return [.. pieces];
+		}
+
+		/// <summary>
+		/// Changes the case of the characters a pattern matches, as <c>^</c>, <c>^^</c>, <c>,</c> and <c>,,</c> do.
+		/// </summary>
+		/// <param name="typed">The pattern as typed, which matches any one character when it's empty.</param>
+		/// <param name="upper"><see langword="true" /> to make them upper case.</param>
+		/// <param name="all"><see langword="true" /> to change every character, not only the first.</param>
+		/// <returns>
+		/// The words, changed.
+		/// </returns>
+		private string[] ChangeCase(string typed, bool upper, bool all)
+		{
+			var pattern = this.Pattern(typed) is { Length: > 0 } given ? given : "?";
+
+			return this.Map(value =>
+			{
+				var text = new StringBuilder(value.Length);
+				var first = true;
+
+				foreach (var rune in value.EnumerateRunes())
+				{
+					var changed = (all || first) && Glob.IsMatch(rune.ToString(), pattern) ? upper ? Rune.ToUpperInvariant(rune) : Rune.ToLowerInvariant(rune) : rune;
+
+					_ = text.Append(changed.ToString());
+					first = false;
+				}
+
+				return text.ToString();
+			});
+		}
+
+		/// <summary>
+		/// Takes a substring of the value, counted in runes as <c>${#NAME}</c> counts, or for <c>@</c> and <c>*</c>
+		/// some of <c>$0</c> and the positional parameters.
+		/// </summary>
+		/// <param name="rest">The offset, then optionally <c>:</c> and the length, as typed.</param>
+		/// <returns>
+		/// The substring, or what <see cref="ListParts" /> gives for the parameters picked.
+		/// </returns>
+		/// <exception cref="ExpansionError">The offset or length isn't a number, or the length ends before the offset.</exception>
+		private string[] Slice(string rest)
+		{
+			if (this.Parameters is null)
+			{
+				var runes = Runes(this.Value);
+
+				var (start, stop) = this.Range(rest, runes.Length);
+
+				return [string.Concat(runes[start..stop])];
+			}
+
+			// Offset 0 is $0, as in bash.
+			string[] list = [Lookup(this.Variables, "0"), .. this.Parameters];
+			var (from, to) = this.Range(rest, list.Length);
+
+			return ListParts(list[from..to], this.Name == "*", this.Quoted, this.Separators, this.Joiner);
+		}
+
+		/// <summary>
+		/// Works out which of <paramref name="count" /> items an offset and a length pick.
+		/// </summary>
+		/// <param name="rest">The offset, then optionally <c>:</c> and the length, as typed.</param>
+		/// <param name="count">How many items there are.</param>
+		/// <returns>
+		/// The first item picked and where the items picked end. An offset past either end picks nothing, as in bash.
+		/// </returns>
+		/// <exception cref="ExpansionError">
+		/// The offset or length isn't a number, the length ends before the offset, or it's negative for <c>@</c> or
+		/// <c>*</c>.
+		/// </exception>
+		/// <remarks>
+		/// A negative offset counts from the end, and for a value a negative length is where to stop, counted from the end.
+		/// </remarks>
+		private (int Start, int Stop) Range(string rest, int count)
+		{
+			var colon = UnquotedIndex(rest, 0, ":");
+			var offset = this.Number(colon < 0 ? rest : rest[..colon], out _);
+
+			offset += offset < 0 ? count : 0;
+
+			if (offset < 0 || offset > count)
+			{
+				return (0, 0);
+			}
+
+			var end = (long)count;
+
+			if (colon >= 0)
+			{
+				var length = this.Number(rest[(colon + 1)..], out var typed);
+
+				end = length < 0 ? count + length : offset + Math.Min(length, count - offset);
+
+				if (end < offset || (length < 0 && this.Parameters is not null))
+				{
+					throw this.Failure("sharpie::shell::bad_substitution", fatal: false, $"{typed}: substring expression < 0", this.Parameters is null ? "ends before its offset" : "a negative count", this.Parameters is null ? "a negative length counts back from the end, which has to stay after the offset" : "the number of parameters to take can't be negative");
+				}
+			}
+
+			return ((int)offset, (int)end);
 		}
 
 		/// <summary>
@@ -550,13 +699,56 @@ internal static partial class CommandLine
 		var targets = split ? "|&;<>()#" : "|&;<>()# \t\n";
 		var from = 0;
 
-		for (var index = UnquotedIndex(word, 0, targets, quoted: false); index >= 0; index = UnquotedIndex(word, index + 1, targets, quoted: false))
+		for (var index = UnquotedIndex(word, 0, targets); index >= 0; index = UnquotedIndex(word, index + 1, targets))
 		{
 			_ = text.Append(word, from, index - from).Append('\\');
 			from = index;
 		}
 
 		return text.Append(word, from, word.Length - from).ToString();
+	}
+
+	/// <summary>
+	/// Removes the double quotes of a word that aren't escaped or inside a nested expansion.
+	/// </summary>
+	/// <param name="word">The word as typed, inside double quotes.</param>
+	/// <returns>
+	/// The word without them. Between a pair of them a backslash escapes any character, as in bash, so it's dropped
+	/// unless the outer double quotes still need it.
+	/// </returns>
+	private static string DropQuotes(string word)
+	{
+		var text = new StringBuilder(word.Length);
+		var inner = false;
+
+		for (var index = 0; index < word.Length; index++)
+		{
+			var close = word[index] == '\\' ? index + 1
+				: word.AsSpan(index).StartsWith("${", StringComparison.Ordinal) ? BraceEnd(word, index)
+				: SubstitutionEnd(word, index);
+
+			if (word[index] == '\\' && inner && close < word.Length && word[close] is not ('$' or '`' or '"' or '\\' or '\n'))
+			{
+				continue;
+			}
+
+			if (close >= 0)
+			{
+				close = Math.Min(close, word.Length - 1);
+				_ = text.Append(word, index, close - index + 1);
+				index = close;
+			}
+			else if (word[index] == '"')
+			{
+				inner = !inner;
+			}
+			else
+			{
+				_ = text.Append(word[index]);
+			}
+		}
+
+		return text.ToString();
 	}
 
 	/// <summary>
@@ -579,7 +771,22 @@ internal static partial class CommandLine
 	/// <returns>
 	/// The value without the match, or the whole value when nothing matches.
 	/// </returns>
-	private static string Remove(string value, string pattern, bool suffix, bool longest)
+	private static string Remove(string value, string pattern, bool suffix, bool longest) =>
+		Cut(value, pattern, suffix, longest) is not (var cut and >= 0) ? value
+		: suffix ? value[..cut] : value[cut..];
+
+	/// <summary>
+	/// Finds where the shortest or longest start or end of <paramref name="value" /> that <paramref name="pattern" />
+	/// matches stops.
+	/// </summary>
+	/// <param name="value">The variable's value.</param>
+	/// <param name="pattern">The pattern, for <see cref="Glob.IsMatch" />.</param>
+	/// <param name="suffix"><see langword="true" /> for an end.</param>
+	/// <param name="longest"><see langword="true" /> for the longest match.</param>
+	/// <returns>
+	/// The position that splits the match from the rest, or -1 when nothing matches.
+	/// </returns>
+	private static int Cut(string value, string pattern, bool suffix, bool longest)
 	{
 		for (var step = 0; step <= value.Length; step++)
 		{
@@ -588,11 +795,11 @@ internal static partial class CommandLine
 
 			if (suffix ? Glob.IsMatch(value.AsSpan(cut), pattern) : Glob.IsMatch(value.AsSpan(0, cut), pattern))
 			{
-				return suffix ? value[..cut] : value[cut..];
+				return cut;
 			}
 		}
 
-		return value;
+		return -1;
 	}
 
 	/// <summary>
@@ -601,7 +808,7 @@ internal static partial class CommandLine
 	/// </summary>
 	/// <param name="value">The variable's value.</param>
 	/// <param name="pattern">The pattern, for <see cref="Glob.IsMatch" />.</param>
-	/// <param name="replacement">The text each match becomes.</param>
+	/// <param name="pieces">The replacement, split where the matched text goes, as <c>&amp;</c> marks it.</param>
 	/// <param name="all"><see langword="true" /> to replace every match.</param>
 	/// <returns>
 	/// The value with the matches replaced. An empty pattern changes nothing.
@@ -609,7 +816,7 @@ internal static partial class CommandLine
 	/// <remarks>
 	/// Each match is the longest one at the earliest position, and the search goes on after it, as in bash.
 	/// </remarks>
-	private static string ReplacePattern(string value, string pattern, string replacement, bool all)
+	private static string ReplacePattern(string value, string pattern, string[] pieces, bool all)
 	{
 		if (pattern.Length == 0)
 		{
@@ -618,7 +825,7 @@ internal static partial class CommandLine
 
 		if (value.Length == 0)
 		{
-			return Glob.IsMatch(value, pattern) ? replacement : value;
+			return Glob.IsMatch(value, pattern) ? string.Join(value, pieces) : value;
 		}
 
 		var text = new StringBuilder(value.Length);
@@ -628,7 +835,7 @@ internal static partial class CommandLine
 		{
 			if (MatchEnd(value, start, pattern) is var stop and >= 0)
 			{
-				_ = text.Append(replacement);
+				_ = text.AppendJoin(value[start..stop], pieces);
 				start = stop;
 
 				if (!all)
@@ -683,7 +890,7 @@ internal static partial class CommandLine
 	/// <param name="error">What went wrong, pointing at the <c>${...}</c>.</param>
 	/// <param name="fatal">
 	/// <see langword="true" /> for <c>${X:?}</c> and an unset name an arithmetic expression reads under <c>set -u</c>,
-	/// which end a shell that isn't interactive with 127, as bash's do.
+	/// which end a shell that isn't interactive, as bash's do, with <see cref="ShellSettings.ExpansionExitStatus" />.
 	/// </param>
 	[SuppressMessage("Design", "CA1032:Implement standard exception constructors", Justification = "Only the shell throws it, and always with a report.")]
 	internal sealed class ExpansionError(ShellError error, bool fatal) : Exception(error.ArgumentNotNull().Summary)

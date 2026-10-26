@@ -176,6 +176,7 @@ internal static class Program
 		var settings = ((SetCommand)commands["set"]).Settings;
 
 		settings.Interactive = interactive;
+		settings.CommandString = options.Command is not null;
 		ExternalProgram.AnnounceJobs = interactive;
 		_ = settings.Set("noclobber", options.NoClobber);
 
@@ -589,7 +590,8 @@ internal static class Program
 	/// <c>out=$(cmd) || echo failed</c> works.
 	/// </returns>
 	/// <remarks>
-	/// Under <c>set -u</c> a shell that isn't interactive exits with 127 at the first unset variable, as bash does.
+	/// Under <c>set -u</c> a shell that isn't interactive exits at the first unset variable, with
+	/// <see cref="ShellSettings.ExpansionExitStatus" />, as bash does.
 	/// </remarks>
 	[SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "Each opened Redirection goes into the list, which the finally disposes.")]
 	internal static int RunCommand(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, string line)
@@ -608,7 +610,7 @@ internal static class Program
 
 		if (unset is { } missing)
 		{
-			return ReportUnset(line, missing, settings.Interactive);
+			return ReportUnset(line, missing, settings);
 		}
 
 		var expanded = aliases.Expand(split, declare.Variables, Substitution);
@@ -995,15 +997,15 @@ internal static class Program
 	/// </summary>
 	/// <param name="line">The command as typed.</param>
 	/// <param name="name">The variable's name and place in <paramref name="line" />.</param>
-	/// <param name="interactive">
-	/// <see langword="true" /> when the shell reads typed lines and keeps going. Otherwise it exits with 127, as bash
-	/// does.
+	/// <param name="settings">
+	/// The shell options. A shell that isn't interactive exits with <see cref="ShellSettings.ExpansionExitStatus" />,
+	/// as bash does.
 	/// </param>
 	/// <returns>
 	/// 1, the command's status.
 	/// </returns>
-	internal static int ReportUnset(string line, Word name, bool interactive) =>
-		Fail(CommandLine.UnsetError(line, name), 127, interactive);
+	internal static int ReportUnset(string line, Word name, ShellSettings settings) =>
+		Fail(CommandLine.UnsetError(line, name), settings.ExpansionExitStatus, settings.Interactive);
 
 	/// <summary>
 	/// Reports an error that ends the line, and the shell too when it isn't interactive, as bash's expansion errors do.

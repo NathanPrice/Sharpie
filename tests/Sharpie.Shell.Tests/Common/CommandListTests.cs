@@ -101,7 +101,7 @@ public sealed class CommandListTests : IDisposable
 
 	/// <summary>
 	/// Checks that <see cref="CommandList.Unfinished" /> names the quote or substitution a line leaves open, and
-	/// nothing for a complete line or a quote inside a comment.
+	/// nothing for a complete line, a quote inside a comment or a quote inside a closed <c>${...}</c>.
 	/// </summary>
 	/// <param name="line">The line.</param>
 	/// <param name="expected">What's left open, or <c>'\0'</c> for nothing.</param>
@@ -119,6 +119,10 @@ public sealed class CommandListTests : IDisposable
 	[InlineData("# don't", '\0')]
 	[InlineData("echo a # it's", '\0')]
 	[InlineData("echo $(a 'b) c')", '\0')]
+	[InlineData("echo \"${q/\"'\"/Q}\"", '\0')]
+	[InlineData("echo ${q//\\'/_}", '\0')]
+	[InlineData("echo ${A 'b", '\'')]
+	[InlineData("echo \"${X/'\"'/Q}\"", '\0')]
 	public void Unfinished_WithLine_NamesWhatIsOpen(string line, char expected)
 	{
 		// Act

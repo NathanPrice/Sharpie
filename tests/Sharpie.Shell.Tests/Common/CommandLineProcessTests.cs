@@ -1200,6 +1200,38 @@ public sealed class CommandLineProcessTests
 	}
 
 	/// <summary>
+	/// Checks that <c>${X:?}</c> and an unset variable under <c>set -u</c> end a script file with 1, where bash only
+	/// uses 127 for <c>-c</c>.
+	/// </summary>
+	/// <param name="body">The script.</param>
+	/// <param name="code">The error's code.</param>
+	[Theory]
+	[InlineData("echo ${SHARPIE_SAMPLE_UNSET:?gone}\necho after\n", "sharpie::shell::parameter_unset")]
+	[InlineData("set -u\necho $SHARPIE_SAMPLE_UNSET\necho after\n", "sharpie::shell::unset_variable")]
+	[InlineData("set -u\necho $(( SHARPIE_SAMPLE_UNSET + 1 ))\necho after\n", "sharpie::shell::unset_variable")]
+	public async Task Shell_WithExpansionEndingScriptFile_ExitsWith1(string body, string code)
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-tests-").FullName;
+		var script = ShellEnvironment.CreateFile(folder, "sample.sh", executable: false, body);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, arguments: [script]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().BeEmpty();
+			_ = run.Error.Should().Contain(code);
+			_ = run.ExitCode.Should().Be(1);
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that <c>${X:=value}</c> leaves the value in <c>X</c> for the commands after it.
 	/// </summary>
 	[Fact]

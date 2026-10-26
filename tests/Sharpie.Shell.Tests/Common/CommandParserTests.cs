@@ -19,6 +19,7 @@ public sealed class CommandParserTests
 	[InlineData("a && b || c", "'a' && 'b' || 'c'")]
 	[InlineData("a | b", "'a | b'")]
 	[InlineData("a|b", "'a|b'")]
+	[InlineData("${q/'}'/x} && b", "'${q/'}'/x}' && 'b'")]
 	[InlineData("a |\n  b | # note\n c", "'a | b | c'")]
 	[InlineData("a |\n b &", "'a | b' &")]
 	[InlineData("! a | b", "!'a | b'")]

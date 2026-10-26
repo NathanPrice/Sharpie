@@ -165,17 +165,23 @@ internal static class Highlighter
 	private static bool IsKeyword(string typed) => CommandParser.ReservedWords.Contains(typed) || typed.StartsWith("((", StringComparison.Ordinal);
 
 	/// <summary>
-	/// Finds where the arithmetic at <paramref name="index" /> ends.
+	/// Finds where the arithmetic or <c>${...}</c> at <paramref name="index" /> ends.
 	/// </summary>
 	/// <param name="line">The command line.</param>
 	/// <param name="index">The position.</param>
 	/// <param name="quote">The quote that's open, or <see langword="null" />.</param>
 	/// <param name="inWord"><see langword="true" /> when a word has started.</param>
 	/// <returns>
-	/// The position of the last <c>)</c> of a <c>$((...))</c>, or of a <c>((...))</c> that starts a word, or -1.
+	/// The position of the last <c>)</c> of a <c>$((...))</c>, or of a <c>((...))</c> that starts a word, or of the
+	/// <c>}</c> of a <c>${...}</c>, or -1.
 	/// </returns>
-	private static int ArithmeticEnd(string line, int index, char? quote, bool inWord) =>
-		quote == '\'' || (inWord && line[index] != '$') ? -1 : CommandLine.ArithmeticEnd(line, index);
+	/// <remarks>
+	/// A quote inside <c>${...}</c> belongs to the expansion, as in <c>"${q/"'"/Q}"</c>, so it doesn't open or close one.
+	/// </remarks>
+	private static int SkipEnd(string line, int index, char? quote, bool inWord) =>
+		quote == '\'' ? -1
+		: line.AsSpan(index).StartsWith("${", StringComparison.Ordinal) ? CommandLine.BraceEnd(line, index)
+		: inWord && line[index] != '$' ? -1 : CommandLine.ArithmeticEnd(line, index);
 
 	/// <summary>
 	/// Finds where each word of <paramref name="line" /> starts and ends, and where its quoted parts are.
@@ -211,8 +217,8 @@ internal static class Highlighter
 				continue;
 			}
 
-			// A ((...)) or $((...)) is part of its word, so the expression isn't read as commands.
-			if (ArithmeticEnd(line, index, quote, start >= 0) is var close and >= 0)
+			// A ((...)), $((...)) or ${...} is part of its word, so what's inside isn't read as commands or quotes.
+			if (SkipEnd(line, index, quote, start >= 0) is var close and >= 0)
 			{
 				start = start < 0 ? index : start;
 				index = close;

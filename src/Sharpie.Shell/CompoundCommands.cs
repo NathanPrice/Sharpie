@@ -73,7 +73,7 @@ internal static class CompoundCommands
 	/// <remarks>
 	/// A <c>${...}</c> that can't expand skips the rest of the outermost line, through any function, <c>eval</c> or
 	/// <c>source</c> it's in, and gives status 1, as in bash. <c>${X:?}</c> with <c>X</c> unset also ends a shell that
-	/// isn't interactive, with 127, through <see cref="Program.Fail" />. A subshell stops at its own boundary in
+	/// isn't interactive, with <see cref="ShellSettings.ExpansionExitStatus" />, through <see cref="Program.Fail" />. A subshell stops at its own boundary in
 	/// <see cref="RunIsolated" />.
 	/// </remarks>
 	internal static int RunList(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line, int first)
@@ -89,7 +89,9 @@ internal static class CompoundCommands
 		{
 			if (failure.Fatal)
 			{
-				return Program.Fail(failure.Error, 127, ((SetCommand)commands["set"]).Settings.Interactive);
+				var settings = ((SetCommand)commands["set"]).Settings;
+
+				return Program.Fail(failure.Error, settings.ExpansionExitStatus, settings.Interactive);
 			}
 
 			failure.Error.Write();
@@ -184,7 +186,7 @@ internal static class CompoundCommands
 
 			if (unset is { } missing)
 			{
-				_ = Program.ReportUnset(typed, missing, settings.Interactive);
+				_ = Program.ReportUnset(typed, missing, settings);
 			}
 
 			return result;
@@ -416,7 +418,7 @@ internal static class CompoundCommands
 
 		if (unset is { } missing)
 		{
-			return Program.ReportUnset(text, missing, settings.Interactive);
+			return Program.ReportUnset(text, missing, settings);
 		}
 
 		var (words, list) = CommandLine.SplitRedirect(split);

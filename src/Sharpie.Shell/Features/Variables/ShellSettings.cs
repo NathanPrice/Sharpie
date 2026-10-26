@@ -65,6 +65,23 @@ internal sealed class ShellSettings
 	public bool Interactive { get; set; }
 
 	/// <summary>
+	/// Gets or sets a value indicating whether the shell runs the command <c>-c</c> gives it.
+	/// </summary>
+	/// <value>
+	/// <see langword="true" /> under <c>-c</c>, where an expansion error that ends the shell exits with 127, as bash's
+	/// does. A script file or standard input exits with 1.
+	/// </value>
+	public bool CommandString { get; set; }
+
+	/// <summary>
+	/// Gets the status a shell that isn't interactive exits with when an expansion ends it.
+	/// </summary>
+	/// <value>
+	/// 127 under <c>-c</c>, otherwise 1, as in bash.
+	/// </value>
+	public int ExpansionExitStatus => this.CommandString ? 127 : 1;
+
+	/// <summary>
 	/// Gets or sets how many commands the shell is running right now whose status <c>&amp;&amp;</c> or <c>||</c>
 	/// tests, one inside another through <c>eval</c> or <c>.</c>.
 	/// </summary>

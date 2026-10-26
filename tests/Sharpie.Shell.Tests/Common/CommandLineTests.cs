@@ -1416,7 +1416,8 @@ public sealed class CommandLineTests
 	[InlineData("$(( ${X:-)} ))", 0, 13)]
 	[InlineData("$(( \\) \")\" ))", 0, 12)]
 	[InlineData("$(( ')' ))", 0, 9)]
-	[InlineData("$(( \"${X:-'}\" ))", 0, 15)]
+	[InlineData("$(( \"${X:-'}'}\" ))", 0, 17)]
+	[InlineData("$(( \"${X:-'}\" ))", 0, -1)]
 	[InlineData("$(( $((1)) ))", 0, 12)]
 	[InlineData("$((echo hi) )", 0, -1)]
 	[InlineData("((a); (b))", 0, -1)]
@@ -1730,8 +1731,8 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
-	/// Checks the <c>${...}</c> forms against what bash gives for the same line: defaults, lengths, removing and
-	/// replacing a pattern, and substrings.
+	/// Checks the <c>${...}</c> forms against what bash gives for the same line: defaults, lengths, indirection,
+	/// removing and replacing a pattern, case changes, substrings and slices of the positional parameters.
 	/// </summary>
 	/// <param name="line">The command line to split.</param>
 	/// <param name="expected">The words the line should produce.</param>
@@ -1751,12 +1752,23 @@ public sealed class CommandLineTests
 	[InlineData("echo ${N:-~/x} \"${N:-~}\" ${N:-a|b;c#d} ${N:-'q  r'}", new[] { "echo", "/h/x", "~", "a|b;c#d", "q  r" })]
 	[InlineData("echo ${*:-none} ${10:-ten} \"${N:-$S}\" ${N:-}", new[] { "echo", "1", "2", "3", "ten", "aXbXc" })]
 	[InlineData("echo ${S}end ${S:-x}y ${A", new[] { "echo", "aXbXcend", "aXbXcy", "${A" })]
-	[InlineData("echo ${N:-a\\}b} ${N:-'a}'} \"${N:-'}'}\" ${N:-'a|b'x;'c;d'}", new[] { "echo", "a}b", "a}", "''}", "a|bx;c;d" })]
+	[InlineData("echo ${N:-a\\}b} ${N:-'a}'} \"${N:-'}'}\" ${N:-'a|b'x;'c;d'}", new[] { "echo", "a}b", "a}", "'}'", "a|bx;c;d" })]
 	[InlineData("echo \"${@:-x}\" \"${*:-x}\" ${N:=~/x}", new[] { "echo", "1", "2", "3", "1 2 3", "/h/x" })]
 	[InlineData("echo ${D/'/'/-} ${D///b} \"${E///x}\" \"${E/a/-}\"", new[] { "echo", "a-b", "a/b", "", "" })]
 	[InlineData("echo ${S::2} ${S:0:1} ${S:3:9} \"${S:1:0}\" ${S:$N:2} \"${S#a*c}\"", new[] { "echo", "aX", "a", "Xc", "", "aX", "" })]
 	[InlineData("echo ${@#1} ${@/2/X} \"${*%3}\" \"${@%3}\"", new[] { "echo", "2", "3", "1", "X", "3", "1 2 ", "1", "2", "" })]
 	[InlineData("echo ${N:-\"*\"} ${N:-''} ${N:-\\*} ${N:+x} ${S:+\"*\"}", new[] { "echo", "*", "", "*", "*" })]
+	[InlineData("echo ${S/#a/-} ${S/%c/-} ${S/#/p} ${S/%/s} ${S/#X/-} ${S/#a*X/-} ${S/%X*/-}", new[] { "echo", "-XbXc", "aXbX-", "paXbXc", "aXbXcs", "aXbXc", "-c", "a-" })]
+	[InlineData("echo ${S^^} ${S^^[ab]} ${S^} ${S,} ${S,,} ${S^^X} ${S,,[X]} ${W^^} \"${@^}\"", new[] { "echo", "AXBXC", "AXBXc", "AXbXc", "aXbXc", "axbxc", "aXbXc", "axbxc", "É😀", "1", "2", "3" })]
+	[InlineData("echo ${!R} ${!#} ${!R:-d} ${!R#a} ${!R^^} ${!O} ${!R:1:2} ${#R} ${!}", new[] { "echo", "aXbXc", "3", "aXbXc", "XbXc", "AXBXC", "1", "Xb", "1" })]
+	[InlineData("echo \"${@:2}\" \"${*:2}\" ${@: -1} ${*:1:2} ${@:0:1} \"${@:9}\" \"${@: -5}\" ${@:2:0}", new[] { "echo", "2", "3", "2 3", "3", "1", "2", "sh" })]
+	[InlineData("echo \"${N:-\"a  b\"}\" \"${N:-\"'q'\"}\" \"${N:-\"$S\"}\" \"${N:-\"\\\"x\"}\"", new[] { "echo", "a  b", "'q'", "aXbXc", "\"x" })]
+	[InlineData("echo \"${S/X/<&>}\" \"${S//X/\\&}\" ${S//X/'&'} \"${S/X/'x'}\" \"${S/X/\"&\"}\" ${S/X/[&&]} ${S//X/\\&}", new[] { "echo", "a<X>bXc", "a&b&c", "a&b&c", "axbXc", "a&bXc", "a[XX]bXc", "a&b&c" })]
+	[InlineData(@"echo ""${N:-""\a""}"" ""${N:-""\}""}"" ""${N:-x""\a""y}"" ""${N:-""\$""}""", new[] { "echo", "a", "}", "xay", "$" })]
+	[InlineData(@"echo ""${S/X/$T}"" ${S/X/$B} ""${S/X/""$T""}"" ${S/#a/&&}", new[] { "echo", "a<X>bXc", "a&bXc", "a<&>bXc", "aaXbXc" })]
+	[InlineData(@"echo ""[${N/#/a}]"" ""[${N/*/a}]"" ""[${E/#/a}]""", new[] { "echo", "[]", "[]", "[a]" })]
+	[InlineData(@"echo ""${S/X/'}'}"" ""${S:+'}'}"" ""${N:-it's}""", new[] { "echo", "a}bXc", "'}'", "${N:-it's}" })]
+	[InlineData(@"echo ""${N:-${S/X/""}""}}"" ""${N:-""\$S""}"" ""${S/X/a  b}"" ${S/X/$Z} ${N:='a  b'} ""${M:-""a}  ""}""", new[] { "echo", "a}bXc", "$S", "aa  bbXc", @"aa\bXc", "a", "b", "a}  " })]
 	public void Split_WithBracedForms_ExpandsAsBash(string line, string[] expected)
 	{
 		// Arrange
@@ -1769,8 +1781,14 @@ public sealed class CommandLineTests
 			["W"] = "é😀",
 			["G"] = "a b c",
 			["D"] = "a/b",
+			["R"] = "S",
+			["O"] = "1",
+			["T"] = "<&>",
+			["B"] = @"\&",
+			["Z"] = @"a\",
 			["HOME"] = "/h",
 			["#"] = "3",
+			["0"] = "sh",
 			["1"] = "1",
 			["2"] = "2",
 			["3"] = "3",
@@ -1811,24 +1829,26 @@ public sealed class CommandLineTests
 	/// <param name="label">The note under the <c>${...}</c>.</param>
 	/// <param name="fatal">Whether the error ends a shell that isn't interactive.</param>
 	[Theory]
-	[InlineData("echo ${N:?gone away}", "sharpie::shell::parameter_unset", "N: gone away", "empty or not set", true)]
+	[InlineData("echo ${N:?gone  away}", "sharpie::shell::parameter_unset", "N: gone  away", "empty or not set", true)]
 	[InlineData("echo ${E:?}", "sharpie::shell::parameter_unset", "E: parameter null or not set", "empty or not set", true)]
 	[InlineData("echo ${N?}", "sharpie::shell::parameter_unset", "N: parameter not set", "not set", true)]
 	[InlineData("echo ${N:-${M:?inner}}", "sharpie::shell::parameter_unset", "M: inner", "empty or not set", true)]
 	[InlineData("echo ${1:=a}", "sharpie::shell::bad_substitution", "$1: cannot assign in this way", "not a variable name", false)]
 	[InlineData("echo ${S:1:-5}", "sharpie::shell::bad_substitution", "-5: substring expression < 0", "ends before its offset", false)]
 	[InlineData("echo ${S:5:-1}", "sharpie::shell::bad_substitution", "-1: substring expression < 0", "ends before its offset", false)]
-	[InlineData("echo ${S^^}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${S^^}`", "not a form Sharpie reads", false)]
-	[InlineData("echo ${!S}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${!S}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${@:1:-1}", "sharpie::shell::bad_substitution", "-1: substring expression < 0", "a negative count", false)]
+	[InlineData("echo ${!N}", "sharpie::shell::bad_substitution", "N: invalid indirect expansion", "`N` doesn't hold a name", false)]
+	[InlineData("echo ${!E}", "sharpie::shell::bad_substitution", ": invalid variable name", "`E` doesn't hold a name", false)]
+	[InlineData("echo ${!G}", "sharpie::shell::bad_substitution", "a b: invalid variable name", "`G` doesn't hold a name", false)]
+	[InlineData("echo ${S~~}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${S~~}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${!G*}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${!G*}`", "not a form Sharpie reads", false)]
+	[InlineData("echo ${!@}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${!@}`", "not a form Sharpie reads", false)]
 	[InlineData("echo ${%S}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${%S}`", "not a form Sharpie reads", false)]
-	[InlineData("echo ${S/#a/b}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${S/#a/b}`", "not a form Sharpie reads", false)]
-	[InlineData("echo ${@:2}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${@:2}`", "not a form Sharpie reads", false)]
-	[InlineData("echo ${*:2}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${*:2}`", "not a form Sharpie reads", false)]
 	[InlineData("echo ${}", "sharpie::shell::bad_substitution", "Sharpie can't expand `${}`", "not a form Sharpie reads", false)]
 	public void Split_WithBadBracedForm_Throws(string line, string code, string summary, string label, bool fatal)
 	{
 		// Arrange
-		var variables = new Dictionary<string, string> { ["S"] = "aXbXc", ["E"] = string.Empty };
+		var variables = new Dictionary<string, string> { ["S"] = "aXbXc", ["E"] = string.Empty, ["G"] = "a b" };
 
 		// Act
 		var act = () => CommandLine.Split(line, variables);

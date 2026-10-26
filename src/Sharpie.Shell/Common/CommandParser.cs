@@ -590,7 +590,7 @@ internal sealed class CommandParser
 		var parts = new List<string>();
 		var from = 0;
 
-		while (CommandLine.UnquotedIndex(inner, from, ";", quoted: false) is var semicolon and >= 0)
+		while (CommandLine.UnquotedIndex(inner, from, ";") is var semicolon and >= 0)
 		{
 			parts.Add(inner[from..semicolon]);
 			from = semicolon + 1;
@@ -964,6 +964,12 @@ internal sealed class CommandParser
 
 					this.StartWord(index);
 					index = close;
+				}
+				else if (text.AsSpan(index).StartsWith("${", StringComparison.Ordinal) && CommandLine.BraceEnd(text, index) is var brace and >= 0)
+				{
+					// A quote inside ${...} belongs to its word, as in ${q//\'/_}, so it doesn't open or close one here.
+					this.StartWord(index);
+					index = brace;
 				}
 				else if (this.quote is null)
 				{

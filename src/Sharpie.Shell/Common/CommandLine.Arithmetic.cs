@@ -53,7 +53,7 @@ internal static partial class CommandLine
 			}
 			else if (line.AsSpan(end).StartsWith("${", StringComparison.Ordinal) || IsSubstitutionStart(line, end))
 			{
-				end = character == '$' && line[end + 1] == '{' ? BraceEnd(line, end, quote is not null) : SubstitutionEnd(line, end);
+				end = character == '$' && line[end + 1] == '{' ? BraceEnd(line, end) : SubstitutionEnd(line, end);
 
 				if (end < 0)
 				{
