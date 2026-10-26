@@ -429,7 +429,7 @@ internal static partial class CommandLine
 
 			try
 			{
-				return ArithmeticExpression.Evaluate(typed, this.Variables);
+				return ArithmeticExpression.Evaluate(typed, this.Variables, noUnset: this.Unset is not null);
 			}
 			catch (ArithmeticExpression.Failure failure)
 			{
@@ -510,12 +510,30 @@ internal static partial class CommandLine
 	/// <see langword="true" /> when it's a shell or environment variable, or <c>?</c>, which is always set though it
 	/// isn't stored until the first command has run. <c>@</c> and <c>*</c> are set when there's a positional parameter.
 	/// </returns>
-	private static bool IsSet(IReadOnlyDictionary<string, string> variables, string name) => name switch
+	internal static bool IsSet(IReadOnlyDictionary<string, string> variables, string name) => name switch
 	{
 		"?" => true,
 		"@" or "*" => DeclareCommand.ReadPositional(variables).Count > 0,
 		_ => variables.ContainsKey(name) || Environment.GetEnvironmentVariable(name) is not null,
 	};
+
+	/// <summary>
+	/// Builds the report for a variable that <c>set -u</c> finds unset.
+	/// </summary>
+	/// <param name="line">The text the name was typed in.</param>
+	/// <param name="name">The name and its place in <paramref name="line" />.</param>
+	/// <returns>
+	/// The report, pointing at the name.
+	/// </returns>
+	internal static ShellError UnsetError(string line, Word name) =>
+		new("sharpie::shell::unset_variable", $"`{name.Text}` isn't set")
+		{
+			Source = line,
+			Start = name.Start,
+			End = name.End,
+			Label = "set -u makes this an error",
+			Help = "set it first, or turn the check off with set +u",
+		};
 
 	/// <summary>
 	/// Puts a backslash before each unquoted character of a <c>${...}</c> word that <see cref="SplitWords" /> would
@@ -663,7 +681,8 @@ internal static partial class CommandLine
 	/// </summary>
 	/// <param name="error">What went wrong, pointing at the <c>${...}</c>.</param>
 	/// <param name="fatal">
-	/// <see langword="true" /> for <c>${X:?}</c>, which ends a shell that isn't interactive with 127, as bash's does.
+	/// <see langword="true" /> for <c>${X:?}</c> and an unset name an arithmetic expression reads under <c>set -u</c>,
+	/// which end a shell that isn't interactive with 127, as bash's do.
 	/// </param>
 	[SuppressMessage("Design", "CA1032:Implement standard exception constructors", Justification = "Only expansion throws it, and always with a report.")]
 	internal sealed class ExpansionError(ShellError error, bool fatal) : Exception(error.ArgumentNotNull().Summary)
@@ -680,8 +699,8 @@ internal static partial class CommandLine
 		/// Gets a value that indicates whether the error ends a shell that isn't interactive.
 		/// </summary>
 		/// <value>
-		/// <see langword="true" /> for <c>${X:?}</c>; otherwise, <see langword="false" />, and only the rest of the line is
-		/// skipped, as in bash.
+		/// <see langword="true" /> for <c>${X:?}</c>, and for an unset name an arithmetic expression reads under
+		/// <c>set -u</c>; otherwise, <see langword="false" />, and only the rest of the line is skipped, as in bash.
 		/// </value>
 		public bool Fatal => fatal;
 	}

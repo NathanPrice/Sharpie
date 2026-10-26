@@ -271,5 +271,21 @@ public sealed class ConditionalCommandTests : IDisposable
 		_ = converted.Should().Be(expected);
 	}
 
+	/// <summary>
+	/// Checks that under <c>set -u</c> a number operator's unset name ends the line instead of counting as 0.
+	/// </summary>
+	[Fact]
+	public void Run_WithNoUnsetAndUnsetNumber_Throws()
+	{
+		// Arrange
+		const string Line = "[[ nope -eq 0 ]]";
+
+		// Act
+		var act = () => ConditionalCommand.Run(CommandLine.Split(Line, this.variables), Line, this.variables, noUnset: true);
+
+		// Assert
+		_ = act.Should().Throw<CommandLine.ExpansionError>().Which.Should().Match<CommandLine.ExpansionError>(error => error.Fatal && error.Error.Code == "sharpie::shell::unset_variable");
+	}
+
 	private int Run(string line) => ConditionalCommand.Run(CommandLine.Split(line, this.variables), line, this.variables);
 }

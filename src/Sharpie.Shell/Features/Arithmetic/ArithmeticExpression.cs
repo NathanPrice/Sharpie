@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Variables;
@@ -68,12 +69,18 @@ internal static class ArithmeticExpression
 	/// <param name="variables">
 	/// The shell variables, which names read and assignments write through <see cref="DeclareCommand.Assign" />.
 	/// </param>
+	/// <param name="noUnset">
+	/// <see langword="true" /> under <c>set -u</c>, where reading a name that isn't set is an error, as in bash.
+	/// </param>
 	/// <returns>
 	/// The value, 0 for an expression of only blanks.
 	/// </returns>
 	/// <exception cref="Failure">The expression can't be worked out.</exception>
-	public static long Evaluate(string expression, IReadOnlyDictionary<string, string> variables) =>
-		new Parser(expression.ArgumentNotNull(), variables.ArgumentNotNull(), 0).Run();
+	/// <exception cref="CommandLine.ExpansionError">
+	/// <paramref name="noUnset" /> is <see langword="true" /> and the expression reads a name that isn't set.
+	/// </exception>
+	public static long Evaluate(string expression, IReadOnlyDictionary<string, string> variables, bool noUnset = false) =>
+		new Parser(expression.ArgumentNotNull(), variables.ArgumentNotNull(), 0, noUnset).Run();
 
 	/// <summary>
 	/// An expression that can't be worked out, like <c>1/0</c>.
@@ -106,7 +113,8 @@ internal static class ArithmeticExpression
 	/// <param name="text">The expression.</param>
 	/// <param name="variables">The shell variables.</param>
 	/// <param name="depth">How many variables deep this expression is.</param>
-	private sealed class Parser(string text, IReadOnlyDictionary<string, string> variables, int depth)
+	/// <param name="noUnset"><see langword="true" /> under <c>set -u</c>.</param>
+	private sealed class Parser(string text, IReadOnlyDictionary<string, string> variables, int depth, bool noUnset)
 	{
 		/// <summary>
 		/// Where the next token starts, or the blanks before it.
@@ -146,10 +154,15 @@ internal static class ArithmeticExpression
 		/// Gets the token at <paramref name="at" />, after any blanks.
 		/// </summary>
 		/// <param name="at">Where to start.</param>
+		/// <param name="before">The token before it, which decides what <c>++</c> and <c>--</c> are.</param>
 		/// <returns>
 		/// The token.
 		/// </returns>
-		private Token Read(int at)
+		/// <remarks>
+		/// As in bash, <c>++</c> and <c>--</c> are one operator only after a name or before one; otherwise they're two
+		/// signs, so <c>--1</c> is 1 and <c>1--1</c> is 2.
+		/// </remarks>
+		private Token Read(int at, Token before)
 		{
 			while (at < text.Length && char.IsWhiteSpace(text[at]))
 			{
@@ -174,9 +187,16 @@ internal static class ArithmeticExpression
 				return new Token(char.IsAsciiDigit(character) ? Kind.Number : Kind.Name, at, end, text[at..end]);
 			}
 
-			return Operators.FirstOrDefault(typed => text.AsSpan(at).StartsWith(typed, StringComparison.Ordinal)) is { } found
-				? new Token(Kind.Operator, at, at + found.Length, found)
-				: new Token(Kind.Other, at, end, text[at..end]);
+			if (Operators.FirstOrDefault(typed => text.AsSpan(at).StartsWith(typed, StringComparison.Ordinal)) is not { } found)
+			{
+				return new Token(Kind.Other, at, end, text[at..end]);
+			}
+
+			var nameAfter = text.AsSpan(at + found.Length).TrimStart() is [var first, ..] && (char.IsAsciiLetter(first) || first == '_');
+
+			return found is "++" or "--" && before.Kind != Kind.Name && !nameAfter
+				? new Token(Kind.Operator, at, end, found[..1])
+				: new Token(Kind.Operator, at, at + found.Length, found);
 		}
 
 		/// <summary>
@@ -185,7 +205,15 @@ internal static class ArithmeticExpression
 		/// <returns>
 		/// The token.
 		/// </returns>
-		private Token Peek() => this.Read(this.position);
+		/// <exception cref="Failure">The expression is nested too deep for the stack.</exception>
+		private Token Peek()
+		{
+			var token = this.Read(this.position, this.previous);
+
+			// Every level of nesting reads a token, and running out of stack would end the whole shell.
+			return RuntimeHelpers.TryEnsureSufficientExecutionStack() ? token
+				: throw this.Error("recursion", "Expression recursion level exceeded", token, "nested too deeply");
+		}
 
 		/// <summary>
 		/// Moves past the next token.
@@ -250,14 +278,16 @@ internal static class ArithmeticExpression
 		{
 			var name = this.Peek();
 
-			if (name.Kind == Kind.Name && this.Read(name.End) is { Kind: Kind.Operator } assign && Assignments.Contains(assign.Text))
+			if (name.Kind == Kind.Name && this.Read(name.End, name) is { Kind: Kind.Operator } assign && Assignments.Contains(assign.Text))
 			{
 				_ = this.Next();
 				_ = this.Next();
 
+				// bash reads the old value before the right side, which may change it, and plain = never reads it.
+				var old = assign.Text == "=" ? 0 : this.Value(name);
 				var start = this.Peek();
 				var right = this.Assignment();
-				var value = assign.Text == "=" ? right : this.Operate(assign.Text[..^1], this.Value(name), right, start);
+				var value = assign.Text == "=" ? right : this.Operate(assign.Text[..^1], old, right, start);
 
 				this.Assign(name, value);
 
@@ -355,9 +385,6 @@ internal static class ArithmeticExpression
 		/// <returns>
 		/// The value.
 		/// </returns>
-		/// <remarks>
-		/// <c>++</c> and <c>--</c> before anything but a name are two signs, so <c>--1</c> is 1, as in bash.
-		/// </remarks>
 		private long Unary()
 		{
 			var token = this.Peek();
@@ -369,10 +396,10 @@ internal static class ArithmeticExpression
 
 			_ = this.Next();
 
-			if (token.Text is "++" or "--" && this.Peek() is { Kind: Kind.Name } name)
+			// Read only gives ++ and -- before a name.
+			if (token.Text is "++" or "--")
 			{
-				_ = this.Next();
-
+				var name = this.Next();
 				var value = unchecked(this.Value(name) + (token.Text == "++" ? 1 : -1));
 
 				this.Assign(name, value);
@@ -527,11 +554,13 @@ internal static class ArithmeticExpression
 		/// The value, 0 for an empty or unset variable and inside a skipped side.
 		/// </returns>
 		/// <exception cref="Failure">The value can't be worked out, or refers too deep.</exception>
+		/// <exception cref="CommandLine.ExpansionError">The variable isn't set, under <c>set -u</c>.</exception>
 		private long Value(Token name)
 		{
 			return this.skip > 0 ? 0
+				: noUnset && !CommandLine.IsSet(variables, name.Text) ? throw new CommandLine.ExpansionError(CommandLine.UnsetError(text, new Word(name.Text, IsOperator: false, name.Start, name.End)), fatal: true)
 				: depth >= MaxDepth ? throw this.Error("recursion", "Expression recursion level exceeded", name, "refers back to itself")
-				: new Parser(CommandLine.Lookup(variables, name.Text), variables, depth + 1).Run();
+				: new Parser(CommandLine.Lookup(variables, name.Text), variables, depth + 1, noUnset).Run();
 		}
 
 		/// <summary>

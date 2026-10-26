@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Arithmetic;
 
 namespace Sharpie.Shell.Tests.Features.Arithmetic;
@@ -71,6 +72,9 @@ public sealed class ArithmeticExpressionTests
 	[InlineData("- -1", 1)]
 	[InlineData("--1", 1)]
 	[InlineData("++5", 5)]
+	[InlineData("1--1", 2)]
+	[InlineData("2++3", 5)]
+	[InlineData("(1)--1", 2)]
 	[InlineData("+3", 3)]
 	[InlineData("1 ? 2 : 3", 2)]
 	[InlineData("0 ? 2 : 0 ? 3 : 4", 4)]
@@ -136,6 +140,8 @@ public sealed class ArithmeticExpressionTests
 	[InlineData("0 ? y = 7 : (z = 8)", 8, "z=8")]
 	[InlineData("0 ? 1/0 : 2", 2, "")]
 	[InlineData("0 && (x /= 0)", 0, "")]
+	[InlineData("x += (x = 5)", 8, "x=8")]
+	[InlineData("x += x++", 6, "x=6")]
 	public void Evaluate_WithVariables_ReadsAndAssignsThem(string expression, long expected, string after)
 	{
 		// Arrange
@@ -184,7 +190,8 @@ public sealed class ArithmeticExpressionTests
 	[InlineData("$x", "syntax", "Operand expected", "$", "expected a number or a variable")]
 	[InlineData("a b", "syntax", "Unexpected `b`", "b", "expected an operator or the end")]
 	[InlineData("1.5", "syntax", "Unexpected `.`", ".", "expected an operator or the end")]
-	[InlineData("5++", "syntax", "Unexpected `++`", "++", "expected an operator or the end")]
+	[InlineData("5++", "syntax", "Operand expected", "+", "needs a number or a variable after it")]
+	[InlineData("1++b", "syntax", "Unexpected `++`", "++", "expected an operator or the end")]
 	[InlineData("(1 + 2", "syntax", "`(` is never closed", "(", "needs a `)`")]
 	[InlineData("1 ? 2", "syntax", "`:` expected for conditional expression", "2", "expected `:`")]
 	[InlineData("1 ? 2 3", "syntax", "`:` expected for conditional expression", "3", "expected `:`")]
@@ -215,12 +222,18 @@ public sealed class ArithmeticExpressionTests
 
 		// Act
 		var half = () => ArithmeticExpression.Evaluate("half * 2", variables);
-		var loop = () => ArithmeticExpression.Evaluate("loop", variables);
+		Exception? thrown = null;
+
+		// A test thread's stack can run low before bash's 1024 levels, which fails the same way but says so.
+		var loop = new Thread(() => thrown = Record.Exception(() => ArithmeticExpression.Evaluate("loop", variables)), 64 << 20);
+
+		loop.Start();
+		loop.Join();
 
 		// Assert
 		_ = half.Should().Throw<ArithmeticExpression.Failure>().Which.Error.Source.Should().Be("1 +");
 
-		var error = loop.Should().Throw<ArithmeticExpression.Failure>().Which.Error;
+		var error = thrown.Should().BeOfType<ArithmeticExpression.Failure>().Which.Error;
 
 		_ = (error.Code, error.Summary, error.Label, error.Start, error.End).Should().Be(("sharpie::arithmetic::recursion", "Expression recursion level exceeded", "refers back to itself", 0, 4));
 	}
@@ -242,5 +255,60 @@ public sealed class ArithmeticExpressionTests
 
 		// Assert
 		_ = act.Should().Throw<ArithmeticExpression.Failure>().Which.Error.Help.Should().Be(help);
+	}
+
+	/// <summary>
+	/// Checks that an expression nested too deep for the stack fails instead of ending the shell.
+	/// </summary>
+	/// <param name="prefix">What repeats before the 1.</param>
+	/// <param name="suffix">What repeats after it.</param>
+	[Theory]
+	[InlineData("(", ")")]
+	[InlineData("- ", "")]
+	[InlineData("-", "")]
+	public void Evaluate_WithDeepNesting_FailsWithoutCrashing(string prefix, string suffix)
+	{
+		// Arrange
+		var expression = string.Concat(Enumerable.Repeat(prefix, 100_000)) + "1" + string.Concat(Enumerable.Repeat(suffix, 100_000));
+
+		// Act
+		var act = () => ArithmeticExpression.Evaluate(expression, new Dictionary<string, string>());
+
+		// Assert
+		var error = act.Should().Throw<ArithmeticExpression.Failure>().Which.Error;
+
+		_ = (error.Code, error.Summary, error.Label).Should().Be(("sharpie::arithmetic::recursion", "Expression recursion level exceeded", "nested too deeply"));
+	}
+
+	/// <summary>
+	/// Checks that under <c>set -u</c> reading an unset name ends the line, and the shell when it isn't interactive,
+	/// pointing at the name, while assigning one, a skipped side, or a set name doesn't.
+	/// </summary>
+	/// <param name="expression">The expression.</param>
+	/// <param name="fails"><see langword="true" /> when bash reports the name unbound.</param>
+	[Theory]
+	[InlineData("1 + nope", true)]
+	[InlineData("nope++", true)]
+	[InlineData("nope += 1", true)]
+	[InlineData("nope = 1", false)]
+	[InlineData("0 && nope", false)]
+	[InlineData("x + 1", false)]
+	public void Evaluate_WithNoUnset_FailsOnUnsetName(string expression, bool fails)
+	{
+		// Act
+		var act = () => ArithmeticExpression.Evaluate(expression, new Dictionary<string, string> { ["x"] = "1" }, noUnset: true);
+
+		// Assert
+		if (!fails)
+		{
+			_ = act.Should().NotThrow();
+
+			return;
+		}
+
+		var thrown = act.Should().Throw<CommandLine.ExpansionError>().Which;
+
+		_ = (thrown.Fatal, thrown.Error.Code, thrown.Error.Summary, thrown.Error.Source).Should().Be((true, "sharpie::shell::unset_variable", "`nope` isn't set", expression));
+		_ = expression[thrown.Error.Start..thrown.Error.End].Should().Be("nope");
 	}
 }

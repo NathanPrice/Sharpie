@@ -787,7 +787,7 @@ internal static class Program
 			Console.Error.WriteLine($"+ {string.Join(' ', words.Select(word => word.Text))}");
 		}
 
-		return ConditionalCommand.Run(words, line, declare.Variables);
+		return ConditionalCommand.Run(words, line, declare.Variables, settings.NoUnset);
 	}
 
 	/// <summary>
@@ -1004,17 +1004,7 @@ internal static class Program
 	/// 1, the command's status.
 	/// </returns>
 	internal static int ReportUnset(string line, Word name, bool interactive) =>
-		Fail(
-			new ShellError("sharpie::shell::unset_variable", $"`{name.Text}` isn't set")
-			{
-				Source = line,
-				Start = name.Start,
-				End = name.End,
-				Label = "set -u makes this an error",
-				Help = "set it first, or turn the check off with set +u",
-			},
-			127,
-			interactive);
+		Fail(CommandLine.UnsetError(line, name), 127, interactive);
 
 	/// <summary>
 	/// Reports an error that ends the line, and the shell too when it isn't interactive, as bash's expansion errors do.

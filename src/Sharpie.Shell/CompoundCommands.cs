@@ -148,7 +148,7 @@ internal static class CompoundCommands
 
 				try
 				{
-					return ArithmeticExpression.Evaluate(expanded, declare.Variables);
+					return ArithmeticExpression.Evaluate(expanded, declare.Variables, settings.NoUnset);
 				}
 				catch (ArithmeticExpression.Failure failure)
 				{

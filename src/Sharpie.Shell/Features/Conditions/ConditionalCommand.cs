@@ -44,12 +44,16 @@ internal static class ConditionalCommand
 	/// <param name="words">The command's words, starting with the <see cref="Open" /> operator.</param>
 	/// <param name="line">The command as typed, which errors point into.</param>
 	/// <param name="variables">The shell variables, for <c>-v</c> and the number operators.</param>
+	/// <param name="noUnset">
+	/// <see langword="true" /> under <c>set -u</c>, where a number operator reading a name that isn't set throws
+	/// <see cref="CommandLine.ExpansionError" />, as in bash.
+	/// </param>
 	/// <returns>
 	/// 0 when the condition holds, 1 when it doesn't, and <see cref="TestCommand.ErrorStatus" /> after an error is
 	/// reported: no <c>]]</c>, a word after it, a test that's missing a word, or a regular expression or number that
 	/// can't be read.
 	/// </returns>
-	internal static int Run(Word[] words, string line, IReadOnlyDictionary<string, string> variables)
+	internal static int Run(Word[] words, string line, IReadOnlyDictionary<string, string> variables, bool noUnset = false)
 	{
 		_ = words.ArgumentNotNull();
 
@@ -61,7 +65,7 @@ internal static class ConditionalCommand
 			return close < 0 ? throw Syntax(line, words[0], "missing_bracket", "`[[` is missing its closing `]]`", "starts a condition", "end the condition with ]]")
 				: close + 1 < words.Length
 				? throw Syntax(line, words[close + 1], "after_bracket", $"`{words[close + 1].Text}` comes after the condition's end", "after `]]`", "put ; or && between the condition and the next command")
-				: new Parser(words[1..close], words[close], line, variables).Run() ? 0 : 1;
+				: new Parser(words[1..close], words[close], line, variables, noUnset).Run() ? 0 : 1;
 		}
 		catch (Condition.Failure failure)
 		{
@@ -208,7 +212,8 @@ internal static class ConditionalCommand
 	/// <param name="close">The <c>]]</c>, which an error about a missing word points at.</param>
 	/// <param name="line">The command as typed.</param>
 	/// <param name="variables">The shell variables.</param>
-	private sealed class Parser(Word[] words, Word close, string line, IReadOnlyDictionary<string, string> variables)
+	/// <param name="noUnset"><see langword="true" /> under <c>set -u</c>.</param>
+	private sealed class Parser(Word[] words, Word close, string line, IReadOnlyDictionary<string, string> variables, bool noUnset)
 	{
 		/// <summary>
 		/// The word being read.
@@ -368,7 +373,7 @@ internal static class ConditionalCommand
 		{
 			try
 			{
-				return ArithmeticExpression.Evaluate(text, variables).ToString(CultureInfo.InvariantCulture);
+				return ArithmeticExpression.Evaluate(text, variables, noUnset).ToString(CultureInfo.InvariantCulture);
 			}
 			catch (ArithmeticExpression.Failure failure)
 			{

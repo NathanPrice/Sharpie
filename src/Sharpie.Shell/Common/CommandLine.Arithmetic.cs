@@ -117,7 +117,8 @@ internal static partial class CommandLine
 		{
 			var expanded = ExpandExpression(line[inner..(close - 1)], variables, unset is null ? null : name => unset(name with { Start = name.Start + inner, End = name.End + inner }), substitute);
 
-			return ArithmeticExpression.Evaluate(expanded, variables).ToString(CultureInfo.InvariantCulture);
+			// The callback comes only under set -u.
+			return ArithmeticExpression.Evaluate(expanded, variables, noUnset: unset is not null).ToString(CultureInfo.InvariantCulture);
 		}
 		catch (ArithmeticExpression.Failure failure)
 		{

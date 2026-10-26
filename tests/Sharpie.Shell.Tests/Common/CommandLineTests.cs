@@ -1514,6 +1514,23 @@ public sealed class CommandLineTests
 	}
 
 	/// <summary>
+	/// Checks that under <c>set -u</c> an unset name read inside <c>$((...))</c> or a <c>${X:offset}</c> throws a
+	/// fatal error, as bash's "unbound variable" is.
+	/// </summary>
+	/// <param name="line">The command as typed.</param>
+	[Theory]
+	[InlineData("echo $((nope + 1))")]
+	[InlineData("echo ${S:nope}")]
+	public void Split_WithNoUnsetArithmetic_ThrowsFatal(string line)
+	{
+		// Act
+		var act = () => CommandLine.Split(line, new Dictionary<string, string> { ["S"] = "abc" }, _ => { });
+
+		// Assert
+		_ = act.Should().Throw<CommandLine.ExpansionError>().Which.Should().Match<CommandLine.ExpansionError>(error => error.Fatal && error.Error.Code == "sharpie::shell::unset_variable");
+	}
+
+	/// <summary>
 	/// Checks that unclosed substitutions nested in double quotes are found unclosed without scanning the line again
 	/// at every level.
 	/// </summary>
