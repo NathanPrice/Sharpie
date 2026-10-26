@@ -287,7 +287,7 @@ internal static class Program
 		// Closing the window sends SIGHUP, and the runtime ends the process on it without raising ProcessExit. bash also
 		// saves its history on hangup.
 		using var hangup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, _ => history.WriteHistFile());
-		var editor = terminal ? CreateEditor(commands, aliases, historyCommand) : null;
+		var editor = terminal ? CreateEditor(commands, aliases, declare, historyCommand) : null;
 
 		if (terminal && OperatingSystem.IsWindows())
 		{
@@ -530,11 +530,12 @@ internal static class Program
 	/// </summary>
 	/// <param name="commands">The builtins, by name.</param>
 	/// <param name="aliases">The <c>alias</c> builtin, whose names are completed and colored like the builtins'.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds <c>VISUAL</c> and <c>EDITOR</c> for Ctrl+X Ctrl+E.</param>
 	/// <param name="history">The <c>history</c> builtin, whose lines Up and Down step through.</param>
 	/// <returns>
 	/// The editor.
 	/// </returns>
-	private static LineEditor CreateEditor(Dictionary<string, ICommand> commands, AliasCommand aliases, HistoryCommand history)
+	private static LineEditor CreateEditor(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, HistoryCommand history)
 	{
 		var completions = (CompleteCommand)commands["complete"];
 		var names = new CommandNames(commands, aliases.Aliases);
@@ -545,7 +546,46 @@ internal static class Program
 			() => Console.WindowWidth,
 			new TabCompleter(names, completions.FindCompleter),
 			history.Lines,
-			names);
+			names,
+			line => EditInEditor(commands, aliases, declare, line));
+	}
+
+	/// <summary>
+	/// Opens <paramref name="line" /> in <c>$VISUAL</c>, else <c>$EDITOR</c>, else <c>vi</c>, for Ctrl+X Ctrl+E.
+	/// </summary>
+	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="aliases">The <c>alias</c> builtin.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
+	/// <param name="line">The line being edited.</param>
+	/// <returns>
+	/// The file's text once the editor exits with status 0, or <see langword="null" /> when it fails.
+	/// </returns>
+	/// <remarks>
+	/// The editor runs as a command line of the shell's own, as bash's <c>fc</c> runs it, so a shell variable and an
+	/// <c>EDITOR</c> with arguments work, and the editor gets the terminal like any program the shell starts.
+	/// </remarks>
+	private static string? EditInEditor(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line)
+	{
+		// Created with mode 0600 on Unix, so other users can't read the command.
+		var path = Path.GetTempFileName();
+
+		// bash falls back to emacs. vi is the editor POSIX requires, and Windows has notepad instead.
+		var fallback = OperatingSystem.IsWindows() ? "notepad" : "vi";
+
+		// The editor reads the keys now, so Ctrl+C is SIGINT again while it runs, as for any other program.
+		Console.TreatControlCAsInput = false;
+
+		try
+		{
+			File.WriteAllText(path, line + "\n");
+
+			return RunLine(commands, aliases, declare, $"${{VISUAL:-${{EDITOR:-{fallback}}}}} {CommandLine.Quote(path)}") == 0 ? File.ReadAllText(path) : null;
+		}
+		finally
+		{
+			Console.TreatControlCAsInput = true;
+			File.Delete(path);
+		}
 	}
 
 	/// <summary>

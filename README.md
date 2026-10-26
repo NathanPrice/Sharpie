@@ -37,9 +37,13 @@ and mouse reporting all work.
 - **Real terminal.** Programs run in a pseudo-terminal, so colors, full-screen apps and mouse reporting work. The
   window adds scrollback and copy/paste.
 - **Line editor.** The prompt header shows the folder, git branch and how long the last command took. Commands are
-  colored as you type, <kbd>Tab</kbd> completes, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and a gray suggestion
-  from the history fills in as you type. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>R</kbd> searches the history
-  as in bash.
+  colored as you type, <kbd>Tab</kbd> completes, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and a gray suggestion from
+  the history fills in as you type. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>R</kbd> searches the history as in
+  bash. bash's usual editing keys work too, among them <kbd>Ctrl</kbd>+<kbd>W</kbd>/<kbd>U</kbd>/<kbd>K</kbd> to cut and
+  <kbd>Ctrl</kbd>+<kbd>Y</kbd> to paste back, <kbd>Alt</kbd>+<kbd>B</kbd>/<kbd>F</kbd>/<kbd>D</kbd>/<kbd>Backspace</kbd>
+  for words, <kbd>Ctrl</kbd>+<kbd>T</kbd> to swap two characters, <kbd>Alt</kbd>+<kbd>.</kbd> for the last command's
+  last word, <kbd>Ctrl</kbd>+<kbd>_</kbd> to undo, and <kbd>Ctrl</kbd>+<kbd>X</kbd> <kbd>Ctrl</kbd>+<kbd>E</kbd> to edit
+  the line in `$VISUAL` or `$EDITOR` and run it.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
 - **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines and
   command lists joined by `;`, `&&` and `||`.
@@ -121,7 +125,7 @@ folder it was started from.
 
 | Keys | Action |
 | --- | --- |
-| <kbd>Ctrl</kbd>+<kbd>T</kbd> | New tab, in the current tab's folder |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> | New tab, in the current tab's folder |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> | Close the tab |
 | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> | Next / previous tab |
 | <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>Alt</kbd>+<kbd>8</kbd> | Go to tab 1 to 8 |
@@ -130,8 +134,9 @@ folder it was started from.
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste |
 | <kbd>Shift</kbd>+<kbd>PgUp</kbd> / <kbd>Shift</kbd>+<kbd>PgDn</kbd> | Scroll back / forward a page |
 
-Plain <kbd>Ctrl</kbd>+<kbd>W</kbd> is left to the shell, which uses it to delete a word. Hold <kbd>Shift</kbd> to
-select text with the mouse while a program like `vim` is using it.
+Plain <kbd>Ctrl</kbd>+<kbd>T</kbd> and <kbd>Ctrl</kbd>+<kbd>W</kbd> are left to the shell, which uses them to swap two
+characters and delete a word. Hold <kbd>Shift</kbd> to select text with the mouse while a program like `vim` is using
+it.
 
 ## Shell options
 

@@ -21,6 +21,10 @@ namespace Sharpie.Shell.Features.LineEditing;
 /// The builtin command names, which the coloring counts as commands and the suggestion offers along with the programs
 /// on <c>PATH</c>.
 /// </param>
+/// <param name="editInEditor">
+/// Opens the line in the user's editor for Ctrl+X Ctrl+E and gives back the edited text, or <see langword="null" />
+/// when the editor failed. Without it, Ctrl+X Ctrl+E does nothing.
+/// </param>
 /// <remarks>
 /// The whole input is redrawn after every key. The cursor first goes back up to the prompt's row, everything below
 /// is erased, and the prompt, the colored line and any list of matches are written again. Characters are counted as
@@ -32,7 +36,8 @@ internal sealed partial class LineEditor(
 	Func<int> columns,
 	TabCompleter completer,
 	IReadOnlyList<string> history,
-	IReadOnlyCollection<string> builtins)
+	IReadOnlyCollection<string> builtins,
+	Func<string, string?>? editInEditor = null)
 {
 	// The translucent accent the window draws selections with, mixed onto its background, for the picked name in a
 	// list of matches.
@@ -45,6 +50,9 @@ internal sealed partial class LineEditor(
 
 	// Kept across redraws, so a redraw doesn't grow a new builder from scratch on every key.
 	private readonly StringBuilder screen = new();
+
+	// The line and cursor before each change to this line, newest on top, for Ctrl+_.
+	private readonly Stack<(string Line, int Cursor)> undo = new();
 
 	// Whether each command name typed on this line is a command. The highlighter would otherwise search PATH for it on
 	// every key. Cleared for each new line, so a program installed since the last prompt is found.
@@ -59,9 +67,19 @@ internal sealed partial class LineEditor(
 	private string suggestion = string.Empty;
 	private bool continuation;
 
-	// Set after Escape, so ESC and a letter read as two keys still count as Alt and that letter, as readline reads ESC.
-	// .NET returns them as two keys when more input arrives in the same read.
-	private bool escaped;
+	// What the key before this one left for it to act on.
+	private LastKey last;
+
+	// What the last kill removed, kept across lines as readline's kill ring is, for Ctrl+Y.
+	private string killed = string.Empty;
+
+	// Set by Ctrl+_, so putting the old line back isn't saved as a change of its own.
+	private bool undoing;
+
+	// The history line Alt+. last took a word from, and the length of that word, so a second Alt+. can swap it for
+	// the last word of an older line.
+	private int lastArgumentLine;
+	private int lastArgumentLength;
 
 	// The command names that start with commandPrefix. Narrowed in memory as the command word grows, so suggesting a
 	// command doesn't search PATH on every key. Cleared for each new line, so a program installed since is found.
@@ -99,7 +117,8 @@ internal sealed partial class LineEditor(
 		this.cursorRow = 0;
 		this.recalled = history.Count;
 		this.listed = null;
-		this.escaped = false;
+		this.last = LastKey.Other;
+		this.undo.Clear();
 		this.query = null;
 		this.knownCommands.Clear();
 		this.commandMatches = null;
@@ -117,7 +136,11 @@ internal sealed partial class LineEditor(
 				this.listed = null;
 			}
 
+			var before = this.line.ToString();
+			var cursorBefore = this.cursor;
 			var outcome = this.Handle(key, header);
+
+			this.SaveUndo(before, cursorBefore);
 
 			if (outcome == Outcome.Continue)
 			{
@@ -150,21 +173,41 @@ internal sealed partial class LineEditor(
 			return searched;
 		}
 
-		var alt = (key.Modifiers & ConsoleModifiers.Alt) != 0 || this.escaped;
+		var last = this.last;
+		var control = (key.Modifiers & ConsoleModifiers.Control) != 0;
 
-		this.escaped = key.Key == ConsoleKey.Escape;
+		// ESC and a key read as two keys still count as Alt and that key, as readline reads ESC. .NET returns them as
+		// two keys when more input arrives in the same read.
+		var alt = (key.Modifiers & ConsoleModifiers.Alt) != 0 || last == LastKey.Escape;
 
-		return (key.Modifiers & ConsoleModifiers.Control) != 0
-			? key.Key switch
+		this.last = key.Key == ConsoleKey.Escape ? LastKey.Escape : LastKey.Other;
+
+		// bash ignores a key with no binding after Ctrl+X, and Ctrl+E is the only one bound here.
+		return last == LastKey.CtrlX ? (control && key.Key == ConsoleKey.E ? this.EditInEditor() : Outcome.Continue)
+			: control ? key.Key switch
 			{
 				ConsoleKey.C => Outcome.Cancel,
 				ConsoleKey.D when this.line.Length == 0 => Outcome.EndOfInput,
 				ConsoleKey.D => this.DeleteAt(this.cursor),
 				ConsoleKey.A => this.MoveTo(0),
 				ConsoleKey.E => this.Accept(),
-				ConsoleKey.U => this.DeleteRange(0, this.cursor),
-				ConsoleKey.K => this.DeleteRange(this.cursor, this.line.Length),
-				ConsoleKey.W => this.DeleteRange(this.WordStartBefore(this.cursor), this.cursor),
+				ConsoleKey.B => this.MoveTo(this.cursor - 1),
+				ConsoleKey.F when this.suggestion.Length > 0 => this.Accept(),
+				ConsoleKey.F => this.MoveTo(this.cursor + 1),
+				ConsoleKey.P => this.Recall(-1),
+				ConsoleKey.N => this.Recall(1),
+				ConsoleKey.LeftArrow => this.MoveTo(this.WordStartBefore(this.cursor, char.IsLetterOrDigit)),
+				ConsoleKey.RightArrow => this.MoveTo(this.WordEndAfter(this.cursor)),
+				ConsoleKey.T => this.Transpose(),
+				ConsoleKey.U => this.Kill(0, this.cursor, last),
+				ConsoleKey.K => this.Kill(this.cursor, this.line.Length, last),
+				ConsoleKey.W => this.Kill(this.WordStartBefore(this.cursor, character => character != ' '), this.cursor, last),
+				ConsoleKey.Y => this.Insert(this.killed),
+				ConsoleKey.X => this.Expect(LastKey.CtrlX),
+
+				// Ctrl+_ and Ctrl+/ send 0x1F, which .NET on Unix reads as Ctrl+7. The Windows console reports the key
+				// itself.
+				ConsoleKey.D7 or ConsoleKey.OemMinus => this.Undo(),
 				ConsoleKey.L => this.ClearScreen(header),
 				ConsoleKey.R => this.StartSearch(reverse: true),
 				ConsoleKey.S => this.StartSearch(reverse: false),
@@ -173,6 +216,7 @@ internal sealed partial class LineEditor(
 			: key.Key switch
 			{
 				ConsoleKey.Enter => Outcome.Submit,
+				ConsoleKey.Backspace when alt => this.Kill(this.WordStartBefore(this.cursor, char.IsLetterOrDigit), this.cursor, last),
 				ConsoleKey.Backspace when this.cursor > 0 => this.DeleteRange(this.cursor - 1, this.cursor),
 				ConsoleKey.Delete => this.DeleteAt(this.cursor),
 				ConsoleKey.RightArrow when this.suggestion.Length > 0 => this.Accept(),
@@ -183,27 +227,43 @@ internal sealed partial class LineEditor(
 				ConsoleKey.UpArrow => this.Recall(-1),
 				ConsoleKey.DownArrow => this.Recall(1),
 				ConsoleKey.Tab => this.Complete(),
-				ConsoleKey.B when alt => this.MoveTo(this.WordStartBefore(this.cursor)),
+				ConsoleKey.B when alt => this.MoveTo(this.WordStartBefore(this.cursor, char.IsLetterOrDigit)),
 				ConsoleKey.F when alt => this.MoveTo(this.WordEndAfter(this.cursor)),
+				ConsoleKey.D when alt => this.Kill(this.cursor, this.WordEndAfter(this.cursor), last),
+				ConsoleKey.OemPeriod when alt => this.LastArgument(last),
 
 				// Other Alt keys do nothing. Typing their letter would put a stray character in the line.
 				_ when alt => Outcome.Continue,
-				_ when !char.IsControl(key.KeyChar) => this.Insert(key.KeyChar),
+				_ when !char.IsControl(key.KeyChar) => this.Insert(key.KeyChar.ToString()),
 				_ => Outcome.Continue,
 			};
 	}
 
 	/// <summary>
-	/// Puts <paramref name="character" /> into the line at the cursor and moves past it.
+	/// Puts <paramref name="text" /> into the line at the cursor and moves past it.
 	/// </summary>
-	/// <param name="character">The typed character.</param>
+	/// <param name="text">The typed character, or the text Ctrl+Y or Alt+. puts back.</param>
 	/// <returns>
 	/// <see cref="Outcome.Continue" />.
 	/// </returns>
-	private Outcome Insert(char character)
+	private Outcome Insert(string text)
 	{
-		_ = this.line.Insert(this.cursor, character);
-		this.cursor++;
+		_ = this.line.Insert(this.cursor, text);
+		this.cursor += text.Length;
+
+		return Outcome.Continue;
+	}
+
+	/// <summary>
+	/// Leaves <paramref name="next" /> for the next key to act on.
+	/// </summary>
+	/// <param name="next">What the next key should see as the key before it.</param>
+	/// <returns>
+	/// <see cref="Outcome.Continue" />.
+	/// </returns>
+	private Outcome Expect(LastKey next)
+	{
+		this.last = next;
 
 		return Outcome.Continue;
 	}
@@ -337,21 +397,203 @@ internal sealed partial class LineEditor(
 	}
 
 	/// <summary>
-	/// Finds where the word before <paramref name="index" /> starts, skipping spaces first, which is what Ctrl+W
-	/// removes in bash.
+	/// Removes the characters from <paramref name="start" /> up to <paramref name="end" /> into the kill buffer, which
+	/// Ctrl+Y puts back.
 	/// </summary>
-	/// <param name="index">The position to look back from.</param>
+	/// <param name="start">The first position removed.</param>
+	/// <param name="end">The position after the last one removed.</param>
+	/// <param name="last">What the key before this one left, which tells whether it was a kill too.</param>
 	/// <returns>
-	/// The position of the word's first character, or 0.
+	/// <see cref="Outcome.Continue" />.
 	/// </returns>
-	private int WordStartBefore(int index)
+	/// <remarks>
+	/// Kills in a row build up one piece of text in line order, as in readline: one that removes text before the cursor
+	/// adds it in front, and one that removes text after the cursor adds it at the end. Removing nothing leaves the
+	/// buffer alone.
+	/// </remarks>
+	private Outcome Kill(int start, int end, LastKey last)
 	{
-		while (index > 0 && this.line[index - 1] == ' ')
+		if (end > start)
+		{
+			var text = this.line.ToString(start, end - start);
+
+			this.killed = last != LastKey.Kill ? text
+				: start < this.cursor ? text + this.killed
+				: this.killed + text;
+		}
+
+		this.last = LastKey.Kill;
+
+		return this.DeleteRange(start, end);
+	}
+
+	/// <summary>
+	/// Swaps the character before the cursor with the one under it and moves past both, as readline's Ctrl+T does. At
+	/// the end of the line, the last two characters swap.
+	/// </summary>
+	/// <returns>
+	/// <see cref="Outcome.Continue" />.
+	/// </returns>
+	/// <remarks>
+	/// Does nothing at the start of the line or on a line shorter than two characters.
+	/// </remarks>
+	private Outcome Transpose()
+	{
+		if (this.cursor == 0 || this.line.Length < 2)
+		{
+			return Outcome.Continue;
+		}
+
+		if (this.cursor == this.line.Length)
+		{
+			this.cursor--;
+		}
+
+		(this.line[this.cursor - 1], this.line[this.cursor]) = (this.line[this.cursor], this.line[this.cursor - 1]);
+		this.cursor++;
+
+		return Outcome.Continue;
+	}
+
+	/// <summary>
+	/// Puts back the line and cursor from before the last change to this line.
+	/// </summary>
+	/// <returns>
+	/// <see cref="Outcome.Continue" />.
+	/// </returns>
+	private Outcome Undo()
+	{
+		if (this.undo.TryPop(out var step))
+		{
+			_ = this.line.Clear().Append(step.Line);
+			this.cursor = step.Cursor;
+			this.undoing = true;
+		}
+
+		return Outcome.Continue;
+	}
+
+	/// <summary>
+	/// Saves the line from before a key as a step Ctrl+_ can go back to, when the key changed the line.
+	/// </summary>
+	/// <param name="before">The line before the key.</param>
+	/// <param name="cursorBefore">The cursor before the key.</param>
+	/// <remarks>
+	/// A character typed where the last typed run ends joins that run's step, up to 20 characters, as readline's
+	/// <c>rl_insert_text</c> joins them, so one Ctrl+_ takes back a typed word rather than one letter.
+	/// </remarks>
+	private void SaveUndo(string before, int cursorBefore)
+	{
+		if (this.undoing)
+		{
+			this.undoing = false;
+
+			return;
+		}
+
+		if (this.line.Equals(before.AsSpan()))
+		{
+			return;
+		}
+
+		if (this.undo.TryPeek(out var step)
+			&& this.cursor == cursorBefore + 1
+			&& cursorBefore - step.Cursor is > 0 and < 20
+			&& this.line.ToString().Remove(cursorBefore, 1) == before
+			&& before.Remove(step.Cursor, cursorBefore - step.Cursor) == step.Line)
+		{
+			return;
+		}
+
+		this.undo.Push((before, cursorBefore));
+	}
+
+	/// <summary>
+	/// Puts the last word of the newest history line at the cursor, or right after another Alt+., swaps the word
+	/// that one put in for the last word of the next older line, as readline's <c>yank-last-arg</c> does.
+	/// </summary>
+	/// <param name="last">What the key before this one left, which tells whether it was Alt+. too.</param>
+	/// <returns>
+	/// <see cref="Outcome.Continue" />.
+	/// </returns>
+	/// <remarks>
+	/// History lines with no words are skipped, and once the oldest line has given its word, more presses leave the
+	/// line alone. Words are split as the coloring splits them, so nothing in them is expanded.
+	/// </remarks>
+	private Outcome LastArgument(LastKey last)
+	{
+		var again = last == LastKey.LastArgument;
+		var index = (again ? this.lastArgumentLine : history.Count) - 1;
+
+		while (index >= 0 && Highlighter.SplitRaw(history[index]).Count == 0)
 		{
 			index--;
 		}
 
-		while (index > 0 && this.line[index - 1] != ' ')
+		if (again)
+		{
+			this.last = LastKey.LastArgument;
+		}
+
+		if (index < 0)
+		{
+			return Outcome.Continue;
+		}
+
+		var (start, end, _) = Highlighter.SplitRaw(history[index])[^1];
+
+		if (again)
+		{
+			_ = this.DeleteRange(this.cursor - this.lastArgumentLength, this.cursor);
+		}
+
+		this.last = LastKey.LastArgument;
+		this.lastArgumentLine = index;
+		this.lastArgumentLength = end - start;
+
+		return this.Insert(history[index][start..end]);
+	}
+
+	/// <summary>
+	/// Hands the line to the editor and runs what comes back, as bash's Ctrl+X Ctrl+E does.
+	/// </summary>
+	/// <returns>
+	/// <see cref="Outcome.Submit" /> with the edited text as the line, or <see cref="Outcome.Continue" /> with the line
+	/// unchanged when the editor failed, there's no editor, or this is a line of a here-document's body.
+	/// </returns>
+	private Outcome EditInEditor()
+	{
+		if (this.continuation || editInEditor?.Invoke(this.line.ToString()) is not { } edited)
+		{
+			return Outcome.Continue;
+		}
+
+		// Editors end the file with a line break, and Windows ones write CRLF.
+		_ = this.line.Clear().Append(edited.ReplaceLineEndings("\n").TrimEnd('\n'));
+
+		return Outcome.Submit;
+	}
+
+	/// <summary>
+	/// Finds where the word before <paramref name="index" /> starts, skipping the characters that aren't part of a
+	/// word first.
+	/// </summary>
+	/// <param name="index">The position to look back from.</param>
+	/// <param name="isWord">
+	/// Whether a character is part of a word: anything but a space for Ctrl+W, as bash's <c>unix-word-rubout</c>
+	/// counts it, or a letter or digit for Alt+B, Alt+Backspace and Ctrl+Left, as readline counts it.
+	/// </param>
+	/// <returns>
+	/// The position of the word's first character, or 0.
+	/// </returns>
+	private int WordStartBefore(int index, Func<char, bool> isWord)
+	{
+		while (index > 0 && !isWord(this.line[index - 1]))
+		{
+			index--;
+		}
+
+		while (index > 0 && isWord(this.line[index - 1]))
 		{
 			index--;
 		}
@@ -360,21 +602,21 @@ internal sealed partial class LineEditor(
 	}
 
 	/// <summary>
-	/// Finds where the word after <paramref name="index" /> ends, skipping spaces first, which is where Alt+F moves to
-	/// in bash.
+	/// Finds where the word after <paramref name="index" /> ends, skipping anything but letters and digits first,
+	/// which is where Alt+F and Ctrl+Right move to and what Alt+D removes in bash.
 	/// </summary>
 	/// <param name="index">The position to look forward from.</param>
 	/// <returns>
-	/// The position just past the word's last character, or the end of the line.
+	/// The position just past the word's last letter or digit, or the end of the line.
 	/// </returns>
 	private int WordEndAfter(int index)
 	{
-		while (index < this.line.Length && this.line[index] == ' ')
+		while (index < this.line.Length && !char.IsLetterOrDigit(this.line[index]))
 		{
 			index++;
 		}
 
-		while (index < this.line.Length && this.line[index] != ' ')
+		while (index < this.line.Length && char.IsLetterOrDigit(this.line[index]))
 		{
 			index++;
 		}
@@ -639,5 +881,36 @@ internal sealed partial class LineEditor(
 		/// Ctrl+D on an empty line asked to end the shell.
 		/// </summary>
 		EndOfInput,
+	}
+
+	/// <summary>
+	/// What a key leaves for the key after it.
+	/// </summary>
+	private enum LastKey
+	{
+		/// <summary>
+		/// Nothing. The next key acts on its own.
+		/// </summary>
+		Other,
+
+		/// <summary>
+		/// Escape was pressed, so the next key counts as Alt and that key.
+		/// </summary>
+		Escape,
+
+		/// <summary>
+		/// Ctrl+X was pressed, so Ctrl+E next opens the editor.
+		/// </summary>
+		CtrlX,
+
+		/// <summary>
+		/// A kill, so another kill adds to the kill buffer instead of replacing it.
+		/// </summary>
+		Kill,
+
+		/// <summary>
+		/// Alt+., so another Alt+. swaps in the last word of an older history line.
+		/// </summary>
+		LastArgument,
 	}
 }

@@ -300,16 +300,19 @@ public sealed class TerminalWindowTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that Ctrl+T opens a second tab, shows the tab strip, and starts the new shell in the first tab's folder.
+	/// Checks that Ctrl+Shift+T opens a second tab, shows the tab strip, and starts the new shell in the first tab's
+	/// folder, without also passing the key on to the first tab's shell.
 	/// </summary>
 	[AvaloniaFact]
-	public void CtrlT_OpensTabInActiveTabsFolder()
+	public void CtrlShiftT_OpensTabInActiveTabsFolder()
 	{
 		// Arrange
 		var folder = Path.TrimEndingDirectorySeparator(Path.GetTempPath());
 
 		this.ShowAndWaitForPrompt();
 		this.Enter($"cd '{folder}'");
+		this.Type("echo ab");
+		WaitFor(() => this.ScreenText.EndsWith("❯ echo ab", StringComparison.Ordinal), "the typed text should have shown");
 
 		// Act
 		this.OpenSecondTab();
@@ -319,6 +322,71 @@ public sealed class TerminalWindowTests : IDisposable
 		_ = this.window.View.Should().BeSameAs(this.window.Tabs[1].View);
 		_ = this.Strip.IsVisible.Should().BeTrue();
 		_ = this.window.View.Screen.WorkingDirectory.Should().Be(folder);
+		_ = this.window.Tabs[0].View.Screen.GetText().Should().EndWith("❯ echo ab");
+	}
+
+	/// <summary>
+	/// Checks that plain Ctrl+T goes to the shell, which swaps the two characters before the cursor, and opens no tab.
+	/// </summary>
+	[AvaloniaFact]
+	public void CtrlT_GoesToShell()
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+		this.Type("echo ab");
+		WaitFor(() => this.ScreenText.EndsWith("❯ echo ab", StringComparison.Ordinal), "the typed text should have shown");
+
+		// Act
+		this.Press(Key.T, PhysicalKey.T, null, RawInputModifiers.Control);
+		WaitFor(() => this.ScreenText.EndsWith("❯ echo ba", StringComparison.Ordinal), "Ctrl+T should have swapped the characters");
+
+		// Assert
+		_ = this.window.Tabs.Should().ContainSingle();
+	}
+
+	/// <summary>
+	/// Checks that Ctrl+X Ctrl+E opens the line in <c>$EDITOR</c> through the shell, here a shell function, and runs
+	/// what the editor left in the file.
+	/// </summary>
+	[AvaloniaFact]
+	public void CtrlXCtrlE_RunsEditedLine()
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+		this.Enter("sampletool() { echo 'echo $((6 * 7))' > \"$1\"; }; unset VISUAL; EDITOR=sampletool");
+		this.Type("echo ab");
+		var prompts = this.CountPrompts();
+
+		// Act
+		this.Press(Key.X, PhysicalKey.X, null, RawInputModifiers.Control);
+		this.Press(Key.E, PhysicalKey.E, null, RawInputModifiers.Control);
+		WaitFor(() => this.CountPrompts() > prompts, "the edited line should have run");
+
+		// Assert
+		_ = this.ScreenText.Should().Contain("echo $((6 * 7))\n42\n");
+	}
+
+	/// <summary>
+	/// Checks that when the editor fails, the line stays for more editing, and Ctrl+C is read as a key again
+	/// afterwards rather than as a signal.
+	/// </summary>
+	[AvaloniaFact]
+	public void CtrlXCtrlE_EditorFails_KeepsLineAndCtrlC()
+	{
+		// Arrange
+		this.ShowAndWaitForPrompt();
+		this.Enter("sampletool() { return 1; }; unset VISUAL; EDITOR=sampletool");
+		this.Type("echo ab");
+
+		// Act
+		this.Press(Key.X, PhysicalKey.X, null, RawInputModifiers.Control);
+		this.Press(Key.E, PhysicalKey.E, null, RawInputModifiers.Control);
+		this.Type("c");
+		WaitFor(() => this.ScreenText.EndsWith("❯ echo abc", StringComparison.Ordinal), "the line should have stayed");
+		this.Press(Key.C, PhysicalKey.C, null, RawInputModifiers.Control);
+
+		// Assert
+		WaitFor(() => this.ScreenText.Contains("❯ echo abc^C", StringComparison.Ordinal), "Ctrl+C should have dropped the line");
 	}
 
 	/// <summary>
@@ -388,10 +456,10 @@ public sealed class TerminalWindowTests : IDisposable
 		_ = this.window.Tabs[1].IsVisible.Should().BeFalse();
 	}
 
-	// Presses Ctrl+T and waits for the new tab's first prompt.
+	// Presses Ctrl+Shift+T and waits for the new tab's first prompt.
 	private void OpenSecondTab()
 	{
-		this.Press(Key.T, PhysicalKey.T, null, RawInputModifiers.Control);
+		this.Press(Key.T, PhysicalKey.T, null, RawInputModifiers.Control | RawInputModifiers.Shift);
 		WaitFor(() => this.window.Tabs.Count == 2 && this.CountPrompts() > 0, "the second tab's prompt should have shown");
 	}
 

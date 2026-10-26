@@ -195,7 +195,7 @@ internal static class Highlighter
 	/// <see cref="CommandLine.Split" /> drops positions, which coloring needs, so this walks the same quote,
 	/// backslash and operator rules only to find the boundaries.
 	/// </remarks>
-	private static List<(int Start, int End, List<Token>? Strings)> SplitRaw(string line)
+	internal static List<(int Start, int End, List<Token>? Strings)> SplitRaw(string line)
 	{
 		var words = new List<(int Start, int End, List<Token>? Strings)>();
 

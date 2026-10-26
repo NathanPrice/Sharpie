@@ -8,7 +8,7 @@ namespace Sharpie.Shell.Tests.Features.LineEditing;
 /// Tests for <see cref="LineEditor" />, fed keys the way <see cref="Console.ReadKey(bool)" /> returns them.
 /// </summary>
 [Collection(GlobalState.Name)]
-public sealed class LineEditorTests : IDisposable
+public sealed partial class LineEditorTests : IDisposable
 {
 	private const string Prompt = PromptHeader.Symbol;
 
@@ -598,8 +598,8 @@ public sealed class LineEditorTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks the editing keys at the edges: at the start or end of the line, across runs of spaces, and with no
-	/// suggestion to take.
+	/// Checks the editing keys, also at the edges: at the start or end of the line, across runs of spaces, and with
+	/// no suggestion to take.
 	/// </summary>
 	/// <param name="script">
 	/// The keys, with special keys in braces, Ctrl shown as <c>^</c>, like <c>{^W}</c>, and Alt as <c>%</c>, like
@@ -627,6 +627,52 @@ public sealed class LineEditorTests : IDisposable
 	[InlineData("ab{%F}x", "abx")]
 	[InlineData("echo one{Escape}bx", "echo xone")]
 	[InlineData("ab{Escape}{%B}x", "xab")]
+	[InlineData("abc{^B}{^B}x", "axbc")]
+	[InlineData("abc{Home}{^F}x", "axbc")]
+	[InlineData("fi{^F}", "first")]
+	[InlineData("one two{^LeftArrow}x", "one xtwo")]
+	[InlineData("one two{Home}{^RightArrow}x", "onex two")]
+	[InlineData("cd /usr/local/bin{%B}x", "cd /usr/local/xbin")]
+	[InlineData("a-b c{Home}{%F}x", "ax-b c")]
+	[InlineData("one two{Home}{%D}", " two")]
+	[InlineData("one two{Home}{^F}{%D}x", "ox two")]
+	[InlineData("one two{%Backspace}", "one ")]
+	[InlineData("cd /usr/local{%Backspace}", "cd /usr/")]
+	[InlineData("one two{Escape}{Backspace}", "one ")]
+	[InlineData("one two{^U}{^Y}{^Y}", "one twoone two")]
+	[InlineData("one two{^A}{^K}x{^Y}", "xone two")]
+	[InlineData("one two{^W}x {^Y}", "one x two")]
+	[InlineData("one two three{^W}{^W}{^Y}", "one two three")]
+	[InlineData("one two{Home}{%D}{%D}{^Y}", "one two")]
+	[InlineData("one two{^W}{LeftArrow}{^W}{^Y}", "one ")]
+	[InlineData("ab{^Y}", "ab")]
+	[InlineData("ab{^U}{^U}{^Y}", "ab")]
+	[InlineData("ab{^U}{LeftArrow}{^U}{^Y}", "ab")]
+	[InlineData("abcd{LeftArrow}{LeftArrow}{^T}x", "acbxd")]
+	[InlineData("abc{^T}x", "acbx")]
+	[InlineData("abc{Home}{^T}x", "xabc")]
+	[InlineData("a{^T}x", "ax")]
+	[InlineData("ab{^T}x", "bax")]
+	[InlineData("echo hi{^D7}", "")]
+	[InlineData("one two{^W}{^D7}", "one two")]
+	[InlineData("one two{^W}x{^D7}{^D7}", "one two")]
+	[InlineData("{^D7}ab", "ab")]
+	[InlineData("ab{^D7}{^D7}", "")]
+	[InlineData("ab{LeftArrow}x{^D7}", "ab")]
+	[InlineData("ab{^A}{^K}{^D7}x", "xab")]
+	[InlineData("abcdefghijklmnopqrtuvwxyz{^D7}", "abcdefghijklmnopqrtu")]
+	[InlineData("ab{^D7}cd{^D7}x", "x")]
+	[InlineData("one two{^W}{Home}{^D7}", "one two")]
+	[InlineData("ab{^OemMinus}", "")]
+	[InlineData("{%OemPeriod}", "second")]
+	[InlineData("{%OemPeriod}{%OemPeriod}", "first")]
+	[InlineData("{%OemPeriod}{%OemPeriod}{%OemPeriod}{%OemPeriod}", "first")]
+	[InlineData("echo {%OemPeriod}", "echo second")]
+	[InlineData("{%OemPeriod}x{%OemPeriod}", "secondxsecond")]
+	[InlineData("{^P}", "second")]
+	[InlineData("{^P}{^P}{^N}", "second")]
+	[InlineData("ab{^X}c", "ab")]
+	[InlineData("ab{^X}{^E}c", "abc")]
 	public void ReadLine_EditingKeyScript_GivesLine(string script, string expected)
 	{
 		// Arrange
@@ -638,179 +684,6 @@ public sealed class LineEditorTests : IDisposable
 
 		// Assert
 		_ = line.Should().Be(expected);
-	}
-
-	/// <summary>
-	/// Checks Ctrl+R and Ctrl+S against what bash gives for the same keys and the same history.
-	/// </summary>
-	/// <param name="script">The keys, written as for <see cref="ReadLine_EditingKeyScript_GivesLine" />.</param>
-	/// <param name="expected">The line Enter returns.</param>
-	[Theory]
-	[InlineData("{^R}x", "echo p xa q xa r")]
-	[InlineData("{^R}xa{^K}", "echo p xa q ")]
-	[InlineData("{^R}x{^R}{^K}", "echo p ")]
-	[InlineData("{^R}x{^R}{^R}", "echo xc")]
-	[InlineData("{^R}x{^R}{^R}{^R}{^R}", "echo xa")]
-	[InlineData("{^R}xa{Backspace}", "echo p xa q xa r")]
-	[InlineData("{^R}xa{^R}{^R}{Backspace}", "echo xa")]
-	[InlineData("{^R}xb{Backspace}{Backspace}", "echo xb")]
-	[InlineData("orig{^R}xa{^G}", "orig")]
-	[InlineData("orig{LeftArrow}{^R}xa{^G}z", "orizg")]
-	[InlineData("{^R}xq", "echo p xa q xa r")]
-	[InlineData("echo zz yy{^R}zz{^K}", "echo ")]
-	[InlineData("{^R}x{^R}{^R}{^S}", "echo xc")]
-	[InlineData("{^R}x{^R}{^R}{^S}{^S}", "echo p xa q xa r")]
-	[InlineData("{^S}x", "")]
-	[InlineData("{^R}{^R}", "")]
-	[InlineData("{^R}{Backspace}", "")]
-	[InlineData("{^R}xc{Home}z", "zecho xc")]
-	[InlineData("{^R}xc{Escape}{End}!", "echo xc!")]
-	[InlineData("{^R}xc{%B}z", "zecho xc")]
-	[InlineData("{^R}a r{^K}", "echo p xa q x")]
-	[InlineData("abc{^R}{^R}{Escape}z", "abcz")]
-	public void ReadLine_ReverseSearchScript_GivesLine(string script, string expected)
-	{
-		// Arrange
-		this.UseSearchHistory();
-		this.Script(script);
-		this.Press(ConsoleKey.Enter);
-
-		// Act
-		var line = this.sut.ReadLine(string.Empty);
-
-		// Assert
-		_ = line.Should().Be(expected);
-	}
-
-	/// <summary>
-	/// Checks that Ctrl+R with nothing typed searches again for what the search on an earlier line looked for, even
-	/// after a search in between that was given up before anything was typed.
-	/// </summary>
-	[Fact]
-	public void ReadLine_EmptyReverseSearchOnNextLine_ReusesLastText()
-	{
-		// Arrange
-		this.UseSearchHistory();
-		this.Script("{^R}xb");
-		this.Press(ConsoleKey.Enter);
-		this.Script("{^R}{^G}");
-		this.Press(ConsoleKey.Enter);
-		this.Script("{^R}{^R}");
-		this.Press(ConsoleKey.Enter);
-		_ = this.sut.ReadLine(string.Empty);
-		_ = this.sut.ReadLine(string.Empty);
-
-		// Act
-		var line = this.sut.ReadLine(string.Empty);
-
-		// Assert
-		_ = line.Should().Be("echo xb");
-	}
-
-	/// <summary>
-	/// Checks that a search shows bash's prompt with the cursor at the match, and that a failed search says so and
-	/// rings the bell.
-	/// </summary>
-	[Fact]
-	public void ReadLine_ReverseSearch_ShowsBashPrompt()
-	{
-		// Arrange
-		const string Searching = "(reverse-i-search)`xa': ";
-		this.UseSearchHistory();
-		this.Script("{^R}xa{Backspace}q");
-		this.Press(ConsoleKey.Enter);
-
-		// Act
-		_ = this.sut.ReadLine(string.Empty);
-
-		// Assert
-		_ = this.Frame(0).Should().StartWith("\r\e[J(reverse-i-search)`': ");
-		_ = this.Frame(2).Should().StartWith($"\r\e[J{Searching}").And.EndWith($"\r\e[{Searching.Length + 12}C");
-		_ = this.Frame(4).Should().Be($"\a\r\e[J(failed reverse-i-search)`xq': \e[32mecho\e[0m p xa q xa r\r\e[43C");
-	}
-
-	/// <summary>
-	/// Checks the prompt after the last key, compared against bash for the same keys.
-	/// </summary>
-	/// <param name="script">The keys, written as for <see cref="ReadLine_EditingKeyScript_GivesLine" />.</param>
-	/// <param name="expected">The prompt drawn after the last key.</param>
-	[Theory]
-	[InlineData("{^S}", "(i-search)`': ")]
-	[InlineData("{^R}xq{Backspace}", "(reverse-i-search)`x': ")]
-	[InlineData("{^R}z{Backspace}", "(failed reverse-i-search)`': ")]
-	public void ReadLine_SearchScript_ShowsPrompt(string script, string expected)
-	{
-		// Arrange
-		this.UseSearchHistory();
-		this.Script(script);
-
-		var last = this.keys.Count - 1;
-
-		this.Press(ConsoleKey.Enter);
-
-		// Act
-		_ = this.sut.ReadLine(string.Empty);
-
-		// Assert
-		_ = this.Frame(last).Should().Contain($"\r\e[J{expected}");
-	}
-
-	/// <summary>
-	/// Checks that Ctrl+R with nothing typed and no earlier search does nothing, while Backspace with nothing typed
-	/// rings the bell.
-	/// </summary>
-	[Fact]
-	public void ReadLine_EmptySearch_RingsOnlyOnBackspace()
-	{
-		// Arrange
-		this.UseSearchHistory();
-		this.Script("{^R}{^R}{Backspace}");
-		this.Press(ConsoleKey.Enter);
-
-		// Act
-		_ = this.sut.ReadLine(string.Empty);
-
-		// Assert
-		_ = this.Frame(1).Should().NotContain("\a");
-		_ = this.Frame(2).Should().StartWith("\a");
-	}
-
-	/// <summary>
-	/// Checks that Ctrl+C during a search drops the line and draws it again after the usual prompt.
-	/// </summary>
-	[Fact]
-	public void ReadLine_CtrlCDuringSearch_CancelsLine()
-	{
-		// Arrange
-		this.UseSearchHistory();
-		this.Script("{^R}xa{^C}");
-
-		// Act
-		var line = this.sut.ReadLine(string.Empty);
-
-		// Assert
-		_ = line.Should().BeEmpty();
-		_ = this.Frame(3).Should().StartWith($"\r\e[J{Prompt}").And.EndWith("^C\r\n");
-	}
-
-	/// <summary>
-	/// Checks that no dimmed suggestion is drawn during a search, even with the cursor at the end of a line that
-	/// starts a history line.
-	/// </summary>
-	[Fact]
-	public void ReadLine_Searching_DrawsNoSuggestion()
-	{
-		// Arrange
-		this.UseSearchHistory();
-		this.Script("echo{^R}");
-		this.Press(ConsoleKey.Enter);
-
-		// Act
-		_ = this.sut.ReadLine(string.Empty);
-
-		// Assert
-		_ = this.Frame(3).Should().Contain("\e[30m");
-		_ = this.Frame(4).Should().NotContain("\e[30m");
 	}
 
 	/// <summary>
@@ -1036,15 +909,6 @@ public sealed class LineEditorTests : IDisposable
 		string[] names = ["zqa", "zqbcd"];
 
 		return new LineEditor(this.ReadKey, this.output, () => 10, new TabCompleter(names), this.history, names);
-	}
-
-	/// <summary>
-	/// Replaces the history with the lines the search tests were checked against in bash, oldest first.
-	/// </summary>
-	private void UseSearchHistory()
-	{
-		this.history.Clear();
-		this.history.AddRange(["echo xa", "echo xb", "echo xb", "echo xc", "echo p xa q xa r"]);
 	}
 
 	/// <summary>

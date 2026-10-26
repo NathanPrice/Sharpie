@@ -186,7 +186,7 @@ internal sealed class TerminalWindow : Window, IDisposable
 	}
 
 	/// <summary>
-	/// Handles the tab keys: Ctrl+T opens a tab, Ctrl+Tab and Ctrl+Shift+Tab go to the next and previous tab,
+	/// Handles the tab keys: Ctrl+Shift+T opens a tab, Ctrl+Tab and Ctrl+Shift+Tab go to the next and previous tab,
 	/// Ctrl+Shift+W closes the tab, and Alt+1 to Alt+9 go to a tab by number.
 	/// </summary>
 	/// <param name="sender">The source of the event.</param>
@@ -198,8 +198,8 @@ internal sealed class TerminalWindow : Window, IDisposable
 
 		switch (e.KeyModifiers, e.Key)
 		{
-			// Programs no longer see Ctrl+T, such as readline's swap-characters.
-			case (KeyModifiers.Control, Key.T):
+			// Plain Ctrl+T stays with the shell, which uses it to swap two characters.
+			case (KeyModifiers.Control | KeyModifiers.Shift, Key.T):
 				this.OpenTab(this.active.View.Screen.WorkingDirectory);
 				break;
 
