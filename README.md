@@ -38,7 +38,8 @@ and mouse reporting all work.
   window adds scrollback and copy/paste.
 - **Line editor.** The prompt header shows the folder, git branch and how long the last command took. Commands are
   colored as you type, <kbd>Tab</kbd> completes, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and a gray suggestion
-  from the history fills in as you type. <kbd>→</kbd> accepts it.
+  from the history fills in as you type. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>R</kbd> searches the history
+  as in bash.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
 - **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines and
   command lists joined by `;`, `&&` and `||`.

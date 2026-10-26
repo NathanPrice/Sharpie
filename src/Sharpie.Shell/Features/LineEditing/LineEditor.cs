@@ -10,7 +10,7 @@ namespace Sharpie.Shell.Features.LineEditing;
 /// <summary>
 /// Reads one command line from the terminal a key at a time, coloring it as it's typed, with Tab completion,
 /// Up and Down through the history lines that start with what's typed, a dimmed suggestion after the cursor from
-/// history or from the command names, and the usual editing keys.
+/// history or from the command names, Ctrl+R and Ctrl+S to search the history as in bash, and the usual editing keys.
 /// </summary>
 /// <param name="readKey">Reads the next key without echoing it, like <see cref="Console.ReadKey(bool)" />.</param>
 /// <param name="output">Where the prompt and the line are drawn.</param>
@@ -26,7 +26,7 @@ namespace Sharpie.Shell.Features.LineEditing;
 /// is erased, and the prompt, the colored line and any list of matches are written again. Characters are counted as
 /// one column each, so a line holding wide characters like CJK or emoji puts the cursor short of where it should be.
 /// </remarks>
-internal sealed class LineEditor(
+internal sealed partial class LineEditor(
 	Func<ConsoleKeyInfo> readKey,
 	TextWriter output,
 	Func<int> columns,
@@ -100,6 +100,7 @@ internal sealed class LineEditor(
 		this.recalled = history.Count;
 		this.listed = null;
 		this.escaped = false;
+		this.query = null;
 		this.knownCommands.Clear();
 		this.commandMatches = null;
 
@@ -144,6 +145,11 @@ internal sealed class LineEditor(
 	[SuppressMessage("Style", "IDE0072:Add missing cases", Justification = "ConsoleKey has a member for every key on the keyboard. Only the keys the line editor handles need an arm.")]
 	private Outcome Handle(ConsoleKeyInfo key, string header)
 	{
+		if (this.query is not null && this.Search(key) is { } searched)
+		{
+			return searched;
+		}
+
 		var alt = (key.Modifiers & ConsoleModifiers.Alt) != 0 || this.escaped;
 
 		this.escaped = key.Key == ConsoleKey.Escape;
@@ -160,6 +166,8 @@ internal sealed class LineEditor(
 				ConsoleKey.K => this.DeleteRange(this.cursor, this.line.Length),
 				ConsoleKey.W => this.DeleteRange(this.WordStartBefore(this.cursor), this.cursor),
 				ConsoleKey.L => this.ClearScreen(header),
+				ConsoleKey.R => this.StartSearch(reverse: true),
+				ConsoleKey.S => this.StartSearch(reverse: false),
 				_ => Outcome.Continue,
 			}
 			: key.Key switch
@@ -230,7 +238,7 @@ internal sealed class LineEditor(
 	{
 		// Hidden while browsing, because the next Up searches by the text typed before the first Up, not by the line
 		// on screen, so a suggestion there would promise a line Up doesn't give.
-		if (this.continuation || this.line.Length == 0 || this.cursor != this.line.Length || this.listed is not null || this.Browsing)
+		if (this.continuation || this.query is not null || this.line.Length == 0 || this.cursor != this.line.Length || this.listed is not null || this.Browsing)
 		{
 			return string.Empty;
 		}
@@ -474,8 +482,11 @@ internal sealed class LineEditor(
 			_ = screen.Append(CultureInfo.InvariantCulture, $"\e[{this.cursorRow}A");
 		}
 
-		// The continuation prompt is as wide as the symbol, so the column maths below holds for both.
-		_ = screen.Append("\r\e[J").Append(this.continuation ? ContinuationPrompt : PromptHeader.Symbol);
+		// The continuation prompt is as wide as the symbol, so one width holds for both.
+		var (prompt, promptWidth) = this.query is not null ? (this.SearchPrompt, this.SearchPrompt.Length)
+			: (this.continuation ? ContinuationPrompt : PromptHeader.Symbol, PromptHeader.SymbolWidth);
+
+		_ = screen.Append("\r\e[J").Append(prompt);
 
 		if (this.continuation)
 		{
@@ -492,7 +503,7 @@ internal sealed class LineEditor(
 			_ = screen.Append("\e[30m").Append(this.suggestion).Append("\e[0m");
 		}
 
-		var end = PromptHeader.SymbolWidth + this.line.Length + this.suggestion.Length;
+		var end = promptWidth + this.line.Length + this.suggestion.Length;
 		var endRow = end / width;
 		var endColumn = end % width;
 
@@ -513,7 +524,7 @@ internal sealed class LineEditor(
 			}
 		}
 
-		var target = PromptHeader.SymbolWidth + this.cursor;
+		var target = promptWidth + this.cursor;
 		var targetRow = target / width;
 
 		if (endRow > targetRow)
