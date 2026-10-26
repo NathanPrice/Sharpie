@@ -305,6 +305,33 @@ internal partial class DeclareCommand : ICommand
 	}
 
 	/// <summary>
+	/// Gets or sets how many times <c>set</c> has replaced the positional parameters outside any function.
+	/// </summary>
+	/// <value>
+	/// A count that only goes up, except that a subshell puts it back with the parameters. <c>.</c> compares it before
+	/// and after a file to keep the file's parameters, as bash does.
+	/// </value>
+	public int PositionalSetCount { get; set; }
+
+	/// <summary>
+	/// Replaces the positional parameters for the <c>set</c> builtin.
+	/// </summary>
+	/// <param name="values">The new parameters, which become <c>$1</c> onwards.</param>
+	/// <remarks>
+	/// Counted only outside a function, since the function puts the caller's parameters back when it returns anyway.
+	/// </remarks>
+	public void SetPositionalFromSet(IReadOnlyList<string> values)
+	{
+		this.SetPositional(values);
+
+		if (this.FunctionDepth == 0)
+		{
+			// Stryker disable once Update : . only checks that the count changed, so counting down works the same.
+			this.PositionalSetCount++;
+		}
+	}
+
+	/// <summary>
 	/// Replaces the positional parameters, as <c>set --</c> does.
 	/// </summary>
 	/// <param name="values">The new parameters, which become <c>$1</c> onwards.</param>

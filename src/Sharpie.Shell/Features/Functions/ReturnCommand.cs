@@ -25,8 +25,8 @@ internal sealed class ReturnCommand(DeclareCommand declare, Func<bool> inSourced
 	/// <inheritdoc />
 	/// <exception cref="Signal">A function or sourced file is running, which ends with the status.</exception>
 	/// <remarks>
-	/// The status is worked out as <c>exit</c> does, so an argument that isn't a number gives 2 after an error. Outside a
-	/// function and a sourced file it prints bash's error and gives 2.
+	/// The status is worked out as <c>exit</c> does, so an argument that isn't a number gives 2 after an error, and
+	/// more than one skips the rest of the line. Outside a function and a sourced file it prints bash's error and gives 2.
 	/// </remarks>
 	public int Run(string[] args)
 	{
@@ -42,7 +42,7 @@ internal sealed class ReturnCommand(DeclareCommand declare, Func<bool> inSourced
 			return 2;
 		}
 
-		throw new Signal(ExitCommand.Code(args, declare.Status, this.Name));
+		throw new Signal(ExitCommand.Code(args, declare.Status, this.Name) ?? 2);
 	}
 
 	/// <summary>

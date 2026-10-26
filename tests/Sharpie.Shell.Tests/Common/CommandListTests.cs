@@ -323,6 +323,34 @@ public sealed class CommandListTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a line ending inside a quote runs nothing and is reported with
+	/// <see cref="CommandList.UnsupportedStatus" />, as bash's "unexpected EOF" is.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="quote">The quote left open.</param>
+	[Theory]
+	[InlineData("echo a; echo \"x", '"')]
+	[InlineData("echo 'x", '\'')]
+	public void Run_WithOpenQuote_RunsNothingAndReports(string line, char quote)
+	{
+		// Arrange
+		var ran = new List<string>();
+
+		// Act
+		var status = CommandList.Run(line, 0, command =>
+		{
+			ran.Add(command);
+
+			return 0;
+		});
+
+		// Assert
+		_ = ran.Should().BeEmpty();
+		_ = status.Should().Be(CommandList.UnsupportedStatus);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::parser::unclosed_quote", $"`{quote}` is never closed") { Help = $"add the closing {quote}" }.Render(color: false));
+	}
+
+	/// <summary>
 	/// Checks that an unclosed <c>$(</c> or backquote is reported with the whole line, its opening underlined, and how
 	/// to close it.
 	/// </summary>

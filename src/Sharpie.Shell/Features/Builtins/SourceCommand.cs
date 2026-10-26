@@ -15,8 +15,8 @@ namespace Sharpie.Shell.Features.Builtins;
 /// <param name="runLine">Runs one command line, the same way the shell runs a typed one, and gives its status.</param>
 /// <remarks>
 /// The shell also runs <c>~/.sharpierc</c> and script files with it. Arguments after the file name become the
-/// positional parameters while the file runs, and the old ones come back after, as in bash. With none, the file sees
-/// the caller's.
+/// positional parameters while the file runs, and the old ones come back after, as in bash, unless the file changed
+/// them with <c>set</c> outside a function. With none, the file sees the caller's. One leading <c>--</c> is skipped.
 /// </remarks>
 internal sealed class SourceCommand(string name, DeclareCommand declare, Func<string, int> runLine) : ICommand
 {
@@ -50,19 +50,22 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 
 	/// <inheritdoc />
 	/// <remarks>
-	/// The status is the last line's, 0 for a file with no commands, or 1 when the file can't be run. A quote still
-	/// open at the end of the file is reported with status 2, and that last command doesn't run, as in bash.
+	/// The status is the last line's, 0 for a file with no commands, 2 with no file named, or 1 when the file can't be
+	/// run. A quote still open at the end of the file is reported with status 2, and that last command doesn't run, as
+	/// in bash.
 	/// <c>return</c> ends the file early with its own status.
 	/// </remarks>
 	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
+		args = args is ["--", .. var rest] ? rest : args;
+
 		if (args is [])
 		{
 			new ShellError("sharpie::source::missing_file", $"`{this.Name}` needs a file to run").Write();
 
-			return 1;
+			return 2;
 		}
 
 		if (this.depth >= MaxDepth)
@@ -89,6 +92,7 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 		}
 
 		var caller = declare.Positional;
+		var sets = declare.PositionalSetCount;
 
 		if (args.Length > 1)
 		{
@@ -126,7 +130,7 @@ internal sealed class SourceCommand(string name, DeclareCommand declare, Func<st
 		{
 			this.depth--;
 
-			if (args.Length > 1)
+			if (args.Length > 1 && declare.PositionalSetCount == sets)
 			{
 				declare.SetPositional(caller);
 			}

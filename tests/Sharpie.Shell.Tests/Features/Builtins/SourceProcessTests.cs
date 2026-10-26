@@ -42,6 +42,38 @@ public sealed class SourceProcessTests
 	}
 
 	/// <summary>
+	/// Checks that a file run with arguments keeps the parameters its own <c>set</c> made, but not ones a subshell or
+	/// command substitution made, as bash's forked subshell can't change the file's.
+	/// </summary>
+	/// <param name="body">The file.</param>
+	/// <param name="expected">The parameters after the file.</param>
+	[Theory]
+	[InlineData("set -- z\n", "z")]
+	[InlineData("(set -- z)\n", "p")]
+	[InlineData("x=$(set -- z)\n", "p")]
+	public async Task Shell_WithSetInSourcedFile_KeepsOnlyItsOwn(string body, string expected)
+	{
+		// Arrange
+		var folder = Directory.CreateTempSubdirectory("shell-source-").FullName;
+		var path = Path.Combine(folder, "sample.rc");
+
+		await File.WriteAllTextAsync(path, body).ConfigureAwait(true);
+
+		try
+		{
+			// Act
+			var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", $"set -- p; . -- {path} a b; echo \"$@\""]).ConfigureAwait(true);
+
+			// Assert
+			_ = run.Output.Should().Be(expected + "\n");
+		}
+		finally
+		{
+			Directory.Delete(folder, recursive: true);
+		}
+	}
+
+	/// <summary>
 	/// Checks that a shell whose input isn't a terminal skips <c>~/.sharpierc</c>, as bash skips <c>~/.bashrc</c>.
 	/// </summary>
 	[Fact]

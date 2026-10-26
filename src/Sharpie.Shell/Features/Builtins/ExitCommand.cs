@@ -27,36 +27,48 @@ internal class ExitCommand(DeclareCommand declare, Func<bool>? inSubshell = null
 	/// <param name="status">The last command's status.</param>
 	/// <param name="name">The builtin the status is for, <c>exit</c> or <c>return</c>, which the error names.</param>
 	/// <returns>
-	/// <paramref name="status" /> with no argument, the number's low eight bits with one, or 2 after printing an error
-	/// when the argument isn't a number.
+	/// <paramref name="status" /> with no argument, or the number's low eight bits. <see langword="null" /> after
+	/// printing an error when the first argument isn't a number, where bash 5.3 gives 2 and stays in the shell.
 	/// </returns>
+	/// <exception cref="CommandLine.ExpansionError">
+	/// A number is followed by more arguments, which skips the rest of the line, as bash does.
+	/// </exception>
 	/// <remarks>
-	/// A process can only report eight bits, so <c>exit 256</c> gives 0 and <c>exit -1</c> gives 255, as in bash.
+	/// A process can only report eight bits, so <c>exit 256</c> gives 0 and <c>exit -1</c> gives 255, as in bash. One
+	/// leading <c>--</c> is skipped.
 	/// </remarks>
-	internal static int Code(string[] args, int status, string name = "exit")
+	internal static int? Code(string[] args, int status, string name = "exit")
 	{
 		_ = args.ArgumentNotNull();
+
+		args = args is ["--", .. var rest] ? rest : args;
 
 		if (args is [])
 		{
 			return status;
 		}
 
-		if (int.TryParse(args[0], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var code))
+		if (!int.TryParse(args[0], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var code))
 		{
-			return code & 0xFF;
+			new ShellError($"sharpie::{name}::not_a_number", $"`{args[0]}` isn't a number") { Help = $"{name} takes a whole number as its status" }.Write();
+
+			return null;
 		}
 
-		new ShellError($"sharpie::{name}::not_a_number", $"`{args[0]}` isn't a number") { Help = $"{name} takes a whole number as its status" }.Write();
-
-		return 2;
+		return args is [_] ? code & 0xFF : throw new CommandLine.ExpansionError(new ShellError($"sharpie::{name}::too_many_arguments", $"`{name}` takes at most one status"), fatal: false);
 	}
 
 	/// <inheritdoc />
 	/// <exception cref="SubshellExit">A command substitution is running, which ends with the status.</exception>
+	/// <remarks>
+	/// A first argument that isn't a number gives 2 after an error and leaves the shell running, as bash 5.3 does.
+	/// </remarks>
 	public int Run(string[] args)
 	{
-		var code = Code(args, declare.Status);
+		if (Code(args, declare.Status) is not { } code)
+		{
+			return 2;
+		}
 
 		if (inSubshell?.Invoke() == true)
 		{

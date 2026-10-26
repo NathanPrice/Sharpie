@@ -54,7 +54,7 @@ internal sealed class SetCommand(DeclareCommand declare, ShellSettings settings)
 
 			if (arg == "--")
 			{
-				declare.SetPositional(args[(index + 1)..]);
+				declare.SetPositionalFromSet(args[(index + 1)..]);
 
 				return 0;
 			}
@@ -70,7 +70,7 @@ internal sealed class SetCommand(DeclareCommand declare, ShellSettings settings)
 
 				if (index + 1 < args.Length)
 				{
-					declare.SetPositional(args[(index + 1)..]);
+					declare.SetPositionalFromSet(args[(index + 1)..]);
 				}
 
 				return 0;
@@ -78,7 +78,7 @@ internal sealed class SetCommand(DeclareCommand declare, ShellSettings settings)
 
 			if (arg is not ['-' or '+', ..])
 			{
-				declare.SetPositional(args[index..]);
+				declare.SetPositionalFromSet(args[index..]);
 
 				return 0;
 			}

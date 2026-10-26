@@ -203,15 +203,19 @@ public sealed class SourceCommandTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that no file name is reported.
+	/// Checks that no file name, even after <c>--</c>, is reported with status 2, bash's usage error.
 	/// </summary>
-	[Fact]
-	public void Run_WithNoArguments_ReportsMissingName()
+	/// <param name="args">The words after <c>.</c>.</param>
+	[Theory]
+	[InlineData([new string[0]])]
+	[InlineData([new[] { "--" }])]
+	public void Run_WithNoArguments_ReportsMissingName(string[] args)
 	{
 		// Act
-		_ = this.sut.Run([]);
+		var status = this.sut.Run(args);
 
 		// Assert
+		_ = status.Should().Be(2);
 		_ = this.environment.Error.Should().Be(new ShellError("sharpie::source::missing_file", "`.` needs a file to run").Render(color: false));
 	}
 
@@ -274,6 +278,85 @@ public sealed class SourceCommandTests : IDisposable
 
 		// Assert
 		_ = during.Should().Equal("a", "b");
+		_ = this.declare.Positional.Should().Equal("caller");
+	}
+
+	/// <summary>
+	/// Checks that a leading <c>--</c> is skipped, so the next word is the file and the rest its parameters.
+	/// </summary>
+	[Fact]
+	public void Run_WithDoubleDash_SkipsIt()
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.folder, "dash.rc", executable: false, "one\n");
+		IReadOnlyList<string>? during = null;
+		var command = new SourceCommand(".", this.declare, _ =>
+		{
+			during = this.declare.Positional;
+
+			return 0;
+		});
+
+		// Act
+		var status = command.Run(["--", path, "a"]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = during.Should().Equal("a");
+	}
+
+	/// <summary>
+	/// Checks that parameters the file sets with <c>set</c> outside a function stay after it, as in bash, though it
+	/// was given its own.
+	/// </summary>
+	[Fact]
+	public void Run_WithSetInFile_KeepsFilesParameters()
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.folder, "set.rc", executable: false, "one\n");
+		var set = new SetCommand(this.declare, new ShellSettings());
+		var command = new SourceCommand(".", this.declare, _ => set.Run(["--", "x", "y"]));
+
+		this.declare.SetPositional(["caller"]);
+
+		// Act
+		_ = command.Run([path, "a"]);
+
+		// Assert
+		_ = this.declare.Positional.Should().Equal("x", "y");
+	}
+
+	/// <summary>
+	/// Checks that the caller's parameters come back when the file changed them only inside a function or without
+	/// <c>set</c>, as with <c>shift</c>.
+	/// </summary>
+	/// <param name="inFunction"><see langword="true" /> to run <c>set</c> in a function, or <see langword="false" /> to change them directly.</param>
+	[Theory]
+	[InlineData(true)]
+	[InlineData(false)]
+	public void Run_WithOtherChangeInFile_RestoresCallersParameters(bool inFunction)
+	{
+		// Arrange
+		var path = ShellEnvironment.CreateFile(this.folder, "other.rc", executable: false, "one\n");
+		var set = new SetCommand(this.declare, new ShellSettings());
+		var command = new SourceCommand(".", this.declare, _ =>
+		{
+			if (inFunction)
+			{
+				return this.declare.RunFunction([], () => set.Run(["--", "x"]));
+			}
+
+			this.declare.SetPositional(["shifted"]);
+
+			return 0;
+		});
+
+		this.declare.SetPositional(["caller"]);
+
+		// Act
+		_ = command.Run([path, "a", "b"]);
+
+		// Assert
 		_ = this.declare.Positional.Should().Equal("caller");
 	}
 

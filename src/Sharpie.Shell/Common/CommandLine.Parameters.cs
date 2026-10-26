@@ -677,14 +677,15 @@ internal static partial class CommandLine
 	}
 
 	/// <summary>
-	/// A <c>${...}</c> that can't expand, like <c>${X:?}</c> with <c>X</c> unset, which stops the command.
+	/// A <c>${...}</c> that can't expand, like <c>${X:?}</c> with <c>X</c> unset, which stops the command. Arithmetic
+	/// that fails and <c>exit</c> or <c>return</c> with too many arguments throw it too, as bash skips the line for them.
 	/// </summary>
 	/// <param name="error">What went wrong, pointing at the <c>${...}</c>.</param>
 	/// <param name="fatal">
 	/// <see langword="true" /> for <c>${X:?}</c> and an unset name an arithmetic expression reads under <c>set -u</c>,
 	/// which end a shell that isn't interactive with 127, as bash's do.
 	/// </param>
-	[SuppressMessage("Design", "CA1032:Implement standard exception constructors", Justification = "Only expansion throws it, and always with a report.")]
+	[SuppressMessage("Design", "CA1032:Implement standard exception constructors", Justification = "Only the shell throws it, and always with a report.")]
 	internal sealed class ExpansionError(ShellError error, bool fatal) : Exception(error.ArgumentNotNull().Summary)
 	{
 		/// <summary>

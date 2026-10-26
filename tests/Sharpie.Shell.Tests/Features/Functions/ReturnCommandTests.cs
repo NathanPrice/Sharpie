@@ -75,6 +75,23 @@ public sealed class ReturnCommandTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that more than one status skips the rest of the line, out past the function, with an error that names
+	/// <c>return</c>.
+	/// </summary>
+	[Fact]
+	public void Run_WithTooManyArguments_SkipsTheLine()
+	{
+		// Arrange
+		var sut = new ReturnCommand(this.declare, () => false);
+
+		// Act
+		var act = () => this.declare.RunFunction([], () => ReturnCommand.Catch(() => sut.Run(["1", "2"])));
+
+		// Assert
+		_ = act.Should().Throw<CommandLine.ExpansionError>().Which.Error.Code.Should().Be("sharpie::return::too_many_arguments");
+	}
+
+	/// <summary>
 	/// Checks that outside a function and a sourced file <c>return</c> prints an error and gives 2, as bash does.
 	/// </summary>
 	[Fact]

@@ -181,8 +181,8 @@ internal static class CommandList
 	/// </param>
 	/// <returns>
 	/// The status of the last command that ran, or <see cref="UnsupportedStatus" /> after printing the error when the
-	/// line can't be parsed, before any of it runs. A line that isn't finished is such an error, as bash's
-	/// "unexpected end of file" is.
+	/// line can't be parsed, before any of it runs. A line that isn't finished, a quote left open included, is such an
+	/// error, as bash's "unexpected end of file" is.
 	/// </returns>
 	public static int Run(string line, int status, ShellHooks hooks, Action<int>? starting = null)
 	{
@@ -193,6 +193,13 @@ internal static class CommandList
 		if (parsed.Error is { } error)
 		{
 			error.Write();
+
+			return UnsupportedStatus;
+		}
+
+		if (parsed.OpenQuote is { } quote)
+		{
+			new ShellError("sharpie::parser::unclosed_quote", $"`{quote}` is never closed") { Help = $"add the closing {quote}" }.Write();
 
 			return UnsupportedStatus;
 		}

@@ -216,6 +216,7 @@ internal static class CompoundCommands
 		var variables = declare.Variables.ToDictionary();
 		var restoreDynamic = declare.SaveDynamic();
 		var locals = declare.LocalCount;
+		var sets = declare.PositionalSetCount;
 		var functions = commands.ToDictionary();
 		var aliasValues = aliases.Aliases.ToDictionary();
 		var environment = Environment.GetEnvironmentVariables();
@@ -266,6 +267,7 @@ internal static class CompoundCommands
 
 			restoreDynamic();
 			declare.Restore(variables, locals);
+			declare.PositionalSetCount = sets;
 			commands.Clear();
 
 			foreach (var (name, command) in functions)

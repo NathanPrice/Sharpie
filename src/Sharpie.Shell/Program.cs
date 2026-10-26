@@ -396,9 +396,9 @@ internal static class Program
 	}
 
 	/// <summary>
-	/// Reads the bodies of the here-documents <paramref name="line" /> starts, and the rest of a compound command or a
-	/// line that ends in <c>&amp;&amp;</c>, <c>||</c> or <c>|</c>, a line at a time after a <c>&gt; </c> prompt, until
-	/// the command is whole.
+	/// Reads the bodies of the here-documents <paramref name="line" /> starts, and the rest of a compound command, a
+	/// quote, <c>$(</c> or backquote left open, or a line that ends in <c>&amp;&amp;</c>, <c>||</c> or <c>|</c>, a line
+	/// at a time after a <c>&gt; </c> prompt, until the command is whole.
 	/// </summary>
 	/// <param name="line">The line just read.</param>
 	/// <param name="editor">The line editor, or <see langword="null" /> for plain lines from standard input.</param>
@@ -409,7 +409,7 @@ internal static class Program
 	[SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters", Justification = "bash's PS2 prompt, the same in every language, like the $ prompt.")]
 	private static string? ReadBodies(string line, LineEditor? editor)
 	{
-		while (CommandList.NeedsMoreLines(line))
+		while (CommandList.NeedsMoreLines(line) || CommandList.Unfinished(line) is not null)
 		{
 			if (editor is null)
 			{
