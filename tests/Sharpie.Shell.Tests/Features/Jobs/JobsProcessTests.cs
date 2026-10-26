@@ -175,7 +175,8 @@ public sealed class JobsProcessTests
 	}
 
 	/// <summary>
-	/// Checks that SIGINT, what Ctrl+C sends, ends <c>wait</c> with 130 and leaves the job running for <c>kill</c>.
+	/// Checks that SIGINT, what Ctrl+C sends, ends <c>wait</c> with 130 in an interactive shell and leaves the job
+	/// running for <c>kill</c>.
 	/// </summary>
 	[Fact]
 	public async Task Shell_WhenInterruptedDuringWait_GivesInterruptedAndKeepsJob()
@@ -187,7 +188,8 @@ public sealed class JobsProcessTests
 			return;
 		}
 
-		using var shell = ShellProcess.Start();
+		// A shell that isn't interactive ends on SIGINT, as bash does.
+		using var shell = ShellProcess.Start(arguments: ["-i", "--norc"]);
 
 		await shell.StandardInput.WriteAsync("sleep 30 &\nwait\necho $?\nkill %1\necho $?\nexit\n").ConfigureAwait(true);
 
@@ -201,9 +203,9 @@ public sealed class JobsProcessTests
 
 		// Assert
 		_ = exited.Should().BeTrue();
-		// The job's Exit 143 line lands before the prompt after kill or the one after echo, depending on when the shell
-		// sees it end.
-		_ = (await output.ConfigureAwait(true)).Should().MatchRegex(@"^\$ \$ \$ 130\n\$ (\[1\]\+  Exit 143 +sleep 30\n)?\$ 0\n");
+		// An interactive shell prints the job's number and pid, as bash does. The job's Exit 143 line lands before the
+		// prompt after kill or the one after echo, depending on when the shell sees it end.
+		_ = (await output.ConfigureAwait(true)).Should().MatchRegex(@"^\$ \[1\] \d+\n\$ \$ 130\n\$ (\[1\]\+  Exit 143 +sleep 30\n)?\$ 0\n");
 	}
 
 	/// <summary>

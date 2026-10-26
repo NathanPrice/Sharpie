@@ -678,6 +678,20 @@ internal static unsafe partial class NativeMethods
 	internal static partial nint SetSignalHandler(int signal, nint handler);
 
 	/// <summary>
+	/// Sets what happens when <paramref name="signal" /> arrives, keeping the whole action, flags included, unlike
+	/// <see cref="SetSignalHandler" />.
+	/// </summary>
+	/// <param name="signal">The signal number.</param>
+	/// <param name="action">The new <c>struct sigaction</c>, or null to only read the current one.</param>
+	/// <param name="old">Receives the action from before, or null.</param>
+	/// <returns>
+	/// 0, or -1 on error.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "sigaction")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	internal static partial int SetSignalAction(int signal, void* action, void* old);
+
+	/// <summary>
 	/// Finds the home folder of the user named <paramref name="user" />, for <c>~user</c>.
 	/// </summary>
 	/// <param name="user">The login name.</param>

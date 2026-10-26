@@ -121,14 +121,25 @@ internal static class CompoundCommands
 		{
 			settings.TestDepth += tested ? 1 : 0;
 
+			int status;
+
 			try
 			{
-				return declare.Status = Program.RunCommand(commands, aliases, declare, settings, command);
+				status = declare.Status = Program.RunCommand(commands, aliases, declare, settings, command);
 			}
 			finally
 			{
 				settings.TestDepth -= tested ? 1 : 0;
 			}
+
+			// A signal that arrives in a subshell waits for the shell itself, as bash's subshell is another process and
+			// the shell runs the trap once the subshell ends.
+			if (SubshellDepth == 0)
+			{
+				TrapCommand.RunPending(settings.Interactive, status);
+			}
+
+			return status;
 		})
 		{
 			Failed = status =>
@@ -141,7 +152,7 @@ internal static class CompoundCommands
 
 				if (settings.ErrExit && settings.TestDepth == 0)
 				{
-					Environment.Exit(status);
+					TrapCommand.Exit(status);
 				}
 			},
 			SetStatus = status => declare.Status = status,
@@ -203,17 +214,23 @@ internal static class CompoundCommands
 	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and functions.</param>
 	/// <param name="settings">The <c>set</c> options.</param>
 	/// <param name="run">What to run, which gives a status.</param>
+	/// <param name="output">
+	/// Where the subshell's <c>EXIT</c> trap writes, or <see langword="null" /> for where commands write now.
+	/// </param>
 	/// <returns>
 	/// The status. An <c>exit</c>, or a failure under <c>set -e</c>, ends only the subshell, with its own status, and
-	/// so do <c>break</c> and <c>continue</c>, and <c>return</c>, whose signal is an <c>exit</c>'s.
+	/// so do <c>break</c> and <c>continue</c>, and <c>return</c>, whose signal is an <c>exit</c>'s. An <c>EXIT</c> trap
+	/// the subshell set runs at its end, and an <c>exit</c> inside it sets the status, as in bash. The traps go back to
+	/// the shell's after.
 	/// </returns>
 	/// <remarks>
 	/// The subshell runs inside the shell's own process rather than a forked one, which .NET can't do safely, so
 	/// whatever it changes is undone here instead. shortcut: <c>ulimit</c> limits aren't put back, and a lowered hard
 	/// limit can't be; save and restore them here if a subshell that changes one is ever needed.
 	/// </remarks>
-	internal static int RunIsolated(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, Func<int> run)
+	internal static int RunIsolated(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, Func<int> run, Stream? output = null)
 	{
+		var traps = TrapCommand.Save();
 		var folder = Directory.GetCurrentDirectory();
 		var variables = declare.Variables.ToDictionary();
 		var restoreDynamic = declare.SaveDynamic();
@@ -238,25 +255,16 @@ internal static class CompoundCommands
 
 		try
 		{
-			return run();
-		}
-		catch (ExitCommand.SubshellExit exit)
-		{
-			return exit.Status;
-		}
-		catch (CommandLine.ExpansionError failure)
-		{
-			// Even ${X:?} ends only the subshell, with 1, as bash's does.
-			failure.Error.Write();
+			var status = Guard(run);
 
-			return 1;
-		}
-		catch (LoopControl)
-		{
-			return 0;
+			return TrapCommand.TakeSubshellExitTrap(traps) is { } exitTrap
+				? Guard(() => Program.WithOutput(output, () => exitTrap(status)))
+				: status;
 		}
 		finally
 		{
+			TrapCommand.Restore(traps);
+
 			try
 			{
 				Directory.SetCurrentDirectory(folder);
@@ -310,6 +318,29 @@ internal static class CompoundCommands
 
 			SubshellDepth--;
 		}
+
+		static int Guard(Func<int> run)
+		{
+			try
+			{
+				return run();
+			}
+			catch (ExitCommand.SubshellExit exit)
+			{
+				return exit.Status;
+			}
+			catch (CommandLine.ExpansionError failure)
+			{
+				// Even ${X:?} ends only the subshell, with 1, as bash's does.
+				failure.Error.Write();
+
+				return 1;
+			}
+			catch (LoopControl)
+			{
+				return 0;
+			}
+		}
 	}
 
 	/// <summary>
@@ -330,12 +361,18 @@ internal static class CompoundCommands
 		// Background programs the list starts copy into it from other threads.
 		var output = Stream.Synchronized(buffer);
 
-		var status = RunIsolated(commands, aliases, declare, settings, () =>
-		{
-			_ = settings.Set("errexit", false);
+		var status = RunIsolated(
+			commands,
+			aliases,
+			declare,
+			settings,
+			() =>
+			{
+				_ = settings.Set("errexit", false);
 
-			return Nested(() => Program.RunLine(commands, aliases, declare, list, output));
-		});
+				return Nested(() => Program.RunLine(commands, aliases, declare, list, output));
+			},
+			output);
 
 		ExternalProgram.WaitForDetached(output);
 

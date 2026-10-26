@@ -62,6 +62,7 @@ internal class ExitCommand(DeclareCommand declare, Func<bool>? inSubshell = null
 	/// <exception cref="SubshellExit">A command substitution is running, which ends with the status.</exception>
 	/// <remarks>
 	/// A first argument that isn't a number gives 2 after an error and leaves the shell running, as bash 5.3 does.
+	/// The shell runs its <c>EXIT</c> trap first, as <see cref="TrapCommand.Exit" /> describes.
 	/// </remarks>
 	public int Run(string[] args)
 	{
@@ -76,7 +77,7 @@ internal class ExitCommand(DeclareCommand declare, Func<bool>? inSubshell = null
 		}
 
 		// Stryker disable once Statement : ending the process would end the test run, so the shell's process tests check it.
-		Environment.Exit(code);
+		TrapCommand.Exit(code);
 
 		return 0;
 	}

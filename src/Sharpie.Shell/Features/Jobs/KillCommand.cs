@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Builtins;
 
 namespace Sharpie.Shell.Features.Jobs;
 
@@ -120,22 +121,25 @@ internal sealed class KillCommand : ICommand
 	/// Reads a signal's name or number.
 	/// </summary>
 	/// <param name="spec">A number, or a name in any case, with or without the <c>SIG</c> prefix.</param>
+	/// <param name="table">The signals to look in, or <see langword="null" /> for <see cref="Signals" />.</param>
 	/// <returns>
 	/// The signal's number, or <see langword="null" /> when this OS has no such signal.
 	/// </returns>
 	/// <remarks>
 	/// Signal 0 sends nothing and only checks that the process exists, which Windows has no way to do.
 	/// </remarks>
-	internal static int? ParseSignal(string spec)
+	internal static int? ParseSignal(string spec, IReadOnlyDictionary<int, string>? table = null)
 	{
+		table ??= Signals;
+
 		if (int.TryParse(spec, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
 		{
-			return Signals.ContainsKey(number) || (number == 0 && !OperatingSystem.IsWindows()) ? number : null;
+			return table.ContainsKey(number) || (number == 0 && !OperatingSystem.IsWindows()) ? number : null;
 		}
 
 		var name = spec.StartsWith("SIG", StringComparison.OrdinalIgnoreCase) ? spec[3..] : spec;
 
-		return Signals.Where(signal => signal.Value.Equals(name, StringComparison.OrdinalIgnoreCase)).Select(signal => (int?)signal.Key).FirstOrDefault();
+		return table.Where(signal => signal.Value.Equals(name, StringComparison.OrdinalIgnoreCase)).Select(signal => (int?)signal.Key).FirstOrDefault();
 	}
 
 	/// <summary>
@@ -216,14 +220,17 @@ internal sealed class KillCommand : ICommand
 	/// number.
 	/// </summary>
 	/// <param name="specs">Signal numbers and names, or none to list them all.</param>
+	/// <param name="table">The signals, or <see langword="null" /> for <see cref="Signals" />.</param>
 	/// <returns>
 	/// 0, or 1 when any of <paramref name="specs" /> isn't a signal.
 	/// </returns>
-	private static int List(string[] specs)
+	internal static int List(string[] specs, IReadOnlyDictionary<int, string>? table = null)
 	{
+		table ??= Signals;
+
 		if (specs.Length == 0)
 		{
-			foreach (var row in Signals.Select(signal => $"{signal.Key,2}) SIG{signal.Value}").Chunk(5))
+			foreach (var row in table.Select(signal => $"{signal.Key,2}) SIG{signal.Value}").Chunk(5))
 			{
 				// bash ends a short last row with a tab too.
 				Console.WriteLine(string.Join('\t', row) + (row.Length < 5 ? "\t" : string.Empty));
@@ -238,8 +245,8 @@ internal sealed class KillCommand : ICommand
 		{
 			// A number past 128 is read as an exit status, so 143 names TERM, as in bash.
 			var answer = int.TryParse(spec, NumberStyles.None, CultureInfo.InvariantCulture, out var number)
-				? Signals.GetValueOrDefault(number > 128 ? number - 128 : number)
-				: ParseSignal(spec)?.ToString(CultureInfo.InvariantCulture);
+				? table.GetValueOrDefault(number > 128 ? number - 128 : number)
+				: ParseSignal(spec, table)?.ToString(CultureInfo.InvariantCulture);
 
 			if (answer is null)
 			{
@@ -316,6 +323,7 @@ internal sealed class KillCommand : ICommand
 	private static bool SendToProcess(int pid, int signal)
 	{
 		string reason;
+		var arrivals = TrapCommand.Arrivals;
 
 		// Stryker disable once Conditional : each OS only takes its own branch, so a test run on one OS can't tell them apart.
 		if (OperatingSystem.IsWindows())
@@ -335,6 +343,12 @@ internal sealed class KillCommand : ICommand
 		}
 		else if (NativeMethods.Kill(pid, signal) == 0)
 		{
+			// The shell's own handler runs on another thread, so its trap would otherwise run a command or more late.
+			if (pid == Environment.ProcessId)
+			{
+				TrapCommand.WaitForArrival(signal, arrivals);
+			}
+
 			return true;
 		}
 		else

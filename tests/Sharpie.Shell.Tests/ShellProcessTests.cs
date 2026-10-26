@@ -105,14 +105,15 @@ public sealed class ShellProcessTests
 	}
 
 	/// <summary>
-	/// Checks that SIGINT, what Ctrl+C sends, stops the running program but leaves the shell running the next
-	/// command.
+	/// Checks that SIGINT, what Ctrl+C sends, stops the running program but leaves an interactive shell running the
+	/// next command.
 	/// </summary>
 	[Fact]
 	public async Task Shell_WhenInterruptedDuringProgram_StopsProgramAndKeepsRunning()
 	{
 		// Act
-		using var shell = ShellProcess.Start();
+		// A shell that isn't interactive ends on SIGINT, as bash does.
+		using var shell = ShellProcess.Start(arguments: ["-i", "--norc"]);
 
 		await shell.StandardInput.WriteAsync("sleep 30\necho done\nexit\n").ConfigureAwait(true);
 
@@ -130,14 +131,14 @@ public sealed class ShellProcessTests
 	}
 
 	/// <summary>
-	/// Checks that SIGINT stops a command substitution waiting on a background program's output, and the shell goes
-	/// on with the next command.
+	/// Checks that SIGINT stops a command substitution waiting on a background program's output, and an interactive
+	/// shell goes on with the next command.
 	/// </summary>
 	[Fact]
 	public async Task Shell_WhenInterruptedDuringSubstitutionWait_StopsWaitingAndKeepsRunning()
 	{
 		// Act
-		using var shell = ShellProcess.Start();
+		using var shell = ShellProcess.Start(arguments: ["-i", "--norc"]);
 
 		await shell.StandardInput.WriteAsync("X=$(sleep 10 2> /dev/null &)\necho done\nexit\n").ConfigureAwait(true);
 

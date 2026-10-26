@@ -144,13 +144,18 @@ internal static class Program
 
 		var commands = new Dictionary<string, ICommand>();
 		var terminal = !Console.IsInputRedirected && !Console.IsErrorRedirected;
+		var interactive = options.IsInteractive(terminal);
 
-		// Ctrl+C stops the running program but not the shell. Without this, .NET ends the shell on SIGINT. On a terminal
-		// the line discipline already sends SIGINT to the program, so passing it on would make a second one.
+		// Ctrl+C stops the running program, and the shell only when it isn't interactive and Ctrl+C wasn't for the
+		// program, as TrapCommand works out. Without this, .NET ends the shell at once on SIGINT, before an EXIT trap.
+		// On a terminal the line discipline already sends SIGINT to the program, so passing it on would make a second
+		// one.
 		using var interrupt = PosixSignalRegistration.Create(PosixSignal.SIGINT, context =>
 		{
 			context.Cancel = true;
-			ExternalProgram.CountInterrupt();
+
+			// Before the program is told, while it still counts as running.
+			TrapCommand.Arrived(NativeMethods.SignalInterrupt, endsShell: !interactive);
 			ExternalProgram.StopWaiting();
 
 			if (!terminal)
@@ -171,7 +176,6 @@ internal static class Program
 		declare.RaiseShellLevel();
 
 		var aliases = (AliasCommand)commands["alias"];
-		var interactive = options.IsInteractive(terminal);
 
 		var settings = ((SetCommand)commands["set"]).Settings;
 
@@ -210,15 +214,15 @@ internal static class Program
 
 			if (options.Command is null)
 			{
-				return BuiltinCommands.CreateScriptRunner(declare, line => RunLine(commands, aliases, declare, line)).Run([options.ScriptFile!, .. options.Arguments]);
+				return TrapCommand.RunExitTrap(BuiltinCommands.CreateScriptRunner(declare, line => RunLine(commands, aliases, declare, line)).Run([options.ScriptFile!, .. options.Arguments]));
 			}
 
 			declare.LineNumber = 1;
 
-			return RunLine(commands, aliases, declare, options.Command);
+			return TrapCommand.RunExitTrap(RunLine(commands, aliases, declare, options.Command));
 		}
 
-		return RunPrompts(commands, declare, aliases, terminal, interactive && !options.NoRc);
+		return TrapCommand.RunExitTrap(RunPrompts(commands, declare, aliases, terminal, interactive && !options.NoRc));
 	}
 
 	/// <summary>
@@ -260,6 +264,7 @@ internal static class Program
 	private static int RunPrompts(Dictionary<string, ICommand> commands, DeclareCommand declare, AliasCommand aliases, bool terminal, bool runRcFile)
 	{
 		var variables = declare.Variables;
+		var settings = ((SetCommand)commands["set"]).Settings;
 
 		// The window features below are off when the variable is unset, so the shell's own process tests never touch
 		// the keyring.
@@ -313,6 +318,7 @@ internal static class Program
 			// Every path through the loop comes back here, so a finished job's Done line lands after the last
 			// command's output and before the next prompt.
 			JobsCommand.Reap(listRunning: false);
+			TrapCommand.RunPending(settings.Interactive, declare.Status);
 
 			var line = editor is null ? Prompt(inWindow) : ReadInteractive(editor, took, blankLine);
 
@@ -612,16 +618,30 @@ internal static class Program
 	/// </remarks>
 	internal static int RunLine(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line, Stream? output = null)
 	{
-		var outer = StandardOutput;
-
 		// An eval or $(...) counts from the line it's on, as bash's eval does.
 		var first = declare.LineNumber;
+
+		return WithOutput(output, () => declare.Status = CompoundCommands.RunList(commands, aliases, declare, line, first));
+	}
+
+	/// <summary>
+	/// Runs <paramref name="run" /> with <see cref="StandardOutput" /> set to <paramref name="output" />, then puts it
+	/// back.
+	/// </summary>
+	/// <param name="output">Where commands write, or <see langword="null" /> to leave it as it is.</param>
+	/// <param name="run">What to run, which gives a status.</param>
+	/// <returns>
+	/// The status <paramref name="run" /> gives.
+	/// </returns>
+	internal static int WithOutput(Stream? output, Func<int> run)
+	{
+		var outer = StandardOutput;
 
 		StandardOutput = output ?? StandardOutput;
 
 		try
 		{
-			return declare.Status = CompoundCommands.RunList(commands, aliases, declare, line, first);
+			return run();
 		}
 		finally
 		{
@@ -788,7 +808,8 @@ internal static class Program
 			using var buffer = last < end - 1 ? new MemoryStream() : null;
 
 			var targets = last > 0 ? PipeEnd(redirections[last].Targets) : redirections[last].Targets;
-			var status = CompoundCommands.RunIsolated(commands, aliases, declare, settings, () => RunBuiltin(Find(names[last])!, declare, stages[last][1..], assignments[last], buffer ?? output, targets));
+			var stageOutput = buffer ?? output;
+			var status = CompoundCommands.RunIsolated(commands, aliases, declare, settings, () => RunBuiltin(Find(names[last])!, declare, stages[last][1..], assignments[last], stageOutput, targets), stageOutput);
 
 			if (buffer is null)
 			{
@@ -1089,7 +1110,7 @@ internal static class Program
 
 		if (!interactive)
 		{
-			Environment.Exit(status);
+			TrapCommand.Exit(status);
 		}
 
 		return 1;

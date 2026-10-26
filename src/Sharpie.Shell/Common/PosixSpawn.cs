@@ -2,6 +2,7 @@ using System.Collections;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+using Sharpie.Shell.Features.Builtins;
 
 namespace Sharpie.Shell.Common;
 
@@ -41,8 +42,8 @@ internal static unsafe class PosixSpawn
 	/// </returns>
 	/// <exception cref="Win32Exception">The program couldn't be started, for example because it isn't a program.</exception>
 	/// <remarks>
-	/// The signals the shell ignores or catches for itself go back to their defaults in the program, and none are
-	/// blocked, so Ctrl+C, Ctrl+Z and a closed pipe act on it normally. The environment is .NET's copy, which holds
+	/// The signals the shell ignores or catches for itself go back to their defaults in the program, except the ones
+	/// <c>trap ''</c> ignores, which the program ignores too, as in bash. None are blocked, so Ctrl+C, Ctrl+Z and a closed pipe act on it normally. The environment is .NET's copy, which holds
 	/// changes the shell made with <see cref="Environment.SetEnvironmentVariable(string, string)" /> that the C
 	/// library's own copy doesn't. <paramref name="assignments" /> are written over it here rather than set in the
 	/// shell's environment first, because .NET deletes a variable set to an empty value, and
@@ -130,7 +131,7 @@ internal static unsafe class PosixSpawn
 			{
 				NativeMethods.SignalInterrupt, NativeMethods.SignalQuit, NativeMethods.SignalPipe, NativeMethods.SignalChild,
 				NativeMethods.SignalStop, NativeMethods.SignalTerminalInput, NativeMethods.SignalTerminalOutput,
-			})
+			}.Where(signal => !TrapCommand.IsIgnored(signal)))
 			{
 				_ = NativeMethods.SignalSetAdd(signals, signal);
 			}

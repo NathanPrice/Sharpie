@@ -1,6 +1,7 @@
 using System.Globalization;
 using FluentAssertions;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Features.Jobs;
 
 namespace Sharpie.Shell.Tests.Features.Jobs;
@@ -146,7 +147,7 @@ public sealed class WaitCommandTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that Ctrl+C, which the shell counts, ends the wait with 130 and leaves the job running in the table.
+	/// Checks that Ctrl+C, which the shell catches, ends the wait with 130 and leaves the job running in the table.
 	/// </summary>
 	/// <param name="args">The arguments, split on spaces; <c>%1</c> names the job.</param>
 	[Theory]
@@ -159,15 +160,19 @@ public sealed class WaitCommandTests : IDisposable
 		var waiting = Task.Run(() => this.sut.Run(args.Split(' ', StringSplitOptions.RemoveEmptyEntries)));
 
 		// Act
-		// Counted until the wait sees it, since the wait only notices a count that changes after it started.
+		// Sent until the wait sees it, since the wait only notices a signal that arrives after it started.
 		while (!waiting.IsCompleted)
 		{
-			ExternalProgram.CountInterrupt();
+			TrapCommand.Arrived(2, endsShell: false);
 			await Task.Delay(50).ConfigureAwait(true);
 		}
 
+		// Empties the queue, which in an interactive shell does nothing with Ctrl+C, so a later test can't end the test
+		// run with it.
+		TrapCommand.RunPending(interactive: true, 0);
+
 		// Assert
-		_ = (await waiting.ConfigureAwait(true)).Should().Be(WaitCommand.Interrupted);
+		_ = (await waiting.ConfigureAwait(true)).Should().Be(130);
 		_ = ExternalProgram.Jobs.Should().Equal(job);
 	}
 

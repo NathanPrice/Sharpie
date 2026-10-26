@@ -1,5 +1,6 @@
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Builtins;
 
 namespace Sharpie.Shell.Features.Jobs;
 
@@ -7,18 +8,21 @@ namespace Sharpie.Shell.Features.Jobs;
 /// Waits for background jobs to finish, as POSIX <c>wait</c> does.
 /// </summary>
 /// <remarks>
-/// The jobs stay in the background and never get the terminal, unlike with <c>fg</c>. Ctrl+C ends the wait with
-/// status 130 and leaves them running.
+/// The jobs stay in the background and never get the terminal, unlike with <c>fg</c>. A signal the shell catches,
+/// like Ctrl+C's or a trapped one, ends the wait with 128 plus its number, as in bash, and leaves them running.
 /// </remarks>
 internal sealed class WaitCommand : ICommand
 {
-	/// <summary>
-	/// The status for a wait that Ctrl+C ended, 128 plus SIGINT's number, as in bash.
-	/// </summary>
-	internal const int Interrupted = 130;
-
 	// How often the jobs are checked: soon enough that the wait ends right after the job, rarely enough to cost nothing.
 	private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(10);
+
+	/// <summary>
+	/// Gets the status for a wait that a signal ended.
+	/// </summary>
+	/// <value>
+	/// 128 plus the signal's number: 130 for Ctrl+C.
+	/// </value>
+	private static int Interrupted => 128 + TrapCommand.LastSignal;
 
 	/// <inheritdoc />
 	public string Name => "wait";
@@ -87,15 +91,15 @@ internal sealed class WaitCommand : ICommand
 	/// </summary>
 	/// <param name="jobs">The jobs to wait for.</param>
 	/// <returns>
-	/// The last job's status, or <see langword="null" /> when Ctrl+C ended the wait first.
+	/// The last job's status, or <see langword="null" /> when a signal ended the wait first.
 	/// </returns>
 	private static int? Wait(IReadOnlyList<Job> jobs)
 	{
-		var interrupts = ExternalProgram.InterruptCount;
+		var arrivals = TrapCommand.Arrivals;
 
 		while (jobs.Any(job => !job.HasExited && job.State != JobState.Stopped))
 		{
-			if (ExternalProgram.InterruptCount != interrupts)
+			if (TrapCommand.Arrivals != arrivals)
 			{
 				return null;
 			}

@@ -97,6 +97,7 @@ internal static class BuiltinCommands
 			dot,
 			source,
 			new EvalCommand(runLine),
+			new TrapCommand(runLine, declare),
 			new TestCommand("test", declare),
 			new TestCommand("[", declare),
 			new ReturnCommand(declare, () => dot.Running || source.Running),

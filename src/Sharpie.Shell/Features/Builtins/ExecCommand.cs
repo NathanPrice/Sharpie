@@ -242,7 +242,8 @@ internal sealed class ExecCommand : ICommand
 	/// Only returns when the program couldn't start: the error number, with the shell put back as it was.
 	/// </returns>
 	/// <remarks>
-	/// Ignored signals stay ignored in the new program, so the ones the shell ignores go back to their defaults, and
+	/// Ignored signals stay ignored in the new program, so the ones the shell ignores go back to their defaults, apart
+	/// from the ones <c>trap ''</c> ignores, and
 	/// none are left blocked, as <see cref="PosixSpawn" /> does for the programs it starts. Caught ones reset by
 	/// themselves.
 	/// </remarks>
@@ -261,7 +262,7 @@ internal sealed class ExecCommand : ICommand
 			{
 				NativeMethods.SignalPipe, NativeMethods.SignalQuit, NativeMethods.SignalStop,
 				NativeMethods.SignalTerminalInput, NativeMethods.SignalTerminalOutput,
-			}.Select(signal => (Signal: signal, Old: NativeMethods.SetSignalHandler(signal, 0))).ToArray();
+			}.Where(signal => !TrapCommand.IsIgnored(signal)).Select(signal => (Signal: signal, Old: NativeMethods.SetSignalHandler(signal, 0))).ToArray();
 
 			_ = NativeMethods.SignalSetEmpty(empty);
 			_ = NativeMethods.SetSignalMask(NativeMethods.SignalMaskReplace, empty, oldMask);

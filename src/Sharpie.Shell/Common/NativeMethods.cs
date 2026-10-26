@@ -103,6 +103,20 @@ internal static partial class NativeMethods
 	}
 
 	/// <summary>
+	/// Makes this process ignore Ctrl+C, or stop ignoring it. Programs started after inherit it, which is how Windows
+	/// ignores a signal.
+	/// </summary>
+	/// <param name="handler">0, for the setting that the next parameter turns on or off.</param>
+	/// <param name="ignore"><see langword="true" /> to ignore Ctrl+C.</param>
+	/// <returns>
+	/// <see langword="true" /> on success.
+	/// </returns>
+	[LibraryImport("kernel32")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	internal static partial bool SetConsoleCtrlHandler(nint handler, [MarshalAs(UnmanagedType.Bool)] bool ignore);
+
+	/// <summary>
 	/// Replaces one of the process's standard handles.
 	/// </summary>
 	/// <param name="id">Which handle: -10 for input, -11 for output, -12 for error.</param>
