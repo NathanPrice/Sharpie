@@ -314,6 +314,9 @@ internal static class Program
 		// The lines typed so far, here-document bodies included, for $LINENO.
 		var typed = 0;
 
+		// The commands run so far, counting the one about to be read, for \# in PS1.
+		var commandNumber = 1;
+
 		while (true)
 		{
 			// Every path through the loop comes back here, so a finished job's Done line lands after the last
@@ -321,7 +324,8 @@ internal static class Program
 			JobsCommand.Reap(listRunning: false);
 			TrapCommand.RunPending(settings.Interactive, declare.Status);
 
-			var line = editor is null ? Prompt(inWindow) : ReadInteractive(editor, took, blankLine);
+			var ps1 = ExpandPrompt(commands, aliases, declare, commandNumber);
+			var line = editor is null ? Prompt(inWindow, ps1) : ReadInteractive(editor, took, blankLine, ps1);
 
 			// Standard input closed, like Ctrl+D in bash. The window or a test can close the pipe without sending exit,
 			// and looping on would spin forever.
@@ -371,23 +375,73 @@ internal static class Program
 
 			_ = RunLine(commands, aliases, declare, line);
 			took = clock.Elapsed;
+			commandNumber++;
 			blankLine = line.Trim() != "clear";
 		}
 
 		// Writes the prompt and reads one line. Returns null once standard input is closed.
-		static string? Prompt(bool inWindow)
+		static string? Prompt(bool inWindow, string? ps1)
 		{
+			var prompt = ps1 is null ? "$ " : PromptString.Visible(ps1).Text;
+
 			// Written in one call with the prompt so whatever reads the pipe gets them together.
 			Console.Write(inWindow
-				? $"\e]7;{new Uri(Directory.GetCurrentDirectory()).AbsoluteUri}\a$ "
-				: "$ ");
+				? $"\e]7;{new Uri(Directory.GetCurrentDirectory()).AbsoluteUri}\a{prompt}"
+				: prompt);
 
 			return Console.ReadLine();
 		}
 
-		// Draws the header and reads one edited line.
-		static string? ReadInteractive(LineEditor editor, TimeSpan took, bool blankLine) =>
-			ReadEdited(editor, PromptHeader.Build(Directory.GetCurrentDirectory(), took, Console.WindowWidth, blankLine), continuation: false);
+		// Draws the header and reads one edited line. A PS1 replaces the header and the symbol, with no blank line
+		// above it, as bash adds none.
+		static string? ReadInteractive(LineEditor editor, TimeSpan took, bool blankLine, string? ps1)
+		{
+			var directory = Directory.GetCurrentDirectory();
+
+			if (ps1 is null)
+			{
+				return ReadEdited(editor, PromptHeader.Build(directory, took, Console.WindowWidth, blankLine), continuation: false);
+			}
+
+			var (header, prompt) = PromptString.Split(ps1);
+
+			return ReadEdited(editor, PromptHeader.Start(directory, Console.WindowWidth) + header, continuation: false, prompt);
+		}
+	}
+
+	/// <summary>
+	/// Runs <c>PROMPT_COMMAND</c> and expands <c>PS1</c>, as bash does before each prompt.
+	/// </summary>
+	/// <param name="commands">The builtins, by name.</param>
+	/// <param name="aliases">The <c>alias</c> builtin.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables and the last status.</param>
+	/// <param name="commandNumber">The number of the command about to be read, for <c>\#</c>.</param>
+	/// <returns>
+	/// The prompt from <see cref="PromptString.Expand" />, or <see langword="null" /> while <c>PS1</c> is unset.
+	/// </returns>
+	/// <remarks>
+	/// Both see the last command's <c>$?</c>, which is put back after each, so the next command's <c>$?</c> is still
+	/// the one the user ran.
+	/// </remarks>
+	private static string? ExpandPrompt(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, int commandNumber)
+	{
+		var variables = declare.Variables;
+		var status = declare.Status;
+
+		if (CommandLine.Lookup(variables, "PROMPT_COMMAND") is { Length: > 0 } promptCommand)
+		{
+			_ = RunLine(commands, aliases, declare, promptCommand);
+			declare.Status = status;
+		}
+
+		var settings = ((SetCommand)commands["set"]).Settings;
+		var ps1 = CommandLine.IsSet(variables, "PS1")
+			? PromptString.Expand(CommandLine.Lookup(variables, "PS1"), Directory.GetCurrentDirectory(), variables, list => CompoundCommands.Substitute(commands, aliases, declare, settings, list).Output, ((HistoryCommand)commands["history"]).Lines.Count + 1, commandNumber)
+			: null;
+
+		declare.Status = status;
+
+		return ps1;
 	}
 
 	/// <summary>
@@ -396,6 +450,7 @@ internal static class Program
 	/// <param name="editor">The editor.</param>
 	/// <param name="header">The text drawn above the prompt.</param>
 	/// <param name="continuation"><see langword="true" /> for a line of a here-document's body.</param>
+	/// <param name="prompt">What's drawn in front of the line, as <see cref="LineEditor.ReadLine" /> takes it.</param>
 	/// <returns>
 	/// What <see cref="LineEditor.ReadLine" /> gives.
 	/// </returns>
@@ -403,13 +458,13 @@ internal static class Program
 	/// Ctrl+C is read as a key only while the line is being edited, so programs the line starts still get it as
 	/// SIGINT, or as a console Ctrl+C event on Windows.
 	/// </remarks>
-	private static string? ReadEdited(LineEditor editor, string header, bool continuation)
+	private static string? ReadEdited(LineEditor editor, string header, bool continuation, string prompt = PromptHeader.Symbol)
 	{
 		Console.TreatControlCAsInput = true;
 
 		try
 		{
-			return editor.ReadLine(header, continuation);
+			return editor.ReadLine(header, continuation, prompt);
 		}
 		finally
 		{

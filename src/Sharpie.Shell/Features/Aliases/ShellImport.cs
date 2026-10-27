@@ -47,7 +47,11 @@ internal static class ShellImport
 	/// <summary>
 	/// The variables that describe the asking shell itself rather than the user's setup, so they're never copied.
 	/// </summary>
-	private static readonly HashSet<string> Skipped = new(["PWD", "OLDPWD", "SHLVL", "_"], StringComparer.Ordinal);
+	/// <remarks>
+	/// The prompt variables are written in that shell's own language. zsh setups often export
+	/// <c>PROMPT_COMMAND='history -a'</c> for bash, which would fail here before every prompt.
+	/// </remarks>
+	private static readonly HashSet<string> Skipped = new(["PWD", "OLDPWD", "SHLVL", "_", "PS1", "PROMPT_COMMAND"], StringComparer.Ordinal);
 
 	/// <summary>
 	/// Syntax an imported alias value can't use here: command lists, <c>&amp;&amp;</c>, <c>||</c> and command

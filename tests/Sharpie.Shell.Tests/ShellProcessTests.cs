@@ -224,6 +224,36 @@ public sealed class ShellProcessTests
 	}
 
 	/// <summary>
+	/// Checks that <c>PROMPT_COMMAND</c> runs before each prompt and <c>PS1</c> replaces <c>$ </c>, both seeing the last
+	/// command's <c>$?</c>, which is put back afterwards as bash does.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithPs1AndPromptCommand_KeepsLastStatus()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("PS1='[$?] '\nPROMPT_COMMAND='echo pc $?; (exit 3)'\nfalse\necho $?\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ [0] pc 0\n[0] pc 1\n[1] 1\npc 0\n[0] ");
+		_ = run.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Checks that a command substitution in <c>PS1</c> changes <c>$?</c> only inside the prompt, as in bash, and that
+	/// <c>\#</c> counts the commands.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithSubstitutionInPs1_KeepsLastStatus()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("PS1='\\#:$(exit 4)$? '\necho $?\nexit\n").ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ 2:4 0\n3:4 ");
+		_ = run.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
 	/// Builds the environment the window gives the shell, with <paramref name="folder" /> standing in for the user's
 	/// data folder and <c>PATH</c>.
 	/// </summary>

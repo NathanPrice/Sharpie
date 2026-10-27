@@ -67,6 +67,10 @@ internal sealed partial class LineEditor(
 	private string suggestion = string.Empty;
 	private bool continuation;
 
+	// The prompt this line is read after, markers removed, and the columns it takes.
+	private string prompt = string.Empty;
+	private int promptWidth;
+
 	// What the key before this one left for it to act on.
 	private LastKey last;
 
@@ -102,16 +106,21 @@ internal sealed partial class LineEditor(
 	/// <see langword="true" /> for a line of a here-document's body, which gets <c>&gt; </c> as its prompt and no
 	/// coloring or suggestion, since it's text rather than a command.
 	/// </param>
+	/// <param name="prompt">
+	/// What's drawn in front of the line, with any text that takes no columns between <c>\x01</c> and <c>\x02</c>.
+	/// Unused for a <paramref name="continuation" /> line.
+	/// </param>
 	/// <returns>
 	/// The line, an empty line after Ctrl+C, or <see langword="null" /> after Ctrl+D on an empty line, which ends
 	/// the shell as end of input does. For a <paramref name="continuation" /> line, Ctrl+C also gives
 	/// <see langword="null" />, so the caller can drop the whole command.
 	/// </returns>
-	public string? ReadLine(string header, bool continuation = false)
+	public string? ReadLine(string header, bool continuation = false, string prompt = PromptHeader.Symbol)
 	{
 		_ = header.ArgumentNotNull();
 
 		this.continuation = continuation;
+		(this.prompt, this.promptWidth) = PromptString.Visible(continuation ? ContinuationPrompt : prompt);
 		_ = this.line.Clear();
 		this.cursor = 0;
 		this.cursorRow = 0;
@@ -724,9 +733,7 @@ internal sealed partial class LineEditor(
 			_ = screen.Append(CultureInfo.InvariantCulture, $"\e[{this.cursorRow}A");
 		}
 
-		// The continuation prompt is as wide as the symbol, so one width holds for both.
-		var (prompt, promptWidth) = this.query is not null ? (this.SearchPrompt, this.SearchPrompt.Length)
-			: (this.continuation ? ContinuationPrompt : PromptHeader.Symbol, PromptHeader.SymbolWidth);
+		var (prompt, promptWidth) = this.query is not null ? (this.SearchPrompt, this.SearchPrompt.Length) : (this.prompt, this.promptWidth);
 
 		_ = screen.Append("\r\e[J").Append(prompt);
 

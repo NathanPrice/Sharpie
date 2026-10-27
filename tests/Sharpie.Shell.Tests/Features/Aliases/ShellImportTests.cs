@@ -24,14 +24,14 @@ public sealed class ShellImportTests : IDisposable
 	private readonly AliasCommand aliases = new();
 
 	/// <summary>
-	/// Checks that the variables between the first two markers are read and the ones about the asking shell itself
-	/// are left out.
+	/// Checks that the variables between the first two markers are read and the ones about the asking shell itself,
+	/// its prompt among them, are left out.
 	/// </summary>
 	[Fact]
 	public void Parse_WithEnvironment_KeepsUserVariables()
 	{
 		// Arrange
-		var output = $"{Marker}SAMPLE=a=b\0PWD=/x\0OLDPWD=/y\0SHLVL=2\0_=/bin/env\0EMPTY=\0{Marker}{Marker}";
+		var output = $"{Marker}SAMPLE=a=b\0PWD=/x\0OLDPWD=/y\0SHLVL=2\0_=/bin/env\0PS1=%n \0PROMPT_COMMAND=history -a\0EMPTY=\0{Marker}{Marker}";
 
 		// Act
 		var result = ShellImport.Parse(output, Marker);

@@ -10,7 +10,7 @@ namespace Sharpie.Shell.Tests.Features.LineEditing;
 [Collection(GlobalState.Name)]
 public sealed partial class LineEditorTests : IDisposable
 {
-	private const string Prompt = PromptHeader.Symbol;
+	private const string Prompt = "\e[1;34m❯\e[0m ";
 
 	private readonly Queue<ConsoleKeyInfo> keys = new();
 	private readonly StringWriter output = new();
@@ -204,6 +204,24 @@ public sealed partial class LineEditorTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a custom prompt is drawn without its <c>\[ \]</c> markers and that the cursor lands after the
+	/// columns it shows, not counting its color codes.
+	/// </summary>
+	[Fact]
+	public void ReadLine_CustomPrompt_PutsCursorAfterVisibleText()
+	{
+		// Arrange
+		this.Type("ab");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		_ = this.sut.ReadLine(string.Empty, prompt: "\u0001\e[32m\u0002me:~$\u0001\e[0m\u0002 ");
+
+		// Assert
+		_ = this.output.ToString().Should().EndWith("\r\e[J\e[32mme:~$\e[0m \e[31mab\e[0m\r\e[8C\r\n").And.NotContainAny("\u0001", "\u0002");
+	}
+
+	/// <summary>
 	/// Checks that Ctrl+C while reading a here-document's body gives no line, so the whole command is dropped.
 	/// </summary>
 	[Fact]
@@ -235,7 +253,7 @@ public sealed partial class LineEditorTests : IDisposable
 
 		// Assert
 		_ = line.Should().BeNull();
-		_ = this.output.ToString().Should().EndWith($"{PromptHeader.Symbol}\r\e[2C\r\n");
+		_ = this.output.ToString().Should().EndWith($"{Prompt}\r\e[2C\r\n");
 	}
 
 	/// <summary>
@@ -310,7 +328,7 @@ public sealed partial class LineEditorTests : IDisposable
 		_ = this.sut.ReadLine(string.Empty);
 
 		// Assert
-		_ = this.Frame(1).Should().Be($"\r\e[J{PromptHeader.Symbol}\e[32mfi\e[0m\e[30mrst\e[0m\r\e[4C");
+		_ = this.Frame(1).Should().Be($"\r\e[J{Prompt}\e[32mfi\e[0m\e[30mrst\e[0m\r\e[4C");
 	}
 
 	/// <summary>
@@ -371,7 +389,7 @@ public sealed partial class LineEditorTests : IDisposable
 
 		// Assert
 		_ = line.Should().Be("fi");
-		_ = this.Frame(2).Should().Be($"\r\e[J{PromptHeader.Symbol}\e[32mfi\e[0m\r\e[4C\r\n");
+		_ = this.Frame(2).Should().Be($"\r\e[J{Prompt}\e[32mfi\e[0m\r\e[4C\r\n");
 	}
 
 	/// <summary>

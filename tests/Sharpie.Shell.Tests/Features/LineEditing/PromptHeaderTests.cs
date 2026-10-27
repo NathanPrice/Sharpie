@@ -62,6 +62,20 @@ public sealed class PromptHeaderTests
 	}
 
 	/// <summary>
+	/// Checks that what every prompt starts with reports the folder to the terminal, then fills a row with spaces and
+	/// returns over them, so output without a final newline doesn't swallow the prompt.
+	/// </summary>
+	[Fact]
+	public void Start_Folder_ReportsFolderThenClearsRow()
+	{
+		// Act
+		var start = PromptHeader.Start("/tmp", 4);
+
+		// Assert
+		_ = start.Should().Be("\e]7;file:///tmp\a    \r\e[K");
+	}
+
+	/// <summary>
 	/// Checks where folders split into the dimmed parent and the bright name: after the last separator, except for
 	/// the root and the home folder itself, which are shown whole.
 	/// </summary>

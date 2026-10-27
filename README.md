@@ -43,7 +43,9 @@ and mouse reporting all work.
   <kbd>Ctrl</kbd>+<kbd>Y</kbd> to paste back, <kbd>Alt</kbd>+<kbd>B</kbd>/<kbd>F</kbd>/<kbd>D</kbd>/<kbd>Backspace</kbd>
   for words, <kbd>Ctrl</kbd>+<kbd>T</kbd> to swap two characters, <kbd>Alt</kbd>+<kbd>.</kbd> for the last command's
   last word, <kbd>Ctrl</kbd>+<kbd>_</kbd> to undo, and <kbd>Ctrl</kbd>+<kbd>X</kbd> <kbd>Ctrl</kbd>+<kbd>E</kbd> to edit
-  the line in `$VISUAL` or `$EDITOR` and run it.
+  the line in `$VISUAL` or `$EDITOR` and run it. Setting `PS1` replaces the header and the `❯` with your own prompt,
+  read as bash reads it: escapes like `\u`, `\w` and `\$`, `\[ \]` around colors, `$VAR` and `$(...)`.
+  `PROMPT_COMMAND` runs before each prompt.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
 - **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines and
   command lists joined by `;`, `&&` and `||`.
@@ -169,6 +171,7 @@ export PAGER=less
 export PATH="$PATH:$HOME/.dotnet/tools"
 alias ls='ls -p --color=auto'
 HISTFILE=$HOME/.sharpie_history
+PS1='\[\e[32m\]\u@\h\[\e[0m\]:\w\$ '
 . $HOME/.sharpie_aliases
 ```
 

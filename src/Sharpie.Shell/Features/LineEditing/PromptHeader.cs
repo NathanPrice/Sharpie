@@ -18,12 +18,11 @@ internal static class PromptHeader
 	/// <summary>
 	/// The prompt symbol in bold blue, drawn in front of the line being typed.
 	/// </summary>
-	public const string Symbol = "\e[1;34m❯\e[0m ";
-
-	/// <summary>
-	/// How many columns <see cref="Symbol" /> takes on screen.
-	/// </summary>
-	public const int SymbolWidth = 2;
+	/// <remarks>
+	/// The color codes sit between <c>\x01</c> and <c>\x02</c>, the marks <c>\[</c> and <c>\]</c> leave in a
+	/// <c>PS1</c>, so they aren't counted as columns.
+	/// </remarks>
+	public const string Symbol = "\u0001\e[1;34m\u0002❯\u0001\e[0m\u0002 ";
 
 	// Commands that finish faster than this show no time, so quick ones like ls and cd don't add clutter after every
 	// line.
@@ -40,24 +39,14 @@ internal static class PromptHeader
 	/// <see langword="false" />, as on an empty screen.
 	/// </param>
 	/// <returns>
-	/// The OSC 7 working directory report, the header line, and the line break after it.
+	/// What <see cref="Start" /> gives, the header line, and the line break after it.
 	/// </returns>
-	/// <remarks>
-	/// The header starts with the trick zsh calls <c>PROMPT_SP</c>: a full row of spaces, then a carriage return and
-	/// an erase. When the cursor is already at the start of a line nothing moves. When the last output didn't end with
-	/// a newline, the spaces wrap onto a fresh line first, so the header never lands after that output.
-	/// </remarks>
 	public static string Build(string directory, TimeSpan took, int columns, bool blankLine)
 	{
 		_ = directory.ArgumentNotNullOrEmpty();
 
 		var (parent, name) = SplitForDisplay(directory);
-		var header = new StringBuilder();
-
-		// The window reads the working directory from this for its title and man pages, and other terminals use it
-		// to open new tabs in the same folder.
-		_ = header.Append(CultureInfo.InvariantCulture, $"\e]7;{new Uri(directory).AbsoluteUri}\a");
-		_ = header.Append(' ', Math.Max(1, columns)).Append("\r\e[K");
+		var header = new StringBuilder(Start(directory, columns));
 
 		if (blankLine)
 		{
@@ -78,6 +67,23 @@ internal static class PromptHeader
 
 		return header.Append("\r\n").ToString();
 	}
+
+	/// <summary>
+	/// Builds what every prompt starts with, the default header and a <c>PS1</c> alike.
+	/// </summary>
+	/// <param name="directory">The shell's working directory.</param>
+	/// <param name="columns">The terminal's width in columns.</param>
+	/// <returns>
+	/// The OSC 7 working directory report, then a row of spaces, a carriage return and an erase.
+	/// </returns>
+	/// <remarks>
+	/// The window reads the working directory from the report for its title and man pages, and other terminals use it
+	/// to open new tabs in the same folder. The row is the trick zsh calls <c>PROMPT_SP</c>. When the cursor is already
+	/// at the start of a line nothing moves. When the last output didn't end with a newline, the spaces wrap onto a
+	/// fresh line first, so the prompt never lands after that output.
+	/// </remarks>
+	internal static string Start(string directory, int columns) =>
+		$"\e]7;{new Uri(directory).AbsoluteUri}\a{new string(' ', Math.Max(1, columns))}\r\e[K";
 
 	/// <summary>
 	/// Shortens <paramref name="directory" /> with <c>~</c> for the home folder and splits off its last folder name,
