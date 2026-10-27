@@ -192,6 +192,12 @@ internal static partial class CommandLine
 	/// <see cref="Word.Ambiguous" /> word, which bash refuses as an "ambiguous redirect".
 	/// </para>
 	/// <para>
+	/// When <paramref name="variables" /> is given, each typed word's braces expand first, as
+	/// <see cref="ExpandBraces" /> describes, so <c>cp x{,.bak}</c> passes <c>x</c> and <c>x.bak</c>, and each word
+	/// they give then expands as if it had been typed there. As in bash, braces stay as typed in a <c>NAME=value</c>
+	/// word before the command, between <c>[[</c> and <c>]]</c>, in a here-string and in a here-document's delimiter.
+	/// </para>
+	/// <para>
 	/// When <paramref name="variables" /> is given, an unquoted <c>~</c> at the start of a word becomes the home
 	/// folder, so <c>~/Downloads</c> gives <c>$HOME/Downloads</c>. In a <c>NAME=value</c> word it also expands right
 	/// after the first <c>=</c> and after each <c>:</c>, so <c>PATH=~/bin:~/tools</c> works. <c>~user</c> gives that
@@ -655,12 +661,19 @@ internal static partial class CommandLine
 	/// an argument of <c>export</c>, <c>declare</c> or <c>local</c>. So <c>export A=$(cmd)</c> keeps its spaces, and
 	/// <c>printf A=$(cmd)</c> is split.
 	/// </returns>
-	private static bool IsAssignmentWord(string word, List<Word> words)
-	{
-		var name = words.Skip(words.FindLastIndex(typed => typed.IsOperator) + 1).FirstOrDefault(typed => !DeclareCommand.IsAssignment(typed.Text));
+	private static bool IsAssignmentWord(string word, List<Word> words) =>
+		DeclareCommand.IsAssignment(word) && CommandName(words) is null or "export" or "declare" or "local";
 
-		return DeclareCommand.IsAssignment(word) && name.Text is null or "export" or "declare" or "local";
-	}
+	/// <summary>
+	/// Gets the name of the command the words being read belong to.
+	/// </summary>
+	/// <param name="words">The words read so far.</param>
+	/// <returns>
+	/// The first word after the last operator that isn't a <c>NAME=value</c>, or <see langword="null" /> when the
+	/// name hasn't been read yet.
+	/// </returns>
+	private static string? CommandName(List<Word> words) =>
+		words.Skip(words.FindLastIndex(typed => typed.IsOperator) + 1).FirstOrDefault(typed => !DeclareCommand.IsAssignment(typed.Text)).Text;
 
 	/// <summary>
 	/// Checks whether the unquoted <paramref name="character" /> at <paramref name="index" /> starts a comment.

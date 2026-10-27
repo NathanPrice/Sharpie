@@ -388,6 +388,24 @@ public sealed class ControlFlowProcessTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that the shell expands braces in commands, in a <c>for</c> list and inside a group, so the usual
+	/// <c>mkdir -p src/{a,b,c}</c> and <c>cp file{,.bak}</c> work, printing what bash prints.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithBraces_ExpandsThem()
+	{
+		// Arrange
+		const string command = "mkdir -p src/{a,b,c}; ls src; echo hi > file; cp file{,.bak}; ls file*; echo {1..10}; for i in {1..3}; do echo -n $i; done; echo; { echo {a,b}; }";
+
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, this.folder, arguments: ["-c", command]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("a\nb\nc\nfile\nfile.bak\n1 2 3 4 5 6 7 8 9 10\n123\na b\n");
+	}
+
+	/// <summary>
 	/// Removes the test's folder.
 	/// </summary>
 	public void Dispose() => Directory.Delete(this.folder, recursive: true);

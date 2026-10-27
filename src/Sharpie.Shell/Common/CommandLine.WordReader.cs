@@ -1,4 +1,5 @@
 using System.Text;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Common;
 
@@ -28,9 +29,15 @@ internal static partial class CommandLine
 		private readonly string joiner = variables is null ? " " : ParameterJoiner(variables);
 
 		/// <summary>
-		/// The finished words.
+		/// The finished words, which a reader of brace expansion's words shares with the reader of the line.
 		/// </summary>
-		private readonly List<Word> words = [];
+		private List<Word> words = [];
+
+		/// <summary>
+		/// <see langword="true" /> for a reader of one word that brace expansion gave, which expands no braces again,
+		/// starts no comment, so <c>{#a,b}</c> gives <c>#a</c> and <c>b</c>, and expands <c>~</c> only at its start.
+		/// </summary>
+		private bool braced;
 
 		/// <summary>
 		/// The word being read, quotes removed.
@@ -168,6 +175,8 @@ internal static partial class CommandLine
 
 			switch (this.quote)
 			{
+				case null when index == this.typedStart && !this.braced && this.ReadBraces(index) is var last and >= 0:
+					return last;
 				case null or '"' when character == '\\':
 					this.escaped = true;
 					this.hasWord = true;
@@ -186,12 +195,13 @@ internal static partial class CommandLine
 					this.afterExpansion = end + 1;
 
 					return end;
-				case null when TryExpandTilde(line, index, this.word, this.hasWord, this.expand, out var home, out var tildeEnd):
+				// Bash expands a ~ after = or : only in a word as typed, so echo a=~/{x,y} keeps both.
+				case null when !(this.braced && this.hasWord) && TryExpandTilde(line, index, this.word, this.hasWord, this.expand, out var home, out var tildeEnd):
 					this.Append(home, quoted: true);
 					this.hasWord = true;
 
 					return tildeEnd;
-				case null when StartsComment(character, this.hasWord, index, this.afterExpansion):
+				case null when !this.braced && StartsComment(character, this.hasWord, index, this.afterExpansion):
 					return LineEnd(line, index) - 1;
 				case null when character is '\'' or '"':
 					this.quote = character;
@@ -202,6 +212,61 @@ internal static partial class CommandLine
 				default:
 					return this.ReadPlain(character, index);
 			}
+		}
+
+		/// <summary>
+		/// Reads the typed word that starts at <paramref name="index" /> as the words its braces expand to, each read as
+		/// if it had been typed there, as bash expands braces before anything else.
+		/// </summary>
+		/// <param name="index">Where the typed word starts.</param>
+		/// <returns>
+		/// The position of the word's last character, or -1 when it has no braces to expand, so it's read as usual.
+		/// </returns>
+		/// <remarks>
+		/// As in bash, braces don't expand in a here-document delimiter, a here-string, between <c>[[</c> and
+		/// <c>]]</c>, or in a <c>NAME=value</c> word before the command's name, though they do after <c>export</c>.
+		/// The words it adds span the whole typed word, which is where an unset variable or an expansion error in them
+		/// is reported.
+		/// </remarks>
+		/// <exception cref="ExpansionError">One of the words can't expand.</exception>
+		private int ReadBraces(int index)
+		{
+			if (form != WordForm.Expanded || this.expand is null || this.condition.Active || !line.AsSpan(index).Contains('{')
+				|| TargetAfter(this.words) == TargetKind.Text || StartsComment(line[index], this.hasWord, index, this.afterExpansion))
+			{
+				return -1;
+			}
+
+			// An unclosed ${ also reads as running to the end of the line, which only matters on a line bash refuses.
+			var end = UnquotedIndex(line, index, WordEnds) is var found and >= 0 ? found : line.Length;
+			var typed = line[index..end];
+
+			if ((DeclareCommand.IsAssignment(typed) && CommandName(this.words) is null) || ExpandBraces(typed) is not { } choices)
+			{
+				return -1;
+			}
+
+			var first = this.words.Count;
+			Action<Word>? spanned = unset is null ? null : name => unset(name with { Start = index, End = end });
+
+			try
+			{
+				foreach (var choice in choices)
+				{
+					_ = new WordReader(choice, variables, spanned, substitute, separators, form) { words = this.words, braced = true }.Read(out _);
+				}
+			}
+			catch (ExpansionError inner)
+			{
+				throw new ExpansionError(inner.Error with { Source = line, Start = index, End = end }, inner.Fatal);
+			}
+
+			for (var added = first; added < this.words.Count; added++)
+			{
+				this.words[added] = this.words[added] with { Start = index, End = end };
+			}
+
+			return end - 1;
 		}
 
 		/// <summary>
