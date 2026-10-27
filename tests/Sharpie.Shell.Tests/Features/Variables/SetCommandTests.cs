@@ -81,7 +81,7 @@ public sealed class SetCommandTests : IDisposable
 		_ = this.declare.Positional.Should().Equal("a");
 		_ = this.environment.Error.Should().Be(new ShellError("sharpie::set::invalid_option", message)
 		{
-			Help = "set takes -e, -C, -u, -x and -o with errexit, noclobber, nounset, pipefail or xtrace",
+			Help = "set takes -e, -H, -C, -u, -x and -o with errexit, histexpand, noclobber, nounset, pipefail or xtrace",
 		}.Render(color: false));
 	}
 
@@ -124,7 +124,7 @@ public sealed class SetCommandTests : IDisposable
 	public void Run_WithEveryOption_SetsEachProperty()
 	{
 		// Act
-		_ = this.sut.Run(["-euxC", "-o", "pipefail"]);
+		_ = this.sut.Run(["-euxCH", "-o", "pipefail"]);
 
 		// Assert
 		_ = this.settings.ErrExit.Should().BeTrue();
@@ -132,6 +132,7 @@ public sealed class SetCommandTests : IDisposable
 		_ = this.settings.NoUnset.Should().BeTrue();
 		_ = this.settings.XTrace.Should().BeTrue();
 		_ = this.settings.PipeFail.Should().BeTrue();
+		_ = this.settings.HistExpand.Should().BeTrue();
 	}
 
 	/// <summary>
@@ -179,8 +180,8 @@ public sealed class SetCommandTests : IDisposable
 	/// <param name="arg">The argument.</param>
 	/// <param name="expected">The lines it prints.</param>
 	[Theory]
-	[InlineData("-o", new[] { "errexit        \ton", "noclobber      \toff", "nounset        \toff", "pipefail       \ton", "xtrace         \toff" })]
-	[InlineData("+o", new[] { "set -o errexit", "set +o noclobber", "set +o nounset", "set -o pipefail", "set +o xtrace" })]
+	[InlineData("-o", new[] { "errexit        \ton", "histexpand     \toff", "noclobber      \toff", "nounset        \toff", "pipefail       \ton", "xtrace         \toff" })]
+	[InlineData("+o", new[] { "set -o errexit", "set +o histexpand", "set +o noclobber", "set +o nounset", "set -o pipefail", "set +o xtrace" })]
 	public void Run_WithBareO_ListsOptions(string arg, string[] expected)
 	{
 		// Arrange

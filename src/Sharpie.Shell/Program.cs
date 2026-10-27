@@ -183,6 +183,7 @@ internal static class Program
 		settings.CommandString = options.Command is not null;
 		ExternalProgram.AnnounceJobs = interactive;
 		_ = settings.Set("noclobber", options.NoClobber);
+		_ = settings.Set("histexpand", interactive);
 
 		// -c takes $0 from the first word after the command, as sh does. The script file's arguments become its
 		// positional parameters through the . builtin below.
@@ -328,6 +329,18 @@ internal static class Program
 			{
 				return declare.Status;
 			}
+
+			// Expanded before it's saved, so Up and history show the line that ran, as in bash.
+			var expanded = settings.HistExpand ? history.Expand(line) : line;
+
+			if (expanded is null)
+			{
+				took = TimeSpan.Zero;
+
+				continue;
+			}
+
+			line = expanded;
 
 			// The history file keeps one entry per line, so a here-document's body isn't saved.
 			history.Record(line);

@@ -125,7 +125,7 @@ internal static class Highlighter
 						break;
 					case null:
 						command = value;
-						kind = value == "[[" || IsCommand(value, builtins, knownCommands) ? TokenKind.Command : TokenKind.UnknownCommand;
+						kind = CommandKind(line, start, end, value, builtins, knownCommands);
 						break;
 					case "cd" when argumentCount++ == 0:
 						kind = Directory.Exists(ExpandHome(value)) ? null : TokenKind.MissingPath;
@@ -153,6 +153,25 @@ internal static class Highlighter
 
 		return tokens;
 	}
+
+	/// <summary>
+	/// Picks the color of the command word from <paramref name="start" /> to <paramref name="end" />.
+	/// </summary>
+	/// <param name="line">The command line.</param>
+	/// <param name="start">Where the word starts.</param>
+	/// <param name="end">One past where it ends.</param>
+	/// <param name="value">The word with its quotes removed.</param>
+	/// <param name="builtins">The builtin command names.</param>
+	/// <param name="knownCommands">The command names already looked up, as <see cref="Highlight" /> takes them.</param>
+	/// <returns>
+	/// <see cref="TokenKind.Command" /> for a builtin or a program on <c>PATH</c>, <see langword="null" /> for a history
+	/// reference, which is replaced by an earlier line before it runs, and <see cref="TokenKind.UnknownCommand" />
+	/// otherwise.
+	/// </returns>
+	private static TokenKind? CommandKind(string line, int start, int end, string value, IReadOnlyCollection<string> builtins, Dictionary<string, bool>? knownCommands) =>
+		line.AsSpan(start, end - start) is ['!', _, ..] || (start == 0 && line[0] == '^') ? null
+		: value == "[[" || IsCommand(value, builtins, knownCommands) ? TokenKind.Command
+		: TokenKind.UnknownCommand;
 
 	/// <summary>
 	/// Checks whether a word as typed is a reserved word or a <c>((...))</c>, which is a command of its own, colored as

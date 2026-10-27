@@ -149,6 +149,35 @@ internal sealed class HistorySession
 	}
 
 	/// <summary>
+	/// Expands the history references in a line the user entered, like <c>!!</c>, before it runs and is recorded.
+	/// </summary>
+	/// <param name="line">The line as typed.</param>
+	/// <returns>
+	/// The line to run and record, or <see langword="null" />, after printing the error, when it shouldn't run.
+	/// </returns>
+	/// <remarks>
+	/// A changed line is printed on standard error before it runs, as bash prints it.
+	/// </remarks>
+	public string? Expand(string line)
+	{
+		var expanded = HistoryExpansion.Expand(line, this.history.Lines, out var error);
+
+		if (error is not null)
+		{
+			error.Write();
+
+			return null;
+		}
+
+		if (expanded != line)
+		{
+			Console.Error.WriteLine(expanded);
+		}
+
+		return expanded;
+	}
+
+	/// <summary>
 	/// Adds a line the user entered to the history and to the encrypted file.
 	/// </summary>
 	/// <param name="line">The line as typed. Blank lines are skipped.</param>

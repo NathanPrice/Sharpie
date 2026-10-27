@@ -111,7 +111,7 @@ internal sealed class SetCommand(DeclareCommand declare, ShellSettings settings)
 	/// </summary>
 	/// <param name="message">The message.</param>
 	private static void Report(string message) =>
-		new ShellError("sharpie::set::invalid_option", message) { Help = "set takes -e, -C, -u, -x and -o with errexit, noclobber, nounset, pipefail or xtrace" }.Write();
+		new ShellError("sharpie::set::invalid_option", message) { Help = "set takes -e, -H, -C, -u, -x and -o with errexit, histexpand, noclobber, nounset, pipefail or xtrace" }.Write();
 
 	/// <summary>
 	/// Prints every option and whether it's on.

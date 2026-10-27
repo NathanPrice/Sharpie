@@ -35,6 +35,7 @@ public sealed class ShellSettingsTests
 	[InlineData(new[] { "pipefail" }, false, "")]
 	[InlineData(new[] { "xtrace", "nounset", "noclobber", "errexit" }, false, "eCux")]
 	[InlineData(new[] { "errexit" }, true, "ei")]
+	[InlineData(new[] { "noclobber", "histexpand" }, true, "HCi")]
 	[InlineData(new string[0], true, "i")]
 	public void Flags_WithOptions_ListsLetters(string[] options, bool interactive, string expected)
 	{
@@ -77,6 +78,7 @@ public sealed class ShellSettingsTests
 	/// <param name="expected">The option name.</param>
 	[Theory]
 	[InlineData('e', "errexit")]
+	[InlineData('H', "histexpand")]
 	[InlineData('u', "nounset")]
 	[InlineData('x', "xtrace")]
 	[InlineData('q', null)]

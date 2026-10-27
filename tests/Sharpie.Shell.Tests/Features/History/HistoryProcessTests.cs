@@ -140,6 +140,56 @@ public sealed class HistoryProcessTests
 	}
 
 	/// <summary>
+	/// Checks that an interactive shell runs <c>!!</c> and <c>!$</c> as the lines they name, prints each expanded line on
+	/// standard error, and saves the expanded lines to history, as bash does.
+	/// </summary>
+	[Fact]
+	public async Task Shell_InteractiveWithHistoryReferences_RunsAndSavesExpandedLines()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("echo one two\n!!\necho !$\nhistory\n", arguments: ["-i", "--norc"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be(
+			"$ one two\n$ one two\n$ two\n$     1  echo one two\n    2  echo one two\n    3  echo two\n    4  history\n$ ");
+		_ = run.Error.Should().Be("echo one two\necho two\n");
+	}
+
+	/// <summary>
+	/// Checks that a reference naming no earlier line reports the error, runs nothing, keeps <c>$?</c> and isn't
+	/// saved to history.
+	/// </summary>
+	[Fact]
+	public async Task Shell_InteractiveWithMissingEvent_ReportsErrorAndSkipsLine()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("false\necho !zzz\necho $?\nhistory\n", arguments: ["-i", "--norc"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("$ $ $ 1\n$     1  false\n    2  echo $?\n    3  history\n$ ");
+		_ = run.Error.Should().Contain("sharpie::history::event_not_found");
+	}
+
+	/// <summary>
+	/// Checks that <c>!!</c> stays as typed after <c>set +H</c>, and in a shell that isn't interactive.
+	/// </summary>
+	/// <param name="input">The lines sent to the shell.</param>
+	/// <param name="arguments">The shell's arguments.</param>
+	/// <param name="expected">The expected output.</param>
+	[Theory]
+	[InlineData("set +H\necho hi\necho !!\n", new[] { "-i", "--norc" }, "$ $ hi\n$ !!\n$ ")]
+	[InlineData("echo hi\necho !!\n", new string[0], "$ hi\n$ !!\n$ ")]
+	public async Task Shell_WithHistExpandOff_LeavesReferencesAsTyped(string input, string[] arguments, string expected)
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(input, arguments: arguments).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be(expected);
+		_ = run.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
 	/// Builds an environment that points <c>HISTFILE</c> at <paramref name="path" />.
 	/// </summary>
 	/// <param name="path">The history file the shell should load and save.</param>

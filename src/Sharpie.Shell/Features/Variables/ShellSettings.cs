@@ -9,7 +9,7 @@ internal sealed class ShellSettings
 	/// The option names <c>set -o</c> takes, sorted as <c>set -o</c> lists them, each with the letter <c>set -</c>
 	/// takes for it, if any.
 	/// </summary>
-	internal static readonly (string Name, char? Letter)[] Options = [("errexit", 'e'), ("noclobber", 'C'), ("nounset", 'u'), ("pipefail", null), ("xtrace", 'x')];
+	internal static readonly (string Name, char? Letter)[] Options = [("errexit", 'e'), ("histexpand", 'H'), ("noclobber", 'C'), ("nounset", 'u'), ("pipefail", null), ("xtrace", 'x')];
 
 	/// <summary>
 	/// The names of the options that are on.
@@ -23,6 +23,15 @@ internal sealed class ShellSettings
 	/// <see langword="true" /> when the shell exits after a command fails.
 	/// </value>
 	public bool ErrExit => this.on.Contains("errexit");
+
+	/// <summary>
+	/// Gets a value indicating whether <c>set -H</c> is on, so <c>!!</c> and the like in a typed line name earlier lines.
+	/// </summary>
+	/// <value>
+	/// <see langword="true" /> when typed lines go through history expansion. On by default only in an interactive
+	/// shell, as in bash.
+	/// </value>
+	public bool HistExpand => this.on.Contains("histexpand");
 
 	/// <summary>
 	/// Gets a value indicating whether <c>set -C</c> is on, so <c>&gt;</c> won't replace a file that's already there.
