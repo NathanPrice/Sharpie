@@ -226,6 +226,8 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("echo '>' x", "0,4,Command;5,3,Quoted")]
 	[InlineData("prog|prog", "0,4,Command;5,4,Command")]
 	[InlineData("nope; prog", "0,4,UnknownCommand;6,4,Command")]
+	[InlineData("nope x\nprog x", "0,4,UnknownCommand;7,4,Command")]
+	[InlineData("echo 'a\nprog' x", "0,4,Command;5,8,Quoted")]
 	[InlineData("if prog; then nope; fi", "0,2,Command;3,4,Command;9,4,Command;14,4,UnknownCommand;20,2,Command")]
 	[InlineData("echo if", "0,4,Command")]
 	[InlineData("\"if\" x", "0,4,UnknownCommand")]

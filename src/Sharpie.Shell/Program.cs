@@ -456,11 +456,15 @@ internal static class Program
 	/// </returns>
 	/// <remarks>
 	/// Ctrl+C is read as a key only while the line is being edited, so programs the line starts still get it as
-	/// SIGINT, or as a console Ctrl+C event on Windows.
+	/// SIGINT, or as a console Ctrl+C event on Windows. The terminal is asked to mark pasted text for the same span
+	/// only, so a pasted line break goes into the line instead of running it, and programs that don't know the markers
+	/// never get them.
 	/// </remarks>
+	[SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters", Justification = "A terminal control code, not text anyone reads.")]
 	private static string? ReadEdited(LineEditor editor, string header, bool continuation, string prompt = PromptHeader.Symbol)
 	{
 		Console.TreatControlCAsInput = true;
+		Console.Write("\e[?2004h");
 
 		try
 		{
@@ -468,6 +472,7 @@ internal static class Program
 		}
 		finally
 		{
+			Console.Write("\e[?2004l");
 			Console.TreatControlCAsInput = false;
 		}
 	}
@@ -638,6 +643,7 @@ internal static class Program
 	/// The editor runs as a command line of the shell's own, as bash's <c>fc</c> runs it, so a shell variable and an
 	/// <c>EDITOR</c> with arguments work, and the editor gets the terminal like any program the shell starts.
 	/// </remarks>
+	[SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters", Justification = "A terminal control code, not text anyone reads.")]
 	private static string? EditInEditor(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, string line)
 	{
 		// Created with mode 0600 on Unix, so other users can't read the command.
@@ -646,8 +652,10 @@ internal static class Program
 		// bash falls back to emacs. vi is the editor POSIX requires, and Windows has notepad instead.
 		var fallback = OperatingSystem.IsWindows() ? "notepad" : "vi";
 
-		// The editor reads the keys now, so Ctrl+C is SIGINT again while it runs, as for any other program.
+		// The editor reads the keys now, so Ctrl+C is SIGINT again while it runs, and pastes come unmarked, as for any
+		// other program.
 		Console.TreatControlCAsInput = false;
+		Console.Write("\e[?2004l");
 
 		try
 		{
@@ -657,6 +665,7 @@ internal static class Program
 		}
 		finally
 		{
+			Console.Write("\e[?2004h");
 			Console.TreatControlCAsInput = true;
 			File.Delete(path);
 		}

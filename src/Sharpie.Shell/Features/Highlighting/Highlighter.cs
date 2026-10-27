@@ -82,9 +82,20 @@ internal static class Highlighter
 		string? command = null;
 		TargetKind? target = null;
 		var argumentCount = 0;
+		var previousEnd = 0;
 
 		foreach (var (start, end, strings) in SplitRaw(line))
 		{
+			// A line break between words ends the command as ; does, so the next line's command word is colored too.
+			if (line.AsSpan(previousEnd, start - previousEnd).Contains('\n'))
+			{
+				command = null;
+				target = null;
+				argumentCount = 0;
+			}
+
+			previousEnd = end;
+
 			// Unquoted by the parser itself, so a quoted word is judged by what the shell will actually run.
 			var word = !line.AsSpan(start, end - start).ContainsAny(ParserCharacters) ? new Word(line[start..end], IsOperator: false)
 				: CommandLine.Split(line[start..end]) is [var first] ? first
@@ -131,13 +142,8 @@ internal static class Highlighter
 						kind = Directory.Exists(ExpandHome(value)) ? null : TokenKind.MissingPath;
 						break;
 					default:
-						{
-							var looksLikePath = value.Contains('/', StringComparison.Ordinal) || value.StartsWith('~') || value.StartsWith('.');
-							var path = ExpandHome(value);
-
-							kind = looksLikePath && !File.Exists(path) && !Directory.Exists(path) ? TokenKind.MissingPath : null;
-							break;
-						}
+						kind = IsMissingPath(value) ? TokenKind.MissingPath : null;
+						break;
 				}
 			}
 
@@ -172,6 +178,21 @@ internal static class Highlighter
 		line.AsSpan(start, end - start) is ['!', _, ..] || (start == 0 && line[0] == '^') ? null
 		: value == "[[" || IsCommand(value, builtins, knownCommands) ? TokenKind.Command
 		: TokenKind.UnknownCommand;
+
+	/// <summary>
+	/// Checks whether an argument looks like a path, because it contains <c>/</c> or starts with <c>~</c> or <c>.</c>,
+	/// and nothing is there.
+	/// </summary>
+	/// <param name="value">The argument, unquoted.</param>
+	/// <returns>
+	/// <see langword="true" /> when it should be flagged.
+	/// </returns>
+	private static bool IsMissingPath(string value)
+	{
+		var path = ExpandHome(value);
+
+		return (value.Contains('/', StringComparison.Ordinal) || value.StartsWith('~') || value.StartsWith('.')) && !File.Exists(path) && !Directory.Exists(path);
+	}
 
 	/// <summary>
 	/// Checks whether a word as typed is a reserved word or a <c>((...))</c>, which is a command of its own, colored as
@@ -245,7 +266,7 @@ internal static class Highlighter
 				continue;
 			}
 
-			if (quote is null && character is ' ' or '\t')
+			if (quote is null && character is ' ' or '\t' or '\n')
 			{
 				if (start >= 0)
 				{

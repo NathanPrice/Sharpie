@@ -11,6 +11,7 @@ namespace Sharpie.Shell.Features.LineEditing;
 /// Reads one command line from the terminal a key at a time, coloring it as it's typed, with Tab completion,
 /// Up and Down through the history lines that start with what's typed, a dimmed suggestion after the cursor from
 /// history or from the command names, Ctrl+R and Ctrl+S to search the history as in bash, and the usual editing keys.
+/// Text the terminal marks as pasted goes into the line whole, line breaks included, and waits for Enter.
 /// </summary>
 /// <param name="readKey">Reads the next key without echoing it, like <see cref="Console.ReadKey(bool)" />.</param>
 /// <param name="output">Where the prompt and the line are drawn.</param>
@@ -27,8 +28,9 @@ namespace Sharpie.Shell.Features.LineEditing;
 /// </param>
 /// <remarks>
 /// The whole input is redrawn after every key. The cursor first goes back up to the prompt's row, everything below
-/// is erased, and the prompt, the colored line and any list of matches are written again. Characters are counted as
-/// one column each, so a line holding wide characters like CJK or emoji puts the cursor short of where it should be.
+/// is erased, and the prompt, the colored line and any list of matches are written again. A line break in the line
+/// starts the next row at the left edge. Characters, tabs included, are counted as one column each, so a line holding
+/// wide characters like CJK or emoji puts the cursor short of where it should be.
 /// </remarks>
 internal sealed partial class LineEditor(
 	Func<ConsoleKeyInfo> readKey,
@@ -135,6 +137,8 @@ internal sealed partial class LineEditor(
 		output.Write(header);
 		this.Render();
 
+		var escaped = false;
+
 		while (true)
 		{
 			var key = readKey();
@@ -147,8 +151,13 @@ internal sealed partial class LineEditor(
 
 			var before = this.line.ToString();
 			var cursorBefore = this.cursor;
-			var outcome = this.Handle(key, header);
 
+			// Checked here rather than in Handle, because the search swallows Escape on purpose and would then type the
+			// rest of the sequence into the line. .NET gives ESC [ as Alt+[ when they are the only two bytes of a read.
+			var outcome = key.KeyChar == '[' && (escaped || (key.Modifiers & ConsoleModifiers.Alt) != 0) ? this.ReadSequence()
+				: this.Handle(key, header);
+
+			escaped = key.Key == ConsoleKey.Escape;
 			this.SaveUndo(before, cursorBefore);
 
 			if (outcome == Outcome.Continue)
@@ -261,6 +270,69 @@ internal sealed partial class LineEditor(
 		this.cursor += text.Length;
 
 		return Outcome.Continue;
+	}
+
+	/// <summary>
+	/// Reads the rest of an escape sequence that started with ESC <c>[</c>, and reads a paste when the sequence starts
+	/// one.
+	/// </summary>
+	/// <returns>
+	/// <see cref="Outcome.Continue" />.
+	/// </returns>
+	/// <remarks>
+	/// .NET only knows the sequences with one or two digits before <c>~</c>, so the paste markers and others like focus
+	/// reports come in as Escape and then a key per character. Read that way, everything but a paste is dropped, so it
+	/// doesn't end up typed into the line. Any search ends, as it does for any key that isn't part of it.
+	/// </remarks>
+	private Outcome ReadSequence()
+	{
+		this.last = LastKey.Other;
+		_ = this.EndSearch();
+
+		var parameters = string.Empty;
+		ConsoleKeyInfo key;
+
+		// Parameter and intermediate bytes run from space to ?, and the first character past them ends the sequence.
+		while ((key = readKey()).KeyChar is >= ' ' and <= '?')
+		{
+			parameters += key.KeyChar;
+		}
+
+		return parameters == "200" && key.KeyChar == '~' ? this.Insert(this.ReadPaste()) : Outcome.Continue;
+	}
+
+	/// <summary>
+	/// Reads pasted text up to the <c>ESC [201~</c> the terminal sends after it.
+	/// </summary>
+	/// <returns>
+	/// The text, with every line break as <c>\n</c> and control characters other than tabs left out, since drawing them
+	/// would act on the terminal.
+	/// </returns>
+	/// <remarks>
+	/// Inserted as one piece, the paste waits for Enter like typed text, and one Ctrl+_ takes all of it back.
+	/// </remarks>
+	private string ReadPaste()
+	{
+		const string End = "\e[201~";
+
+		var text = new StringBuilder();
+
+		while (text.Length < End.Length || text[^1] != '~' || !text.ToString(text.Length - End.Length, End.Length).Equals(End, StringComparison.Ordinal))
+		{
+			var key = readKey();
+
+			// .NET reads ESC and the key after it as one Alt key, which may be the end marker's ESC [.
+			if ((key.Modifiers & ConsoleModifiers.Alt) != 0)
+			{
+				_ = text.Append('\e');
+			}
+
+			_ = text.Append(key.KeyChar);
+		}
+
+		var pasted = text.ToString(0, text.Length - End.Length).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+
+		return string.Concat(pasted.Where(character => character is '\n' or '\t' || !char.IsControl(character)));
 	}
 
 	/// <summary>
@@ -737,6 +809,8 @@ internal sealed partial class LineEditor(
 
 		_ = screen.Append("\r\e[J").Append(prompt);
 
+		var lineStart = screen.Length;
+
 		if (this.continuation)
 		{
 			_ = screen.Append(this.line);
@@ -752,8 +826,12 @@ internal sealed partial class LineEditor(
 			_ = screen.Append("\e[30m").Append(this.suggestion).Append("\e[0m");
 		}
 
-		var end = promptWidth + this.line.Length + this.suggestion.Length;
-		var endRow = end / width;
+		// A tab is drawn as the one column the maths counts it as, and a line break needs a carriage return to start its
+		// row at the left. The color codes hold neither.
+		_ = screen.Replace('\t', ' ', lineStart, screen.Length - lineStart).Replace("\n", "\r\n", lineStart, screen.Length - lineStart);
+
+		var (endSegmentRow, end) = this.Locate(this.line.Length + this.suggestion.Length, promptWidth, width);
+		var endRow = endSegmentRow + (end / width);
 		var endColumn = end % width;
 
 		WrapIfFull(screen, end, width);
@@ -773,8 +851,8 @@ internal sealed partial class LineEditor(
 			}
 		}
 
-		var target = promptWidth + this.cursor;
-		var targetRow = target / width;
+		var (targetSegmentRow, target) = this.Locate(this.cursor, promptWidth, width);
+		var targetRow = targetSegmentRow + (target / width);
 
 		if (endRow > targetRow)
 		{
@@ -802,6 +880,43 @@ internal sealed partial class LineEditor(
 				_ = screen.Append(" \r");
 			}
 		}
+	}
+
+	/// <summary>
+	/// Works out where <paramref name="index" /> in the line, followed by the suggestion, is drawn.
+	/// </summary>
+	/// <param name="index">The position in the line and suggestion.</param>
+	/// <param name="promptWidth">How many columns the prompt before the line takes.</param>
+	/// <param name="width">The terminal's width in columns.</param>
+	/// <returns>
+	/// The row, counted from the prompt's, where the piece of text holding <paramref name="index" /> starts after the
+	/// line break before it, and the column in that piece as if it never wrapped, with the prompt counted in for the
+	/// first piece. Dividing by <paramref name="width" /> gives the rows and column within the piece.
+	/// </returns>
+	/// <remarks>
+	/// Each piece before a line break takes as many rows as it fills, and at least one. One that exactly fills its last
+	/// row still takes only that many, because the carriage return drawn before the line break clears the terminal's
+	/// pending wrap.
+	/// </remarks>
+	private (int Row, int Column) Locate(int index, int promptWidth, int width)
+	{
+		var row = 0;
+		var column = promptWidth;
+
+		for (var i = 0; i < index; i++)
+		{
+			if ((i < this.line.Length ? this.line[i] : this.suggestion[i - this.line.Length]) != '\n')
+			{
+				column++;
+
+				continue;
+			}
+
+			row += Math.Max(1, (column + width - 1) / width);
+			column = 0;
+		}
+
+		return (row, column);
 	}
 
 	/// <summary>
