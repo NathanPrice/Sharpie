@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Arithmetic;
+using Sharpie.Shell.Features.Time;
 
 namespace Sharpie.Shell.Tests.Common;
 
@@ -150,6 +151,60 @@ public sealed class CommandRunnerTests
 	}
 
 	/// <summary>
+	/// Checks that <c>time</c> reports once for the pipeline it's in front of, in the layout asked for, after the
+	/// pipeline ran and without changing its status, so <c>set -e</c> still sees a failure.
+	/// </summary>
+	/// <param name="line">The line.</param>
+	/// <param name="expectedRan">The commands that ran, in order.</param>
+	/// <param name="expectedStatus">The status.</param>
+	/// <param name="expectedPosix"><see langword="true" /> when POSIX's layout is reported.</param>
+	[Theory]
+	[InlineData("time f", new[] { "f" }, 1, false)]
+	[InlineData("time -p t", new[] { "t" }, 0, true)]
+	[InlineData("time a && b", new[] { "a", "b" }, 0, false)]
+	[InlineData("! time f", new[] { "f" }, 0, false)]
+	[InlineData("time { a; b; }", new[] { "a", "b" }, 0, false)]
+	public void Run_WithTime_ReportsOnceAfterPipeline(string line, string[] expectedRan, int expectedStatus, bool expectedPosix)
+	{
+		// Arrange
+		var reports = new List<(int RanBefore, Timing Timing)>();
+		var hooks = new ShellHooks(this.Hooks().Run) { Failed = this.failures.Add, ReportTime = (_, timing) => reports.Add((this.ran.Count, timing)) };
+
+		// Act
+		var status = CommandList.Run(line, 0, hooks);
+
+		// Assert
+		_ = this.ran.Select(command => command.Command).Should().Equal(expectedRan);
+		_ = status.Should().Be(expectedStatus);
+		_ = reports.Should().Equal((line.Contains('{', StringComparison.Ordinal) ? 2 : 1, expectedPosix ? Timing.Posix : Timing.Default));
+		_ = this.failures.Should().Equal(expectedStatus == 0 ? [] : [expectedStatus]);
+	}
+
+	/// <summary>
+	/// Checks that the times reported cover the pipeline: the real time includes how long it took.
+	/// </summary>
+	[Fact]
+	public void Run_WithTime_MeasuresRealTime()
+	{
+		// Arrange
+		ElapsedTimes? reported = null;
+		var hooks = new ShellHooks((_, _) =>
+		{
+			Thread.Sleep(50);
+
+			return 0;
+		})
+		{ ReportTime = (times, _) => reported = times };
+
+		// Act
+		_ = CommandList.Run("time a", 0, hooks);
+
+		// Assert
+		_ = reported!.Real.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(50));
+		_ = reported.User.Should().BeGreaterThanOrEqualTo(TimeSpan.Zero);
+	}
+
+	/// <summary>
 	/// Checks that <c>break</c> and <c>continue</c> leave as many loops as they say, and that the loop depth is back to
 	/// 0 after.
 	/// </summary>
@@ -277,6 +332,8 @@ public sealed class CommandRunnerTests
 	[InlineData("{ a; } &", "copy[{ a; }] &")]
 	[InlineData("a && b &", "copy[a && b] &")]
 	[InlineData("! a &", "copy[! a] &")]
+	[InlineData("time a &", "copy[time a] &")]
+	[InlineData("time -p a | b &", "copy[time -p a | b] &")]
 	[InlineData("a | b &", "a | b &")]
 	[InlineData("a&", "a&")]
 	[InlineData("if a | { b; }; then c; fi", "a | tested-copy[{ b; }]", "c")]

@@ -35,6 +35,9 @@ internal static partial class NativeMethods
 	// NtQueryInformationProcess's class for ProcessBasicInformation.
 	private const int ProcessBasicInformationClass = 0;
 
+	// QueryInformationJobObject's class for JobObjectBasicAccountingInformation.
+	private const int JobBasicAccounting = 1;
+
 	/// <summary>
 	/// Gets the id of the process that started the shell, which <c>$PPID</c> expands to.
 	/// </summary>
@@ -56,6 +59,41 @@ internal static partial class NativeMethods
 		var information = stackalloc nint[6];
 
 		return QueryInformationProcess(GetCurrentProcess(), ProcessBasicInformationClass, information, 6 * sizeof(nint), out _) == 0 ? (int)information[5] : 0;
+	}
+
+	/// <summary>
+	/// Gets the processor time used so far by the shell and the programs it started.
+	/// </summary>
+	/// <returns>
+	/// The time spent running the programs' own code, and the time the system spent working for them.
+	/// </returns>
+	/// <remarks>
+	/// On Linux and macOS, programs count once they have ended and been waited for, as bash's <c>time</c> counts them.
+	/// On Windows the first call puts the shell into a job, which the programs it starts after join, so the job's totals
+	/// cover them, ended or not.
+	/// </remarks>
+	internal static unsafe (TimeSpan User, TimeSpan System) ProcessorTimes()
+	{
+		if (!OperatingSystem.IsWindows())
+		{
+			var (user, system) = ResourceUsage(UsageSelf);
+			var children = ResourceUsage(UsageChildren);
+
+			return (user + children.User, system + children.System);
+		}
+
+		// JOBOBJECT_BASIC_ACCOUNTING_INFORMATION starts with the user and kernel totals, in 100-nanosecond ticks.
+		var totals = stackalloc long[6];
+
+		if (ShellJob.Value != 0 && QueryInformationJobObject(ShellJob.Value, JobBasicAccounting, totals, 6 * sizeof(long), 0))
+		{
+			return (TimeSpan.FromTicks(totals[0]), TimeSpan.FromTicks(totals[1]));
+		}
+
+		// Without the job only the shell's own time is known, so programs it started aren't counted.
+		using var shell = System.Diagnostics.Process.GetCurrentProcess();
+
+		return (shell.UserProcessorTime, shell.PrivilegedProcessorTime);
 	}
 
 	/// <summary>
@@ -274,4 +312,55 @@ internal static partial class NativeMethods
 	[LibraryImport("ntdll", EntryPoint = "NtQueryInformationProcess")]
 	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 	private static unsafe partial int QueryInformationProcess(nint process, int informationClass, nint* information, int length, out int returnLength);
+
+	// The job the shell and the programs it starts belong to, made the first time processor times are read, or 0 when
+	// Windows wouldn't make it or put the shell in it.
+	[SupportedOSPlatform("windows")]
+	private static readonly Lazy<nint> ShellJob = new(() =>
+	{
+		var job = CreateJobObject(0, 0);
+
+		return job != 0 && AssignProcessToJobObject(job, GetCurrentProcess()) ? job : 0;
+	});
+
+	/// <summary>
+	/// Makes a job object, which a group of processes can be put in and accounted for as one.
+	/// </summary>
+	/// <param name="attributes">0, for the default security.</param>
+	/// <param name="name">0, for a job with no name.</param>
+	/// <returns>
+	/// The job's handle, or 0 on failure.
+	/// </returns>
+	[LibraryImport("kernel32", EntryPoint = "CreateJobObjectW")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+	private static partial nint CreateJobObject(nint attributes, nint name);
+
+	/// <summary>
+	/// Puts a process in a job. Processes it starts after join the job too.
+	/// </summary>
+	/// <param name="job">The job.</param>
+	/// <param name="process">The process.</param>
+	/// <returns>
+	/// <see langword="true" /> on success.
+	/// </returns>
+	[LibraryImport("kernel32")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static partial bool AssignProcessToJobObject(nint job, nint process);
+
+	/// <summary>
+	/// Reads one kind of information about a job.
+	/// </summary>
+	/// <param name="job">The job.</param>
+	/// <param name="kind">Which information, like <see cref="JobBasicAccounting" />.</param>
+	/// <param name="information">Receives the information.</param>
+	/// <param name="length">The size of <paramref name="information" />, in bytes.</param>
+	/// <param name="written">0, since the size written isn't needed.</param>
+	/// <returns>
+	/// <see langword="true" /> on success.
+	/// </returns>
+	[LibraryImport("kernel32")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static unsafe partial bool QueryInformationJobObject(nint job, int kind, void* information, int length, nint written);
 }

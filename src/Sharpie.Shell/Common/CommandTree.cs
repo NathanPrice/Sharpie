@@ -58,14 +58,32 @@ internal sealed record AndOr(int Start, int End, Pipeline First, IReadOnlyList<(
 /// <summary>
 /// Commands joined by <c>|</c>, each reading the one before.
 /// </summary>
-/// <param name="Start">Where it starts, at the <c>!</c> when there is one.</param>
+/// <param name="Start">Where it starts, at the first <c>!</c> or <c>time</c> when there is one.</param>
 /// <param name="End">Where it ends.</param>
-/// <param name="Negated"><see langword="true" /> after <c>!</c>, which flips the status between 0 and 1.</param>
+/// <param name="Negated">
+/// <see langword="true" /> after an odd number of <c>!</c>, each of which flips the status between 0 and 1.
+/// </param>
+/// <param name="Time">Whether <c>time</c> reports how long it took, and in which layout.</param>
 /// <param name="Stages">
 /// The commands. A pipeline of only simple commands is a single <see cref="Leaf" />, so it runs as it always has.
 /// </param>
 /// <param name="Pipes">The operator between each two stages, <c>|</c> or <c>|&amp;</c>, as typed.</param>
-internal sealed record Pipeline(int Start, int End, bool Negated, IReadOnlyList<CommandNode> Stages, IReadOnlyList<string> Pipes) : CommandNode(Start, End);
+internal sealed record Pipeline(int Start, int End, bool Negated, Timing Time, IReadOnlyList<CommandNode> Stages, IReadOnlyList<string> Pipes) : CommandNode(Start, End);
+
+/// <summary>
+/// Whether a pipeline is timed, and how its times are shown.
+/// </summary>
+internal enum Timing
+{
+	/// <summary>No <c>time</c>.</summary>
+	None,
+
+	/// <summary><c>time</c>, shown by <c>TIMEFORMAT</c>.</summary>
+	Default,
+
+	/// <summary><c>time -p</c>, shown in the layout POSIX gives.</summary>
+	Posix,
+}
 
 /// <summary>
 /// A compound command, which may have redirects of its own after it.

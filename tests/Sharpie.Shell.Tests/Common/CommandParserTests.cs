@@ -23,6 +23,17 @@ public sealed class CommandParserTests
 	[InlineData("a |\n  b | # note\n c", "'a | b | c'")]
 	[InlineData("a |\n b &", "'a | b' &")]
 	[InlineData("! a | b", "!'a | b'")]
+	[InlineData("time a | b", "time 'a | b'")]
+	[InlineData("time -p a", "time -p 'a'")]
+	[InlineData("time ! a", "time !'a'")]
+	[InlineData("! time a", "time !'a'")]
+	[InlineData("! ! a", "'a'")]
+	[InlineData("time time -p a", "time -p 'a'")]
+	[InlineData("time { a; } 2> f", "time group('a') > '2> f'")]
+	[InlineData("time ((a))", "time arith(a)")]
+	[InlineData("time -p ((a))", "time -p arith(a)")]
+	[InlineData("time a && b", "time 'a' && 'b'")]
+	[InlineData("time a &", "time 'a' &")]
 	[InlineData("a & b", "'a' &, 'b'")]
 	[InlineData("{ a; b; }", "group('a', 'b')")]
 	[InlineData("{ a; } > f 2>&1", "group('a') > '> f 2>&1'")]
@@ -106,6 +117,9 @@ public sealed class CommandParserTests
 	[InlineData("{a; b}", "'{a', 'b}'")]
 	[InlineData("A=1 if", "'A=1 if'")]
 	[InlineData("echo {", "'echo {'")]
+	[InlineData("echo time -p", "'echo time -p'")]
+	[InlineData("\"time\" a", "'\"time\" a'")]
+	[InlineData("a -p", "'a -p'")]
 	[InlineData("for in in in; do done=1; done", "for(in in in; 'done=1')")]
 	[InlineData("case in in in) echo esac;; esac", "case(in; in: 'echo esac')")]
 	public void Parse_WithReservedWordOutOfPlace_KeepsItAWord(string text, string expected)
@@ -174,6 +188,8 @@ public sealed class CommandParserTests
 	[InlineData("f()", true)]
 	[InlineData("for x in a b do c", true)]
 	[InlineData("!", true)]
+	[InlineData("time", true)]
+	[InlineData("time -p", true)]
 	[InlineData("a", false)]
 	[InlineData("", false)]
 	[InlineData("# if", false)]
@@ -364,6 +380,26 @@ public sealed class CommandParserTests
 	}
 
 	/// <summary>
+	/// Checks that a timed command's text starts at <c>time</c>, so a background one runs in a copy of the shell with
+	/// <c>time</c> and its line number counts from there.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	/// <param name="expectedText">The last item's text.</param>
+	/// <param name="expectedStart">Where the last item starts.</param>
+	[Theory]
+	[InlineData("! time a &", "! time a", 0)]
+	[InlineData("x; ! time -p sleep 1 &", "! time -p sleep 1", 3)]
+	public void Parse_WithTimeInBackground_KeepsTimeInText(string text, string expectedText, int expectedStart)
+	{
+		// Act
+		var parsed = CommandParser.Parse(text);
+
+		// Assert
+		_ = parsed.List!.Items[^1].Should().BeEquivalentTo(new { Background = true, Text = expectedText });
+		_ = parsed.List.Items[^1].Command.Start.Should().Be(expectedStart);
+	}
+
+	/// <summary>
 	/// Checks that a compound command's text holds the here-document bodies inside it once, as typed.
 	/// </summary>
 	[Fact]
@@ -408,7 +444,7 @@ public sealed class CommandParserTests
 	public void ReservedWords_AreTheGrammars()
 	{
 		// Assert
-		_ = CommandParser.ReservedWords.Should().BeEquivalentTo(["!", "{", "}", "case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "then", "until", "while"]);
+		_ = CommandParser.ReservedWords.Should().BeEquivalentTo(["!", "{", "}", "case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "then", "time", "until", "while"]);
 	}
 
 	/// <summary>
@@ -432,7 +468,8 @@ public sealed class CommandParserTests
 	{
 		Leaf leaf => $"'{leaf.Text}'",
 		AndOr andOr => Show(andOr.First) + string.Concat(andOr.Rest.Select(next => $" {next.Operator} {Show(next.Pipeline)}")),
-		Pipeline pipeline => (pipeline.Negated ? "!" : string.Empty) + string.Join(" | ", pipeline.Stages.Select(Show)),
+		Pipeline pipeline => pipeline.Time switch { Timing.Posix => "time -p ", Timing.Default => "time ", Timing.None => string.Empty, _ => throw new ArgumentException("Unknown timing", nameof(node)) }
+			+ (pipeline.Negated ? "!" : string.Empty) + string.Join(" | ", pipeline.Stages.Select(Show)),
 		FunctionDefinition function => $"function({function.Name}; {Show(function.Body)})",
 		Compound compound => ShowCompound(compound) + (compound.Redirects is { } redirects ? $" > '{redirects.Text}'" : string.Empty),
 		_ => throw new ArgumentException("Unknown node", nameof(node)),

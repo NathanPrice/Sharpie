@@ -44,7 +44,7 @@ internal sealed class CommandParser
 	/// <summary>
 	/// The words the grammar reserves, which <c>type</c> calls shell keywords.
 	/// </summary>
-	internal static readonly string[] ReservedWords = ["!", "{", "}", "case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "then", "until", "while"];
+	internal static readonly string[] ReservedWords = ["!", "{", "}", "case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "then", "time", "until", "while"];
 
 	/// <summary>
 	/// The reserved words that end a list rather than start a command.
@@ -259,7 +259,7 @@ internal sealed class CommandParser
 				var ampersand = this.Next();
 
 				// One simple pipeline runs as a job the way it always has, with the & left in its text.
-				var text = command is { Rest: [], First: { Negated: false, Stages: [Leaf leaf] } }
+				var text = command is { Rest: [], First: { Negated: false, Time: Timing.None, Stages: [Leaf leaf] } }
 					? leaf.Line + this.source[leaf.End..ampersand.End] + leaf.Bodies
 					: command.Text;
 
@@ -321,7 +321,7 @@ internal sealed class CommandParser
 	}
 
 	/// <summary>
-	/// Reads commands joined by <c>|</c>, after an optional <c>!</c>.
+	/// Reads commands joined by <c>|</c>, after any number of <c>!</c> and <c>time [-p]</c>, as bash's grammar has it.
 	/// </summary>
 	/// <returns>
 	/// The pipeline. When every stage is a simple command it holds one <see cref="Leaf" /> for the whole pipeline.
@@ -329,8 +329,31 @@ internal sealed class CommandParser
 	private Pipeline ParsePipeline()
 	{
 		var start = this.position;
-		var negated = IsWord(this.Peek, "!");
-		var bang = negated ? this.Next().Start : -1;
+		var negated = false;
+		var time = Timing.None;
+		var prefix = -1;
+
+		while (IsWord(this.Peek, "!") || IsWord(this.Peek, "time"))
+		{
+			var word = this.Next();
+
+			prefix = prefix < 0 ? word.Start : prefix;
+
+			if (word.Text == "!")
+			{
+				negated = !negated;
+			}
+			else if (IsWord(this.Peek, "-p"))
+			{
+				_ = this.Next();
+				time = Timing.Posix;
+			}
+			else if (time == Timing.None)
+			{
+				time = Timing.Default;
+			}
+		}
+
 		var stages = new List<CommandNode> { this.ParseCommand() };
 		var pipes = new List<string>();
 
@@ -346,9 +369,9 @@ internal sealed class CommandParser
 			stages = [this.Joined([.. stages.Cast<Leaf>()], pipes)];
 		}
 
-		var begin = negated ? bang : stages[0].Start;
+		var begin = prefix < 0 ? stages[0].Start : prefix;
 
-		return new Pipeline(begin, stages[^1].End, negated, stages, pipes) { Text = this.TextOf(start, begin, stages[^1].End) };
+		return new Pipeline(begin, stages[^1].End, negated, time, stages, pipes) { Text = this.TextOf(start, begin, stages[^1].End) };
 	}
 
 	/// <summary>
@@ -1084,6 +1107,7 @@ internal sealed class CommandParser
 			[] => true,
 			[.., { Kind: TokenKind.Newline }] => true,
 			[.., { Kind: TokenKind.Operator } previous] => !IsRedirect(previous),
+			[.., { Kind: TokenKind.Word, Text: "time" }, { Kind: TokenKind.Word, Text: "-p" }] => true,
 			[.., { Kind: TokenKind.Word, Text: var word }] => ReservedWords.Contains(word),
 			_ => false,
 		};

@@ -44,8 +44,9 @@ and mouse reporting all work.
   for words, <kbd>Ctrl</kbd>+<kbd>T</kbd> to swap two characters, <kbd>Alt</kbd>+<kbd>.</kbd> for the last command's
   last word, <kbd>Ctrl</kbd>+<kbd>_</kbd> to undo, and <kbd>Ctrl</kbd>+<kbd>X</kbd> <kbd>Ctrl</kbd>+<kbd>E</kbd> to edit
   the line in `$VISUAL` or `$EDITOR` and run it. Setting `PS1` replaces the header and the `❯` with your own prompt,
-  read as bash reads it: escapes like `\u`, `\w` and `\$`, `\[ \]` around colors, `$VAR` and `$(...)`.
-  `PROMPT_COMMAND` runs before each prompt.
+  read as bash reads it: escapes like `\u`, `\w` and `\$`, `\[ \]` around colors, `$VAR` and `$(...)`. Its clock
+  escapes like `\t` follow an exported `TZ`, daylight saving included, whether it names a zone like `Asia/Tokyo` or
+  is a POSIX rule like `CET-1CEST,M3.5.0,M10.5.0/3`. `PROMPT_COMMAND` runs before each prompt.
 - **Tabs.** Each tab runs its own shell, and a new tab opens in the current tab's folder.
 - **Job control.** POSIX job control with `&`, `jobs`, `fg`, `bg`, `wait`, `kill` and `disown`, plus pipelines and
   command lists joined by `;`, `&&` and `||`.
@@ -54,6 +55,8 @@ and mouse reporting all work.
   command can span lines, and the prompt asks for the rest with `> `. Redirects after one apply to everything inside,
   so `{ echo a; ls; } > f` and `while read l; do ...; done < f` work, and a compound stage of a pipeline runs in a
   copy of the shell with real pipes, so `tail -f log | while read l; do ...; done` streams.
+- **Timing.** `time` in front of a pipeline shows the real, user and system time it took, aliases, functions and
+  builtins included, on standard error. `time -p` uses the POSIX layout, and `TIMEFORMAT` sets your own, as in bash.
 - **Expansions.** `$NAME`, `~`, wildcards like `*.tmp`, and command substitution with `$(...)` or backquotes, so
   `cd $(git rev-parse --show-toplevel)` and `export GPG_TTY=$(tty)` work. A substitution runs in the shell itself, and
   the folder, variables and aliases it changes are put back afterwards, as a subshell would leave them. The special

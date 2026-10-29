@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Features.Arithmetic;
+using Sharpie.Shell.Features.Time;
 using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Common;
@@ -138,6 +139,14 @@ internal sealed class ShellHooks(Func<string, bool, int> run)
 	public Func<string, bool, string> CopyCommand { get; init; } = (text, _) => text;
 
 	/// <summary>
+	/// Gets the hook that shows how long a pipeline after <c>time</c> took.
+	/// </summary>
+	/// <value>
+	/// The hook. By default it does nothing.
+	/// </value>
+	public Action<ElapsedTimes, Timing> ReportTime { get; init; } = (_, _) => { };
+
+	/// <summary>
 	/// Gets the hook that stores a function definition.
 	/// </summary>
 	/// <value>
@@ -265,9 +274,9 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 	/// </summary>
 	/// <param name="command">The command.</param>
 	/// <returns>
-	/// <see langword="true" /> for one pipeline of simple commands with no <c>!</c>.
+	/// <see langword="true" /> for one pipeline of simple commands with no <c>!</c> or <c>time</c>.
 	/// </returns>
-	private static bool IsSimple(AndOr command) => command is { Rest: [], First: { Negated: false, Stages: [Leaf] } };
+	private static bool IsSimple(AndOr command) => command is { Rest: [], First: { Negated: false, Time: Timing.None, Stages: [Leaf] } };
 
 	/// <summary>
 	/// Runs pipelines joined by <c>&amp;&amp;</c> and <c>||</c>, skipping each one its operator rules out.
@@ -326,7 +335,7 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 	/// <param name="pipeline">The pipeline.</param>
 	/// <param name="tested"><see langword="true" /> when it's tested.</param>
 	/// <returns>
-	/// The last stage's status, flipped after <c>!</c>.
+	/// The last stage's status, flipped after <c>!</c>. After <c>time</c> the times are reported once it ends.
 	/// </returns>
 	/// <remarks>
 	/// A pipeline with a compound stage runs each compound stage in a copy of the shell, with real pipes between the
@@ -336,7 +345,13 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 	{
 		tested |= pipeline.Negated;
 
+		var clock = pipeline.Time == Timing.None ? null : ProcessTimes.Start();
 		var status = pipeline.Stages is [var only] ? this.RunCommand(only, tested) : this.RunJoined(pipeline, tested);
+
+		if (clock is not null)
+		{
+			hooks.ReportTime(clock.Stop(), pipeline.Time);
+		}
 
 		status = pipeline.Negated ? (status == 0 ? 1 : 0) : status;
 		hooks.SetStatus(status);

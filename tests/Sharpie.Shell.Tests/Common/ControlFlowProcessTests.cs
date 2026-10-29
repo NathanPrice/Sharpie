@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentAssertions;
 using Sharpie.Shell.Common;
 
@@ -99,7 +100,9 @@ public sealed class ControlFlowProcessTests : IDisposable
 	[InlineData("echo() { command echo \"wrapped $1\"; }; echo hi; echo x | cat; command echo plain | cat", "wrapped hi\nwrapped x\nplain\n")]
 	[InlineData("set -e; if echo a | while read l; do false; echo \"got $l\"; done; then echo yes; fi", "got a\nyes\n")]
 	[InlineData("if true; then cat <<EOF\nbody\nEOF\nfi", "body\n")]
-	[InlineData("type if fi", "if is a shell keyword\nfi is a shell keyword\n")]
+	[InlineData("type if fi time", "if is a shell keyword\nfi is a shell keyword\ntime is a shell keyword\n")]
+	[InlineData("! ! true; echo $?; TIMEFORMAT=; time false; echo $?", "0\n1\n")]
+	[InlineData("TIMEFORMAT='%%|%0R'; { time true; } 2>&1", "%|0\n")]
 	[InlineData("command -v while", "while\n")]
 	[InlineData("i=0; while (( i < 3 )); do echo $i; (( i++ )); done", "0\n1\n2\n")]
 	[InlineData("for ((i=0; i<3; i++)); do echo $i; done", "0\n1\n2\n")]
@@ -118,6 +121,60 @@ public sealed class ControlFlowProcessTests : IDisposable
 		// Assert
 		_ = run.Error.Should().BeEmpty();
 		_ = run.Output.Should().Be(expected);
+	}
+
+	/// <summary>
+	/// Checks that <c>time</c> writes bash's layout to standard error, and <c>time -p</c> POSIX's, which a redirect
+	/// around the timed command catches.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithTime_ReportsOnStandardError()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, this.folder, arguments: ["-c", "time true; { time -p alias x=y; } 2>&1"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Error.Should().MatchRegex(@"^\nreal\t0m\d\.\d{3}s\nuser\t0m\d\.\d{3}s\nsys\t0m\d\.\d{3}s\n$");
+		_ = run.Output.Should().MatchRegex(@"^real \d+\.\d\d\nuser \d+\.\d\d\nsys \d+\.\d\d\n$");
+	}
+
+	/// <summary>
+	/// Checks that the user time counts the programs the timed command started, apart from the system time, and only
+	/// what ran while it was timed, so a builtin after a program that made many system calls shows next to nothing.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithTimeOfBusyProgram_CountsItsUserTime()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, this.folder, arguments: ["-c", "TIMEFORMAT='%3U %3S'; dd if=/dev/zero of=/dev/null bs=1 count=400000 2>/dev/null; time true; time sh -c 'i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done'"]).ConfigureAwait(true);
+
+		// Assert
+		var times = run.Error.Split([' ', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(time => double.Parse(time, CultureInfo.InvariantCulture)).ToArray();
+
+		_ = times[..2].Should().AllSatisfy(time => time.Should().BeLessThan(0.05));
+		_ = times[2].Should().BeGreaterThan(0.15);
+		_ = times[3].Should().BeLessThan(times[2] / 2);
+	}
+
+	/// <summary>
+	/// Checks that the prompt's clock follows a <c>TZ</c> exported in the session, after it showed the zone the shell
+	/// started in.
+	/// </summary>
+	/// <returns>A task that completes when the test is done.</returns>
+	[Fact]
+	public async Task Shell_WithExportedTz_ShowsPromptClockInThatZone()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync("PS1='[\\A] '\nexport TZ=Etc/GMT-14\nexit\n", this.folder, new Dictionary<string, string> { ["TZ"] = "UTC" }).ConfigureAwait(true);
+
+		// Assert
+		var started = TimeOnly.ParseExact(run.Output[^15..^10], "HH:mm", CultureInfo.InvariantCulture);
+		var shown = TimeOnly.ParseExact(run.Output[^7..^2], "HH:mm", CultureInfo.InvariantCulture);
+
+		_ = (TimeOnly.FromDateTime(DateTime.UtcNow) - started).TotalMinutes.Should().BeLessThan(2);
+		_ = (TimeOnly.FromDateTime(DateTime.UtcNow.AddHours(14)) - shown).TotalMinutes.Should().BeLessThan(2);
 	}
 
 	/// <summary>

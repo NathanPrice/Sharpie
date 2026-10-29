@@ -130,6 +130,11 @@ internal static class Highlighter
 						kind = null;
 						break;
 
+					// time's -p is an option, so the command comes after it.
+					case null when value == "-p" && line.AsSpan(0, start).TrimEnd().EndsWith("time", StringComparison.Ordinal):
+						kind = null;
+						break;
+
 					// A reserved word is typed unquoted, and the word after it starts a command again.
 					case null when IsKeyword(line[start..end]):
 						kind = TokenKind.Command;

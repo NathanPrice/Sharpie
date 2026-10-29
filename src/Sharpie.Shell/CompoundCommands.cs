@@ -7,6 +7,7 @@ using Sharpie.Shell.Features.Aliases;
 using Sharpie.Shell.Features.Arithmetic;
 using Sharpie.Shell.Features.Builtins;
 using Sharpie.Shell.Features.Functions;
+using Sharpie.Shell.Features.Time;
 using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell;
@@ -183,6 +184,7 @@ internal static class CompoundCommands
 			Redirected = (redirects, body) => Redirected(commands, aliases, declare, settings, redirects, body),
 			// One SHLVL down, since the copy raises it again and bash's subshell stays on the same level.
 			CopyCommand = (text, tested) => $"SHLVL={DeclareCommand.ShellLevel - 1} " + string.Join(' ', ((string[])[Environment.ProcessPath!, .. CopyArguments(commands, aliases, declare, settings, text, tested)]).Select(CommandLine.Quote)),
+			ReportTime = (times, timing) => ReportTime(times, timing, declare.Variables),
 			Define = definition => BuiltinCommands.DefineFunction(commands, definition, declare, body => Program.RunLine(commands, aliases, declare, body)),
 			Declare = declare,
 		};
@@ -202,6 +204,40 @@ internal static class CompoundCommands
 
 			return result;
 		}
+	}
+
+	/// <summary>
+	/// Shows how long a pipeline after <c>time</c> took on standard error, so <c>{ time make; } 2&gt;log</c> sends it to
+	/// the file and <c>time make 2&gt;log</c> doesn't, as in bash.
+	/// </summary>
+	/// <param name="times">The times.</param>
+	/// <param name="timing">
+	/// <see cref="Timing.Posix" /> for <c>time -p</c>'s layout; otherwise <c>TIMEFORMAT</c>'s, or bash's when it isn't
+	/// set. An empty <c>TIMEFORMAT</c> shows nothing.
+	/// </param>
+	/// <param name="variables">The shell variables.</param>
+	private static void ReportTime(ElapsedTimes times, Timing timing, IReadOnlyDictionary<string, string> variables)
+	{
+		var format = timing == Timing.Posix ? TimeFormat.Posix
+			: variables.TryGetValue("TIMEFORMAT", out var value) ? value
+			: Environment.GetEnvironmentVariable("TIMEFORMAT") ?? TimeFormat.Default;
+
+		if (format.Length == 0)
+		{
+			return;
+		}
+
+		if (TimeFormat.Format(format, times, out var invalid) is { } text)
+		{
+			Console.Error.Write(text);
+
+			return;
+		}
+
+		new ShellError("sharpie::shell::bad_time_format", invalid == '\0' ? "TIMEFORMAT ends inside a `%` code" : $"TIMEFORMAT has `%{invalid}`, which isn't a time code")
+		{
+			Help = "use %R, %U or %S with an optional digit and l before the letter, %P, or %% for a %",
+		}.Write();
 	}
 
 	/// <summary>

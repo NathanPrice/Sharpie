@@ -24,6 +24,10 @@ internal static unsafe partial class NativeMethods
 	// tcsetattr: apply once pending output is written.
 	internal const int Drain = 1;
 
+	// getrusage: the calling process, and its children that have ended and been waited for.
+	internal const int UsageSelf = 0;
+	internal const int UsageChildren = -1;
+
 	// glibc's posix_spawn_file_actions_t is 80 bytes, posix_spawnattr_t 336 and sigset_t 128. On macOS each is a
 	// pointer or smaller. These buffers cover both with room to spare, so no layout has to be copied here. Same for
 	// termios, which is 60 bytes on Linux and 72 on macOS.
@@ -617,6 +621,36 @@ internal static unsafe partial class NativeMethods
 	[LibraryImport("libc", EntryPoint = "getpid")]
 	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
 	internal static partial int GetProcessId();
+
+	/// <summary>
+	/// Reads the processor time a process or its ended children used.
+	/// </summary>
+	/// <param name="who"><see cref="UsageSelf" /> or <see cref="UsageChildren" />.</param>
+	/// <returns>
+	/// The user and system time, or zero when the call fails.
+	/// </returns>
+	internal static (TimeSpan User, TimeSpan System) ResourceUsage(int who)
+	{
+		// struct rusage is 144 bytes on Linux and macOS and starts with ru_utime and ru_stime, each a 16-byte timeval:
+		// the seconds as a long, then the microseconds, whose low 4 bytes hold the value on both since it's under 10^6.
+		var usage = stackalloc byte[144];
+
+		return GetResourceUsage(who, usage) == 0 ? (Time(usage), Time(usage + 16)) : default;
+
+		static TimeSpan Time(byte* timeval) => TimeSpan.FromSeconds(*(long*)timeval) + TimeSpan.FromMicroseconds(*(int*)(timeval + 8));
+	}
+
+	/// <summary>
+	/// Fills a <c>struct rusage</c> with what a process used.
+	/// </summary>
+	/// <param name="who"><see cref="UsageSelf" /> or <see cref="UsageChildren" />.</param>
+	/// <param name="usage">Receives the <c>struct rusage</c>.</param>
+	/// <returns>
+	/// 0, or -1 on failure.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "getrusage")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial int GetResourceUsage(int who, byte* usage);
 
 	/// <summary>
 	/// Gets the id of the process that started this one.

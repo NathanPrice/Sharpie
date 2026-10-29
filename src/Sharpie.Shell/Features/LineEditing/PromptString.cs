@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Time;
 
 namespace Sharpie.Shell.Features.LineEditing;
 
@@ -126,11 +127,11 @@ internal static class PromptString
 		'j' => ExternalProgram.Jobs.Count.ToString(CultureInfo.InvariantCulture),
 		'!' => historyNumber.ToString(CultureInfo.InvariantCulture),
 		'#' => commandNumber.ToString(CultureInfo.InvariantCulture),
-		'd' => DateTime.Now.ToString("ddd MMM dd", CultureInfo.InvariantCulture),
-		't' => DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture),
-		'T' => DateTime.Now.ToString("hh:mm:ss", CultureInfo.InvariantCulture),
-		'@' => DateTime.Now.ToString("hh:mm tt", CultureInfo.InvariantCulture),
-		'A' => DateTime.Now.ToString("HH:mm", CultureInfo.InvariantCulture),
+		'd' => ShellTimeZone.Now().ToString("ddd MMM dd", CultureInfo.InvariantCulture),
+		't' => ShellTimeZone.Now().ToString("HH:mm:ss", CultureInfo.InvariantCulture),
+		'T' => ShellTimeZone.Now().ToString("hh:mm:ss", CultureInfo.InvariantCulture),
+		'@' => ShellTimeZone.Now().ToString("hh:mm tt", CultureInfo.InvariantCulture),
+		'A' => ShellTimeZone.Now().ToString("HH:mm", CultureInfo.InvariantCulture),
 		'n' => "\n",
 		'r' => "\r",
 		'a' => "\a",
