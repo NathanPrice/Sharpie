@@ -37,7 +37,8 @@ and mouse reporting all work.
 - **Real terminal.** Programs run in a pseudo-terminal, so colors, full-screen apps and mouse reporting work. The
   window adds scrollback and copy/paste.
 - **Line editor.** The prompt header shows the folder, git branch and how long the last command took. Commands are
-  colored as you type, <kbd>Tab</kbd> completes, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and a gray suggestion from
+  colored as you type, <kbd>Tab</kbd> completes commands, files, `$VAR` names and `~user` at the cursor, quoting names
+  that need it, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and a gray suggestion from
   the history fills in as you type. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>R</kbd> searches the history as in
   bash. bash's usual editing keys work too, among them <kbd>Ctrl</kbd>+<kbd>W</kbd>/<kbd>U</kbd>/<kbd>K</kbd> to cut and
   <kbd>Ctrl</kbd>+<kbd>Y</kbd> to paste back, <kbd>Alt</kbd>+<kbd>B</kbd>/<kbd>F</kbd>/<kbd>D</kbd>/<kbd>Backspace</kbd>

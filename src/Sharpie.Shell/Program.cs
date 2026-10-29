@@ -623,7 +623,7 @@ internal static class Program
 			() => Console.ReadKey(intercept: true),
 			Console.Out,
 			() => Console.WindowWidth,
-			new TabCompleter(names, completions.FindCompleter),
+			new TabCompleter(names, completions.FindCompleter, declare.Variables),
 			history.Lines,
 			names,
 			line => EditInEditor(commands, aliases, declare, line));

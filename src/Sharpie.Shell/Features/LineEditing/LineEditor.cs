@@ -410,7 +410,7 @@ internal sealed partial class LineEditor(
 		if (this.commandMatches is null || !typed.StartsWith(this.commandPrefix, StringComparison.Ordinal))
 		{
 			this.commandPrefix = typed;
-			this.commandMatches = [.. Completions.FindMatches(typed, builtins)];
+			this.commandMatches = [.. Completions.FindCommands(typed, builtins)];
 		}
 		else
 		{
@@ -418,7 +418,7 @@ internal sealed partial class LineEditor(
 			this.commandPrefix = typed;
 		}
 
-		return Completions.Complete(typed, this.commandMatches)?.TrimEnd() ?? string.Empty;
+		return Completions.Complete(typed, this.commandMatches) is (var value, _) ? value[typed.Length..] : string.Empty;
 	}
 
 	/// <summary>
@@ -752,10 +752,10 @@ internal sealed partial class LineEditor(
 	/// </returns>
 	private Outcome Complete()
 	{
-		var result = completer.Press(this.line.ToString());
+		var result = completer.Press(this.line.ToString(), this.cursor);
 
 		_ = this.line.Clear().Append(result.Line);
-		this.cursor = this.line.Length;
+		this.cursor = result.Cursor;
 		this.listed = result.Listed;
 		this.selected = result.Selected;
 

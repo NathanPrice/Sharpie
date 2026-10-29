@@ -176,6 +176,26 @@ public sealed class HighlighterTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that another user's home folder, written <c>~user</c> or <c>~user/</c>, isn't flagged as missing, while a
+	/// path under an unknown user is.
+	/// </summary>
+	[Fact]
+	public void Highlight_PathUnderTildeUser_FlagsNothing()
+	{
+		// Windows has no ~user.
+		if (OperatingSystem.IsWindows())
+		{
+			return;
+		}
+
+		// Act
+		var tokens = Highlighter.Highlight("ls ~root/ ~root ~nosuchsampleuser/x", Builtins);
+
+		// Assert
+		_ = tokens.Where(token => token.Kind == TokenKind.MissingPath).Should().Equal(new Token(16, 19, TokenKind.MissingPath));
+	}
+
+	/// <summary>
 	/// Checks that plain words and paths that exist aren't flagged.
 	/// </summary>
 	/// <param name="line">The typed line.</param>

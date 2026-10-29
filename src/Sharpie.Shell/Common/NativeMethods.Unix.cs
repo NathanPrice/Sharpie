@@ -758,6 +758,63 @@ internal static unsafe partial class NativeMethods
 	private static partial void* GetPasswordEntry(string name);
 
 	/// <summary>
+	/// Lists the login names in the system's user database, for completing <c>~user</c>.
+	/// </summary>
+	/// <returns>
+	/// The names in the order the database gives them, possibly with repeats when two sources list the same user.
+	/// </returns>
+	/// <remarks>
+	/// The name is the first field of <c>struct passwd</c> on every system, so no layout check is needed.
+	/// </remarks>
+	internal static List<string> UserNames()
+	{
+		var names = new List<string>();
+
+		RewindPasswordEntries();
+
+		try
+		{
+			for (var entry = NextPasswordEntry(); entry is not null; entry = NextPasswordEntry())
+			{
+				if (Marshal.PtrToStringUTF8(*(nint*)entry) is { Length: > 0 } name)
+				{
+					names.Add(name);
+				}
+			}
+		}
+		finally
+		{
+			ClosePasswordEntries();
+		}
+
+		return names;
+	}
+
+	/// <summary>
+	/// Starts reading the user database from its first entry.
+	/// </summary>
+	[LibraryImport("libc", EntryPoint = "setpwent")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial void RewindPasswordEntries();
+
+	/// <summary>
+	/// Reads the next entry of the user database.
+	/// </summary>
+	/// <returns>
+	/// The entry's <c>struct passwd</c>, or null after the last one.
+	/// </returns>
+	[LibraryImport("libc", EntryPoint = "getpwent")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial void* NextPasswordEntry();
+
+	/// <summary>
+	/// Stops reading the user database and frees what reading it held open.
+	/// </summary>
+	[LibraryImport("libc", EntryPoint = "endpwent")]
+	[DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+	private static partial void ClosePasswordEntries();
+
+	/// <summary>
 	/// A <c>struct rlimit</c>: the soft limit the system enforces, and the hard limit the soft one can be raised to.
 	/// </summary>
 	/// <param name="current">The soft limit.</param>

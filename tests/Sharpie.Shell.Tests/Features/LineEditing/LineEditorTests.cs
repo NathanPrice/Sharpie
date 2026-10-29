@@ -297,6 +297,28 @@ public sealed partial class LineEditorTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that Tab in the middle of the line completes the word before the cursor and leaves the cursor after it,
+	/// so typing goes on from there.
+	/// </summary>
+	[Fact]
+	public void ReadLine_TabMidLine_KeepsCursorAfterCompletedWord()
+	{
+		// Arrange
+		this.Type("ec x");
+		this.Press(ConsoleKey.LeftArrow);
+		this.Press(ConsoleKey.LeftArrow);
+		this.Press(ConsoleKey.Tab);
+		this.Type("!");
+		this.Press(ConsoleKey.Enter);
+
+		// Act
+		var line = this.sut.ReadLine(string.Empty);
+
+		// Assert
+		_ = line.Should().Be("echo! x");
+	}
+
+	/// <summary>
 	/// Checks that a line longer than the terminal wraps, and the redraw moves back up to the prompt's row first.
 	/// </summary>
 	[Fact]

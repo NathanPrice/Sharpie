@@ -33,6 +33,7 @@ public sealed class CompletionsTests : IDisposable
 	[InlineData("ech", "o ")]
 	[InlineData("exi", "t ")]
 	[InlineData("echo", " ")]
+	[InlineData("  ech", "o ")]
 	public void Complete_WithUniqueMatch_ReturnsRestAndSpace(string partial, string expected)
 	{
 		// Act
@@ -170,7 +171,7 @@ public sealed class CompletionsTests : IDisposable
 	}
 
 	/// <summary>
-	/// Checks that <see cref="Completions.FindMatches" /> returns the matches sorted, and a builtin that is also on
+	/// Checks that <see cref="Completions.FindCommands" /> returns the matches sorted, and a builtin that is also on
 	/// <c>PATH</c> only once.
 	/// </summary>
 	/// <param name="partial">The text typed before Tab.</param>
@@ -186,7 +187,7 @@ public sealed class CompletionsTests : IDisposable
 		_ = ShellEnvironment.CreateFile(this.pathFolder, "echo", executable: true);
 
 		// Act
-		var result = Completions.FindMatches(partial, Names);
+		var result = Completions.FindCommands(partial, Names);
 
 		// Assert
 		_ = result.Should().Equal(expected);
@@ -203,7 +204,7 @@ public sealed class CompletionsTests : IDisposable
 	[InlineData("cat a.txt re", "adme.txt ")]
 	[InlineData("cat no", null)]
 	[InlineData("cat sr", "c/")]
-	[InlineData(" re", "adme.txt ")]
+	[InlineData("cat\tre", "adme.txt ")]
 	public void Complete_WithArgument_CompletesFileName(string partial, string? expected)
 	{
 		// Arrange
@@ -304,5 +305,6 @@ public sealed class CompletionsTests : IDisposable
 	/// <returns>
 	/// The text Tab adds, or <see langword="null" /> when it adds none.
 	/// </returns>
-	private static string? Complete(string partial) => Completions.Complete(partial, Completions.FindMatches(partial, Names));
+	private static string? Complete(string partial) =>
+		new TabCompleter(Names).Press(partial, partial.Length) is { Bell: false } result ? result.Line[partial.Length..] : null;
 }

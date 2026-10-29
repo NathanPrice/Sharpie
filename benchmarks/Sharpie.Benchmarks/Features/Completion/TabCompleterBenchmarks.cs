@@ -48,7 +48,7 @@ public class TabCompleterBenchmarks
 	{
 		this.completer.Reset();
 
-		return this.completer.Press("gi").Line;
+		return this.completer.Press("gi", 2).Line;
 	}
 
 	/// <summary>
@@ -62,6 +62,6 @@ public class TabCompleterBenchmarks
 	{
 		this.completer.Reset();
 
-		return this.completer.Press(this.pathLine).Line;
+		return this.completer.Press(this.pathLine, this.pathLine.Length).Line;
 	}
 }

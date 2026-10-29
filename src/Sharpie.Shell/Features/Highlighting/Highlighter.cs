@@ -363,17 +363,28 @@ internal static class Highlighter
 	}
 
 	/// <summary>
-	/// Replaces a leading <c>~</c> in <paramref name="path" /> with the user's home folder, the way <c>cd</c> does.
+	/// Replaces a leading <c>~</c> or <c>~user</c> in <paramref name="path" /> with that user's home folder, the way
+	/// <c>cd</c> does.
 	/// </summary>
 	/// <param name="path">The path as typed.</param>
 	/// <returns>
-	/// The expanded path, or <paramref name="path" /> unchanged when it doesn't start with <c>~</c> or <c>~/</c>.
+	/// The expanded path, or <paramref name="path" /> unchanged when it doesn't start with <c>~</c> or names an unknown
+	/// user. Windows has no lookup of another user's home folder, so there <c>~user</c> stays as typed.
 	/// </returns>
 	private static string ExpandHome(string path)
 	{
-		var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+		if (!path.StartsWith('~'))
+		{
+			return path;
+		}
 
-		return path == "~" ? home : path.StartsWith("~/", StringComparison.Ordinal) ? Path.Combine(home, path[2..]) : path;
+		var slash = path.IndexOf('/', StringComparison.Ordinal);
+		var user = slash < 0 ? path[1..] : path[1..slash];
+		var home = user.Length == 0
+			? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+			: OperatingSystem.IsWindows() ? null : NativeMethods.HomeOf(user);
+
+		return home is null ? path : slash < 0 ? home : Path.Combine(home, path[(slash + 1)..]);
 	}
 
 	/// <summary>
