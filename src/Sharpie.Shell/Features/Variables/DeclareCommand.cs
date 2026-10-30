@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Arithmetic;
 
 namespace Sharpie.Shell.Features.Variables;
 
@@ -11,7 +12,8 @@ namespace Sharpie.Shell.Features.Variables;
 /// <remarks>
 /// <c>declare NAME=VALUE</c> stores or overwrites a variable, and <c>declare -p NAME</c> prints it as
 /// <c>declare -- NAME="VALUE"</c>. A name must start with a letter or underscore and contain only letters, digits
-/// and underscores; anything else is reported as not a valid identifier and nothing is stored.
+/// and underscores; anything else is reported as not a valid identifier and nothing is stored. <c>declare -a NAME</c>
+/// makes an array, and <c>declare -p</c> prints one as <c>declare -a NAME=([0]="a" [1]="b")</c>.
 /// </remarks>
 internal partial class DeclareCommand : ICommand
 {
@@ -27,9 +29,9 @@ internal partial class DeclareCommand : ICommand
 
 	/// <summary>
 	/// One scope for each function that's running, innermost on top, holding each name <c>local</c> made in it, in
-	/// order, with its shell value and environment value from before, <see langword="null" /> where it had none.
+	/// order, with its shell value, environment value and array from before, <see langword="null" /> where it had none.
 	/// </summary>
-	private readonly Stack<List<(string Name, string? Value, string? Exported)>> scopes = new();
+	private readonly Stack<List<Local>> scopes = new();
 
 	/// <summary>
 	/// Gets how many functions are running, one inside another.
@@ -94,7 +96,11 @@ internal partial class DeclareCommand : ICommand
 		{
 			foreach (var name in names)
 			{
-				if (this.Variables.TryGetValue(name, out var value))
+				if (this.arrays.ContainsKey(name))
+				{
+					Console.WriteLine($"{this.Name} -a {name}={this.FormatArray(name)}");
+				}
+				else if (this.Variables.TryGetValue(name, out var value))
 				{
 					Console.WriteLine($@"{this.Name} -- {name}=""{value}""");
 				}
@@ -108,26 +114,74 @@ internal partial class DeclareCommand : ICommand
 			return status;
 		}
 
-		foreach (var arg in args)
-		{
-			// Split on the first '=' only, so a value can itself contain '='
-			var parts = arg.Split('=', 2);
+		var array = args is ["-a", ..];
 
-			if (!IsIdentifier(parts[0]))
+		foreach (var arg in array ? args[1..] : args)
+		{
+			if (!IsIdentifier(arg) && !IsAssignment(arg))
 			{
 				new ShellError("sharpie::declare::invalid_identifier", $"`{arg}` isn't a valid variable name") { Help = IdentifierHelp }.Write();
 				status = 1;
-
-				continue;
 			}
-
-			if (parts.Length == 2)
+			else if (IsIdentifier(arg))
 			{
-				this.Set(parts[0], parts[1]);
+				// declare NAME on its own changes nothing, though declare -a NAME makes it an array.
+				if (array)
+				{
+					this.MakeArray(arg);
+				}
+			}
+			else
+			{
+				status = Math.Max(status, this.AssignWord(arg, compound: null));
 			}
 		}
 
 		return status;
+	}
+
+	/// <summary>
+	/// Carries out one <c>NAME=VALUE</c> word, as a line of only such words or <c>declare</c> and <c>local</c> do.
+	/// </summary>
+	/// <param name="word">The word, which <see cref="IsAssignment" /> accepts.</param>
+	/// <param name="compound">
+	/// <see langword="true" /> when the value is a <c>(...)</c> list the shell read, <see langword="false" /> when it's
+	/// plain text, or <see langword="null" /> to take a value in parentheses as a list, as bash's <c>declare</c> does.
+	/// </param>
+	/// <returns>
+	/// 0, or 1 after reporting a subscript that names no element.
+	/// </returns>
+	/// <remarks>
+	/// <c>NAME+=VALUE</c> adds to the end of the value, <c>NAME=(...)</c> sets an array, <c>NAME+=(...)</c> adds to
+	/// one, and <c>NAME[i]=VALUE</c> sets one element, as in bash.
+	/// </remarks>
+	public int AssignWord(string word, bool? compound)
+	{
+		_ = TryParseAssignment(word, out var assignment);
+
+		var (name, subscript, append, value) = assignment;
+
+		try
+		{
+			if (subscript is null && (compound ?? value is ['(', .., ')']))
+			{
+				this.SetArray(name, value[1..^1], append);
+			}
+			else
+			{
+				var target = assignment.Target;
+
+				this.Set(target, append ? CommandLine.Lookup(this.Variables, target) + value : value);
+			}
+
+			return 0;
+		}
+		catch (ArithmeticExpression.Failure failure)
+		{
+			failure.Error.Write();
+
+			return 1;
+		}
 	}
 
 	/// <summary>
@@ -149,24 +203,41 @@ internal partial class DeclareCommand : ICommand
 	/// </summary>
 	/// <param name="word">One word of a command line.</param>
 	/// <returns>
-	/// <see langword="true" /> when the text before the first <c>=</c> is a valid name.
+	/// <see langword="true" /> when the text before the first <c>=</c> is a valid name, as
+	/// <see cref="TryParseAssignment" /> describes.
 	/// </returns>
-	public static bool IsAssignment(string word) => word.ArgumentNotNull().Split('=', 2) is [var name, _] && IsIdentifier(name);
+	public static bool IsAssignment(string word) => TryParseAssignment(word, out _);
 
 	/// <summary>
 	/// Stores or overwrites the variable <paramref name="name" />.
 	/// </summary>
-	/// <param name="name">A valid variable name.</param>
+	/// <param name="name">A valid variable name, or one with a subscript, as in <c>a[1]</c>, for one element.</param>
 	/// <param name="value">The value.</param>
+	/// <exception cref="ArithmeticExpression.Failure">The subscript names no element.</exception>
 	/// <remarks>
 	/// A name that is already in the environment gets the new value there too, so <c>PATH=...</c> reaches the programs
-	/// the shell starts, as it does in a POSIX shell where an exported variable stays exported.
+	/// the shell starts, as it does in a POSIX shell where an exported variable stays exported. An array's plain name
+	/// sets its element 0, as in bash.
 	/// </remarks>
 	public void Set(string name, string value)
 	{
 		_ = value.ArgumentNotNull();
 
-		this.AssignComputed(name.ArgumentNotNull(), value);
+		if (TrySplitElement(name.ArgumentNotNull(), out var array, out var subscript))
+		{
+			this.SetElement(array, subscript, value);
+
+			return;
+		}
+
+		if (this.arrays.TryGetValue(name, out var elements))
+		{
+			elements[0] = value;
+
+			return;
+		}
+
+		this.AssignComputed(name, value);
 		this.variables[name] = value;
 
 		if (Environment.GetEnvironmentVariable(name) is not null)
@@ -243,7 +314,7 @@ internal partial class DeclareCommand : ICommand
 
 		var caller = this.Positional;
 		var loops = this.LoopDepth;
-		var scope = new List<(string Name, string? Value, string? Exported)>();
+		var scope = new List<Local>();
 
 		this.SetPositional(arguments);
 		this.scopes.Push(scope);
@@ -258,7 +329,7 @@ internal partial class DeclareCommand : ICommand
 			this.LoopDepth = loops;
 			_ = this.scopes.Pop();
 
-			foreach (var (name, value, exported) in scope)
+			foreach (var (name, value, exported, array) in scope)
 			{
 				if (value is null)
 				{
@@ -267,6 +338,15 @@ internal partial class DeclareCommand : ICommand
 				else
 				{
 					this.variables[name] = value;
+				}
+
+				if (array is null)
+				{
+					_ = this.arrays.Remove(name);
+				}
+				else
+				{
+					this.arrays[name] = array;
 				}
 
 				// Only when it changed, since setting an empty value would take the variable out of the environment.
@@ -299,7 +379,9 @@ internal partial class DeclareCommand : ICommand
 			return false;
 		}
 
-		scope.Add((name, this.variables.GetValueOrDefault(name), Environment.GetEnvironmentVariable(name)));
+		var array = this.arrays.TryGetValue(name, out var elements) ? new SortedDictionary<long, string>(elements) : null;
+
+		scope.Add(new Local(name, this.variables.GetValueOrDefault(name), Environment.GetEnvironmentVariable(name), array));
 
 		return true;
 	}
@@ -386,18 +468,30 @@ internal partial class DeclareCommand : ICommand
 	/// <summary>
 	/// Removes the variable <paramref name="name" /> from the shell and from the environment.
 	/// </summary>
-	/// <param name="name">The variable name. A name that isn't set is ignored.</param>
+	/// <param name="name">
+	/// The variable name, or one with a subscript, as in <c>a[1]</c>, for one element. A name that isn't set is
+	/// ignored.
+	/// </param>
+	/// <exception cref="ArithmeticExpression.Failure">The subscript names no element.</exception>
 	public void Remove(string name)
 	{
-		_ = this.variables.Remove(name.ArgumentNotNull());
+		if (TrySplitElement(name.ArgumentNotNull(), out var array, out var subscript))
+		{
+			this.RemoveElement(array, subscript);
+
+			return;
+		}
+
+		_ = this.variables.Remove(name);
+		_ = this.arrays.Remove(name);
 		_ = this.computed.Remove(name);
 		Environment.SetEnvironmentVariable(name, null);
 	}
 
 	/// <summary>
-	/// Replaces every shell variable with the ones in <paramref name="saved" />.
+	/// Replaces every shell variable and array with the ones in <paramref name="saved" />.
 	/// </summary>
-	/// <param name="saved">A copy of <see cref="Variables" /> taken earlier.</param>
+	/// <param name="saved">A copy <see cref="Save" /> took earlier.</param>
 	/// <param name="locals">
 	/// <see cref="LocalCount" /> from when <paramref name="saved" /> was taken, or <see langword="null" /> to keep every
 	/// local.
@@ -408,13 +502,19 @@ internal partial class DeclareCommand : ICommand
 	/// a <c>local</c> inside <c>$(...)</c> doesn't make the variable local to the function around it, whose later
 	/// changes then stay when it returns, as in bash.
 	/// </remarks>
-	public void Restore(IReadOnlyDictionary<string, string> saved, int? locals = null)
+	public void Restore(Snapshot saved, int? locals = null)
 	{
 		this.variables.Clear();
+		this.arrays.Clear();
 
-		foreach (var (name, value) in saved.ArgumentNotNull())
+		foreach (var (name, value) in saved.ArgumentNotNull().Variables)
 		{
 			this.variables[name] = value;
+		}
+
+		foreach (var (name, elements) in saved.Arrays)
+		{
+			this.arrays[name] = new(elements);
 		}
 
 		if (locals is { } count && this.scopes.TryPeek(out var scope))
@@ -434,4 +534,13 @@ internal partial class DeclareCommand : ICommand
 	/// </remarks>
 	[GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*\z")]
 	private static partial Regex IdentifierRegex();
+
+	/// <summary>
+	/// A name <c>local</c> made in a running function, with what it held before.
+	/// </summary>
+	/// <param name="Name">The name.</param>
+	/// <param name="Value">Its shell value, or <see langword="null" /> when it had none.</param>
+	/// <param name="Exported">Its environment value, or <see langword="null" /> when it had none.</param>
+	/// <param name="Array">Its elements when it was an array, or <see langword="null" />.</param>
+	private sealed record Local(string Name, string? Value, string? Exported, SortedDictionary<long, string>? Array);
 }

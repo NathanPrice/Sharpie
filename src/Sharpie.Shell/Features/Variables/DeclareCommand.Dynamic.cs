@@ -2,6 +2,7 @@ using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Arithmetic;
 
 namespace Sharpie.Shell.Features.Variables;
 
@@ -179,8 +180,9 @@ internal partial class DeclareCommand
 	/// Stores a variable through the variables <see cref="CommandLine" /> expands from, as <c>${X:=value}</c> does.
 	/// </summary>
 	/// <param name="variables"><see cref="Variables" />, or a plain dictionary of variables.</param>
-	/// <param name="name">A valid variable name.</param>
+	/// <param name="name">A valid variable name, or one with a subscript for one element.</param>
 	/// <param name="value">The value.</param>
+	/// <exception cref="ArithmeticExpression.Failure">The subscript names no element.</exception>
 	/// <remarks>
 	/// Only a dictionary that can be written keeps the value; any other leaves it unchanged.
 	/// </remarks>
@@ -227,8 +229,14 @@ internal partial class DeclareCommand
 		public bool ContainsKey(string key) => this.TryGetValue(key, out _);
 
 		/// <inheritdoc />
+		/// <remarks>
+		/// An array gives its element 0, and a name with a subscript, as in <c>a[1]</c>, gives that element.
+		/// </remarks>
 		public bool TryGetValue(string key, [MaybeNullWhen(false)] out string value) =>
-			owner.computed.Contains(key) ? owner.TryCompute(key, out value) : owner.variables.TryGetValue(key, out value);
+			owner.computed.Contains(key) ? owner.TryCompute(key, out value)
+			: owner.arrays.TryGetValue(key, out var elements) ? elements.TryGetValue(0, out value)
+			: TrySplitElement(key, out var name, out var subscript) ? owner.TryGetElement(name, subscript, out value)
+			: owner.variables.TryGetValue(key, out value);
 
 		/// <inheritdoc />
 		public IEnumerator<KeyValuePair<string, string>> GetEnumerator()
@@ -243,6 +251,14 @@ internal partial class DeclareCommand
 				if (owner.TryCompute(name, out var value))
 				{
 					yield return new(name, value);
+				}
+			}
+
+			foreach (var (name, elements) in owner.arrays)
+			{
+				if (elements.TryGetValue(0, out var first))
+				{
+					yield return new(name, first);
 				}
 			}
 		}

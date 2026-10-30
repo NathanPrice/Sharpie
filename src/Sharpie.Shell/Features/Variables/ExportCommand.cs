@@ -11,7 +11,7 @@ namespace Sharpie.Shell.Features.Variables;
 /// <remarks>
 /// <c>export NAME=VALUE</c> sets the variable and exports it, <c>export NAME</c> exports a variable set earlier, and
 /// <c>export</c> or <c>export -p</c> lists every exported variable as <c>export NAME='VALUE'</c>, which POSIX requires
-/// to be readable as input again.
+/// to be readable as input again. <c>export NAME+=VALUE</c> adds to the end of the value first.
 /// </remarks>
 internal sealed class ExportCommand(DeclareCommand declare) : ICommand
 {
@@ -40,16 +40,16 @@ internal sealed class ExportCommand(DeclareCommand declare) : ICommand
 
 		foreach (var arg in args)
 		{
-			var parts = arg.Split('=', 2);
+			if (DeclareCommand.TryParseAssignment(arg, out var assignment) && assignment.Subscript is null)
+			{
+				var (name, _, append, value) = assignment;
 
-			if (!DeclareCommand.IsIdentifier(parts[0]))
+				declare.Export(name, append ? CommandLine.Lookup(declare.Variables, name) + value : value);
+			}
+			else if (!DeclareCommand.IsIdentifier(arg))
 			{
 				new ShellError("sharpie::export::invalid_identifier", $"`{arg}` isn't a valid variable name") { Help = DeclareCommand.IdentifierHelp }.Write();
 				status = 1;
-			}
-			else if (parts.Length == 2)
-			{
-				declare.Export(parts[0], parts[1]);
 			}
 			else if (declare.Variables.TryGetValue(arg, out var value))
 			{

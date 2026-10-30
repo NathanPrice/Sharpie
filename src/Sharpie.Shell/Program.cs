@@ -833,7 +833,7 @@ internal static class Program
 			{
 				CompoundCommands.Trace(declare, settings, stages);
 
-				return AssignmentStatus(declare.Run(only), substituted);
+				return AssignmentStatus(stageWords[0].Aggregate(0, (status, word) => Math.Max(status, declare.AssignWord(word.Text, word.Compound))), substituted);
 			}
 
 			// NAME=VALUE words in front of a command go into that command's environment only, as in POSIX. The last
@@ -851,6 +851,7 @@ internal static class Program
 			CompoundCommands.Trace(declare, settings, stages.Where((_, index) => !copied[index]));
 
 			stages = [.. stages.Select((stage, index) => stage[assignments[index].Length..])];
+			assignments = [.. assignments.Select(stage => stage.Select(declare.ForEnvironment).OfType<string>().ToArray())];
 
 			var arguments = stages[0][1..];
 

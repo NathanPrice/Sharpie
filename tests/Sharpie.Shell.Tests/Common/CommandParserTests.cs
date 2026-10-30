@@ -45,6 +45,8 @@ public sealed class CommandParserTests
 	[InlineData("for x in a;\n\ndo b; done", "for(x in a; 'b')")]
 	[InlineData("f()\n{ a; }", "function(f; group('a'))")]
 	[InlineData("a#b", "'a#b'")]
+	[InlineData("a=(x\n y) b+=(); c", "'a=(x\n y) b+=()', 'c'")]
+	[InlineData("a=(\")\" $(echo ')')) && b", "'a=(\")\" $(echo ')'))' && 'b'")]
 	[InlineData("a#b;c", "'a#b', 'c'")]
 	[InlineData("cat <<", "'cat <<'")]
 	[InlineData("cat << ; b\nx", "'cat <<', 'b', 'x'")]
@@ -297,8 +299,8 @@ public sealed class CommandParserTests
 	}
 
 	/// <summary>
-	/// Checks that the <c>case</c> fall-through operators and an unclosed substitution are refused with reports of their
-	/// own.
+	/// Checks that the <c>case</c> fall-through operators, an unclosed substitution and an unclosed array list are
+	/// refused with reports of their own.
 	/// </summary>
 	/// <param name="text">The text.</param>
 	/// <param name="code">The report's code.</param>
@@ -310,6 +312,7 @@ public sealed class CommandParserTests
 	[InlineData("case x in a) b;;& esac", "sharpie::parser::unsupported", 14, 17)]
 	[InlineData("case x in a) ;& esac", "sharpie::parser::unsupported", 13, 15)]
 	[InlineData("$(a", "sharpie::parser::unclosed_substitution", 0, 2)]
+	[InlineData("x a=(b", "sharpie::parser::unclosed_list", 4, 5)]
 	public void Parse_WithUnsupportedSyntax_RefusesIt(string text, string code, int start, int end)
 	{
 		// Act
@@ -319,6 +322,19 @@ public sealed class CommandParserTests
 		_ = parsed.List.Should().BeNull();
 		_ = parsed.Error!.Code.Should().Be(code);
 		_ = (parsed.Error.Start, parsed.Error.End).Should().Be((start, end));
+	}
+
+	/// <summary>
+	/// Checks that an array's list never closed is reported in words of its own, not as a substitution.
+	/// </summary>
+	[Fact]
+	public void Parse_WithListLeftOpen_SaysSo()
+	{
+		// Act
+		var parsed = CommandParser.Parse("a=(x");
+
+		// Assert
+		_ = (parsed.Error!.Summary, parsed.Error.Label, parsed.Error.Help).Should().Be(("The `(` of an array's list is never closed", "starts the list of elements", "add the missing `)`"));
 	}
 
 	/// <summary>

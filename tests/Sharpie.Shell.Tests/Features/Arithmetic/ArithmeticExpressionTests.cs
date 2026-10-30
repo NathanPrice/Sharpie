@@ -101,6 +101,42 @@ public sealed class ArithmeticExpressionTests
 	}
 
 	/// <summary>
+	/// Checks that a name with a subscript reads and sets one element, working the subscript out once, so
+	/// <c>a[i++] += 1</c> moves <c>i</c> by one, and not at all on a side that isn't taken.
+	/// </summary>
+	/// <param name="expression">The expression.</param>
+	/// <param name="expected">What bash gives.</param>
+	/// <param name="after">The variables that change, as <c>name=value</c> pairs separated by spaces.</param>
+	[Theory]
+	[InlineData("a[1]", 7, "")]
+	[InlineData("a[i+1] * 2", 14, "")]
+	[InlineData("a[a[1]-7]", 5, "")]
+	[InlineData("a[i++] += 1", 6, "a[0]=6 i=1")]
+	[InlineData("a[2] = a[0] + a[1]", 12, "a[2]=12")]
+	[InlineData("++a[1]", 8, "a[1]=8")]
+	[InlineData("a[1]--", 7, "a[1]=6")]
+	[InlineData("0 && a[i++]", 0, "")]
+	public void Evaluate_WithSubscripts_ReadsAndSetsElements(string expression, long expected, string after)
+	{
+		// Arrange
+		var variables = new Dictionary<string, string> { ["a[0]"] = "5", ["a[1]"] = "7", ["i"] = "0" };
+		var before = new Dictionary<string, string>(variables);
+
+		// Act
+		var value = ArithmeticExpression.Evaluate(expression, variables);
+
+		// Assert
+		_ = value.Should().Be(expected);
+
+		foreach (var pair in after.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+		{
+			before[pair.Split('=')[0]] = pair.Split('=')[1];
+		}
+
+		_ = variables.Should().Equal(before);
+	}
+
+	/// <summary>
 	/// Checks that names read variables, whose values are expressions in turn, that assignments and <c>++</c> and
 	/// <c>--</c> store their result, and that the side <c>&amp;&amp;</c>, <c>||</c> or <c>?:</c> doesn't take
 	/// neither assigns nor fails.

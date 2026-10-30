@@ -19,7 +19,7 @@ namespace Sharpie.Shell.Common;
 /// inside an unclosed substitution, or <see langword="null" />.
 /// </param>
 /// <param name="Refused">
-/// Where an unclosed <c>$(</c>, <c>$((</c> or backquote starts; otherwise, -1.
+/// Where an unclosed <c>$(</c>, <c>$((</c>, backquote or <c>NAME=(</c> list starts; otherwise, -1.
 /// </param>
 /// <param name="Unclosed">The delimiter of a here-document whose body runs to the end, or <see langword="null" />.</param>
 internal sealed record ParseResult(ListNode? List, ShellError? Error, bool Incomplete, char? OpenQuote, int Refused, string? Unclosed);
@@ -123,7 +123,7 @@ internal sealed class CommandParser
 	}
 
 	/// <summary>
-	/// Builds the report for an unclosed substitution.
+	/// Builds the report for an unclosed substitution or array list.
 	/// </summary>
 	/// <param name="text">The text.</param>
 	/// <param name="refused">Where the refused part starts.</param>
@@ -134,14 +134,23 @@ internal sealed class CommandParser
 	{
 		var backquote = text[refused] == '`';
 
-		return new ShellError("sharpie::parser::unclosed_substitution", backquote ? "The backquote is never closed" : "`$(` is never closed")
-		{
-			Source = text,
-			Start = refused,
-			End = refused + (backquote ? 1 : 2),
-			Label = "runs a command for its output",
-			Help = backquote ? "add the closing backquote" : "add the missing `)`",
-		};
+		return text[refused] == '('
+			? new ShellError("sharpie::parser::unclosed_list", "The `(` of an array's list is never closed")
+			{
+				Source = text,
+				Start = refused,
+				End = refused + 1,
+				Label = "starts the list of elements",
+				Help = "add the missing `)`",
+			}
+			: new ShellError("sharpie::parser::unclosed_substitution", backquote ? "The backquote is never closed" : "`$(` is never closed")
+			{
+				Source = text,
+				Start = refused,
+				End = refused + (backquote ? 1 : 2),
+				Label = "runs a command for its output",
+				Help = backquote ? "add the closing backquote" : "add the missing `)`",
+			};
 	}
 
 	/// <summary>
@@ -966,9 +975,9 @@ internal sealed class CommandParser
 		/// Reads the whole text.
 		/// </summary>
 		/// <returns>
-		/// The tokens, ending with <see cref="TokenKind.End" />; where an unclosed substitution starts, or -1; the quote
-		/// left open at the end, or <c>\</c> for a trailing backslash, which is the only quote given for an unclosed
-		/// substitution; and the delimiter of a here-document that never closed.
+		/// The tokens, ending with <see cref="TokenKind.End" />; where an unclosed substitution or array list starts, or
+		/// -1; the quote left open at the end, or <c>\</c> for a trailing backslash, which is the only quote given for an
+		/// unclosed substitution; and the delimiter of a here-document that never closed.
 		/// </returns>
 		public (List<Token> Tokens, int Refused, char? Quote, string? Unclosed) Scan()
 		{
@@ -980,6 +989,16 @@ internal sealed class CommandParser
 				{
 					this.escaped = false;
 					this.StartWord(index);
+				}
+				else if (this.quote is null && character == '(' && this.wordStart >= 0 && CommandLine.IsCompoundStart(text.AsSpan(this.wordStart, index - this.wordStart)))
+				{
+					// The list of a NAME=(...) word is part of the word, newlines included, as in bash.
+					if (CommandLine.CompoundEnd(text, index) is not (var listEnd and >= 0))
+					{
+						return (this.tokens, index, null, null);
+					}
+
+					index = listEnd;
 				}
 				else if (character == '`' || text.AsSpan(index).StartsWith("$(", StringComparison.Ordinal))
 				{

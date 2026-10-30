@@ -1,5 +1,6 @@
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Arithmetic;
 using Sharpie.Shell.Features.Functions;
 
 namespace Sharpie.Shell.Features.Variables;
@@ -13,7 +14,8 @@ namespace Sharpie.Shell.Features.Variables;
 /// </param>
 /// <remarks>
 /// <c>unset NAME...</c> removes each name, and a name that isn't set is skipped quietly, as POSIX requires. A leading
-/// <c>-v</c>, POSIX's flag for variables, is accepted, and <c>-f</c> removes functions instead.
+/// <c>-v</c>, POSIX's flag for variables, is accepted, and <c>-f</c> removes functions instead. <c>unset 'a[1]'</c>
+/// removes one element of an array.
 /// </remarks>
 internal sealed class UnsetCommand(DeclareCommand declare, IDictionary<string, ICommand>? commands = null) : ICommand
 {
@@ -42,9 +44,17 @@ internal sealed class UnsetCommand(DeclareCommand declare, IDictionary<string, I
 
 		foreach (var name in args is ["-v", .. var rest] ? rest : args)
 		{
-			if (DeclareCommand.IsIdentifier(name))
+			if (DeclareCommand.IsIdentifier(name) || DeclareCommand.TrySplitElement(name, out _, out _))
 			{
-				declare.Remove(name);
+				try
+				{
+					declare.Remove(name);
+				}
+				catch (ArithmeticExpression.Failure failure)
+				{
+					failure.Error.Write();
+					status = 1;
+				}
 			}
 			else
 			{

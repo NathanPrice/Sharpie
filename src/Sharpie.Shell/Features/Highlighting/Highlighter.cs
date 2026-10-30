@@ -125,8 +125,9 @@ internal static class Highlighter
 			{
 				switch (command)
 				{
-					// NAME=VALUE words in front of the command go into its environment, so they aren't the command.
-					case null when DeclareCommand.IsAssignment(value):
+					// NAME=VALUE words in front of the command go into its environment, so they aren't the command. A list
+					// still being typed, as in a=(x, is one too.
+					case null when DeclareCommand.IsAssignment(value) || DeclareCommand.IsAssignment(line[start..end]):
 						kind = null;
 						break;
 
@@ -210,21 +211,24 @@ internal static class Highlighter
 	private static bool IsKeyword(string typed) => CommandParser.ReservedWords.Contains(typed) || typed.StartsWith("((", StringComparison.Ordinal);
 
 	/// <summary>
-	/// Finds where the arithmetic or <c>${...}</c> at <paramref name="index" /> ends.
+	/// Finds where the arithmetic, <c>${...}</c> or array list at <paramref name="index" /> ends.
 	/// </summary>
 	/// <param name="line">The command line.</param>
 	/// <param name="index">The position.</param>
-	/// <param name="inWord"><see langword="true" /> when a word has started.</param>
+	/// <param name="start">Where the word being read starts, or -1 when none has started.</param>
 	/// <returns>
-	/// The position of the last <c>)</c> of a <c>$((...))</c>, or of a <c>((...))</c> that starts a word, or of the
-	/// <c>}</c> of a <c>${...}</c>, or -1.
+	/// The position of the last <c>)</c> of a <c>$((...))</c>, of a <c>((...))</c> that starts a word, or of the list
+	/// of a <c>NAME=(...)</c> word, which runs to the end of the line when it's never closed, or of the <c>}</c> of a
+	/// <c>${...}</c>, or -1.
 	/// </returns>
 	/// <remarks>
 	/// A quote inside <c>${...}</c> belongs to the expansion, as in <c>"${q/"'"/Q}"</c>, so it doesn't open or close one.
+	/// A <c>(</c> inside quotes never starts a list, since the word up to it then holds the quote.
 	/// </remarks>
-	private static int SkipEnd(string line, int index, bool inWord) =>
+	private static int SkipEnd(string line, int index, int start) =>
 		line.AsSpan(index).StartsWith("${", StringComparison.Ordinal) ? CommandLine.BraceEnd(line, index)
-		: inWord && line[index] != '$' ? -1 : CommandLine.ArithmeticEnd(line, index);
+		: line[index] == '(' && start >= 0 && CommandLine.IsCompoundStart(line.AsSpan(start, index - start)) ? CommandLine.CompoundEnd(line, index) is var listEnd and >= 0 ? listEnd : line.Length - 1
+		: start >= 0 && line[index] != '$' ? -1 : CommandLine.ArithmeticEnd(line, index);
 
 	/// <summary>
 	/// Finds where each word of <paramref name="line" /> starts and ends, and where its quoted parts are.
@@ -260,8 +264,9 @@ internal static class Highlighter
 				continue;
 			}
 
-			// A ((...)), $((...)) or ${...} is part of its word, so what's inside isn't read as commands or quotes.
-			if (SkipEnd(line, index, start >= 0) is var close and >= 0)
+			// A ((...)), $((...)), ${...} or NAME=(...) list is part of its word, so what's inside isn't read as commands
+			// or quotes.
+			if (SkipEnd(line, index, start) is var close and >= 0)
 			{
 				start = start < 0 ? index : start;
 				index = close;

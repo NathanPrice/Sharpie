@@ -25,7 +25,11 @@ namespace Sharpie.Shell.Common;
 /// <see langword="true" /> for a redirect's file name or stream that split into more than one word or into none, which
 /// bash refuses as an "ambiguous redirect". <see cref="Text" /> then holds it as typed, such as <c>$F</c>.
 /// </param>
-internal readonly record struct Word(string Text, bool IsOperator, int Start = 0, int End = 0, string? Pattern = null, bool Ambiguous = false);
+/// <param name="Compound">
+/// <see langword="true" /> for a <c>NAME=(...)</c> word, whose <see cref="Text" /> holds the list's words expanded
+/// and quoted, so <c>a=(*)</c> sets an array though <c>a='(*)'</c> sets text.
+/// </param>
+internal readonly record struct Word(string Text, bool IsOperator, int Start = 0, int End = 0, string? Pattern = null, bool Ambiguous = false, bool Compound = false);
 
 /// <summary>
 /// One redirect taken out of a command's words, such as <c>2&gt;&amp;1</c> or <c>&lt; in.txt</c>.

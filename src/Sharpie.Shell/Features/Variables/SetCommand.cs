@@ -136,7 +136,8 @@ internal sealed class SetCommand(DeclareCommand declare, ShellSettings settings)
 	/// </summary>
 	/// <remarks>
 	/// Environment variables count because POSIX makes them shell variables when the shell starts. A shell variable of
-	/// the same name wins, as it does when <c>$NAME</c> expands.
+	/// the same name wins, as it does when <c>$NAME</c> expands. An array shows as <c>NAME=([0]="a" [1]="b")</c>, as in
+	/// bash.
 	/// </remarks>
 	private void PrintVariables()
 	{
@@ -152,10 +153,15 @@ internal sealed class SetCommand(DeclareCommand declare, ShellSettings settings)
 			all[name] = value;
 		}
 
+		foreach (var name in declare.ArrayNames)
+		{
+			all[name] = string.Empty;
+		}
+
 		foreach (var (name, value) in all.Where(pair => DeclareCommand.IsIdentifier(pair.Key)))
 		{
 			// bash leaves an empty value as NAME= here, though set -x shows it as ''.
-			Console.WriteLine($"{name}={(value.Length == 0 ? string.Empty : CommandLine.QuoteIfNeeded(value))}");
+			Console.WriteLine($"{name}={(declare.IsArray(name) ? declare.FormatArray(name) : value.Length == 0 ? string.Empty : CommandLine.QuoteIfNeeded(value))}");
 		}
 	}
 }

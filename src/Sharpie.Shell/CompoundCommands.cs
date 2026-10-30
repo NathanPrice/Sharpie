@@ -268,7 +268,7 @@ internal static class CompoundCommands
 	{
 		var traps = TrapCommand.Save();
 		var folder = Directory.GetCurrentDirectory();
-		var variables = declare.Variables.ToDictionary();
+		var variables = declare.Save();
 		var restoreDynamic = declare.SaveDynamic();
 		var locals = declare.LocalCount;
 		var sets = declare.PositionalSetCount;
@@ -436,8 +436,8 @@ internal static class CompoundCommands
 	/// </returns>
 	/// <remarks>
 	/// The text starts with the shell's own state, so the copy has what a bash subshell would: the functions, the
-	/// variables that aren't exported, the aliases, and the other <c>set</c> options, last so <c>set -x</c> doesn't
-	/// show the rest. The exported variables and the folder come with the process.
+	/// variables that aren't exported, the arrays, the aliases, and the other <c>set</c> options, last so
+	/// <c>set -x</c> doesn't show the rest. The exported variables and the folder come with the process.
 	/// </remarks>
 	internal static string[] CopyArguments(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, ShellSettings settings, string text, bool tested)
 	{
@@ -448,9 +448,14 @@ internal static class CompoundCommands
 			_ = state.Append(function.Name).Append("() ").Append(function.Body).Append('\n');
 		}
 
-		foreach (var (name, value) in declare.Variables.Where(variable => DeclareCommand.IsIdentifier(variable.Key) && Environment.GetEnvironmentVariable(variable.Key) is null))
+		foreach (var (name, value) in declare.Variables.Where(variable => DeclareCommand.IsIdentifier(variable.Key) && !declare.IsArray(variable.Key) && Environment.GetEnvironmentVariable(variable.Key) is null))
 		{
 			_ = state.Append(name).Append('=').Append(CommandLine.Quote(value)).Append('\n');
+		}
+
+		foreach (var name in declare.ArrayNames)
+		{
+			_ = state.Append(name).Append('=').Append(declare.FormatArray(name)).Append('\n');
 		}
 
 		foreach (var (name, value) in aliases.Aliases)

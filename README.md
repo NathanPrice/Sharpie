@@ -71,6 +71,11 @@ and mouse reporting all work.
   number tests of `[[ ]]` are expressions too. Brace expansion comes first, as in bash: `cp file{,.bak}`,
   `mkdir -p src/{a,b,c}`, `{1..10}`, `{01..10..2}` and `{a..e}` give one word each, in order. `$'...'` quotes text
   with backslash escapes, as in bash, so `IFS=$'\n'` splits on line breaks and `$'it\'s'` keeps its quote.
+- **Arrays.** Indexed arrays work as in bash: `a=(x "y z")`, `a+=(w)`, `a[5]=v` and `unset 'a[1]'` set them, and
+  `"${a[@]}"`, `${a[i]}`, `${a[-1]}`, `${#a[@]}` and `${!a[@]}` read them, with the same operators as `"$@"`. A
+  subscript is an arithmetic expression, so `COMPREPLY[i++]=x` and `(( a[1] += 2 ))` work. `declare -a`, `local -a`
+  and `declare -p` know them, a subshell's changes to them are put back, `local` keeps one inside a function, and
+  `[[ $x =~ regex ]]` fills `BASH_REMATCH`. `NAME+=text` adds to a variable, `export PATH+=:/opt/bin` included.
 - **Redirects.** Bash's redirects work on builtins, programs and every stage of a pipeline: `<`, `>`, `>>`, `>|`,
   `&>`, `&>>`, any stream number as in `3> f`, copies and closes like `2>&1` and `2>&-`, here-documents
   (`<<EOF` and `<<-EOF`) and here-strings (`<<< text`). `ls /nope 2>&1 | wc -l` counts the error line, and

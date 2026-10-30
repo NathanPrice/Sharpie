@@ -20,7 +20,8 @@ internal sealed class LocalCommand(DeclareCommand declare) : ICommand
 	/// <remarks>
 	/// Each argument is <c>NAME=VALUE</c>, or <c>NAME</c>, which hides the outer value, an exported one included, until
 	/// the function returns. A <c>NAME</c> that's already local keeps its value, as in bash. The status is 1 when a
-	/// name isn't valid or no function is running.
+	/// name isn't valid or no function is running. <c>-a</c> makes each name an array, and <c>NAME=(...)</c> sets one, as
+	/// in bash.
 	/// <para>
 	/// bash still passes the outer exported value to the programs a <c>NAME</c> with no value runs. Sharpie keeps
 	/// exported variables only in the environment, so the value is hidden from them too until the function returns.
@@ -42,11 +43,13 @@ internal sealed class LocalCommand(DeclareCommand declare) : ICommand
 
 		var status = 0;
 
-		foreach (var arg in args)
-		{
-			var parts = arg.Split('=', 2);
+		var array = args is ["-a", ..];
 
-			if (!DeclareCommand.IsIdentifier(parts[0]))
+		foreach (var arg in array ? args[1..] : args)
+		{
+			var name = DeclareCommand.TryParseAssignment(arg, out var assignment) && assignment.Subscript is null ? assignment.Name : arg;
+
+			if (!DeclareCommand.IsIdentifier(name))
 			{
 				new ShellError("sharpie::local::invalid_identifier", $"`{arg}` isn't a valid variable name") { Help = DeclareCommand.IdentifierHelp }.Write();
 				status = 1;
@@ -54,15 +57,20 @@ internal sealed class LocalCommand(DeclareCommand declare) : ICommand
 				continue;
 			}
 
-			var saved = declare.Localize(parts[0]);
+			var saved = declare.Localize(name);
 
-			if (parts.Length == 2)
+			if (name != arg)
 			{
-				declare.Set(parts[0], parts[1]);
+				status = Math.Max(status, declare.AssignWord(arg, compound: null));
 			}
 			else if (saved)
 			{
-				declare.Remove(parts[0]);
+				declare.Remove(name);
+			}
+
+			if (array)
+			{
+				declare.MakeArray(name);
 			}
 		}
 

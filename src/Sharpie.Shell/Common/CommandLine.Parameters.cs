@@ -124,8 +124,9 @@ internal static partial class CommandLine
 	/// </exception>
 	/// <remarks>
 	/// The name is a variable name, digits for a positional parameter, or one of <c>? # $ ! - @ *</c>, where
-	/// <c>@</c> and <c>*</c> stand for the positional parameters joined by spaces. A <c>!</c> before the name reads
-	/// the parameter its value names instead, as in bash. The word after an operator is
+	/// <c>@</c> and <c>*</c> stand for the positional parameters joined by spaces. A name can take a subscript, as in
+	/// <c>${a[i]}</c>, <c>${a[@]}</c> and <c>${#a[@]}</c>, and <c>${!a[@]}</c> lists an array's indexes. A <c>!</c>
+	/// before the name reads the parameter its value names instead, as in bash. The word after an operator is
 	/// expanded as a word is, and inside double quotes as if it were quoted too. A pattern's quoted wildcards match
 	/// only themselves, and one from a variable stays a wildcard, as in bash.
 	/// </remarks>
@@ -144,6 +145,11 @@ internal static partial class CommandLine
 
 		var inside = line[(index + 2)..end];
 
+		if (TryExpandIndexes(inside, variables, quoted, separators, joiner, out parts))
+		{
+			return true;
+		}
+
 		// ${!n} reads the variable n names, then goes on as ${name...} would; ${!} alone is $!, and ${!prefix*} isn't read.
 		if (inside is ['!', _, ..] && ReadName(inside, 1) is { Length: > 0 } pointer and not ("@" or "*") && inside[(1 + pointer.Length)..] is not ("@" or "*"))
 		{
@@ -161,20 +167,28 @@ internal static partial class CommandLine
 
 		var name = ReadName(inside, 0);
 
-		// ${#} is the count and ${#NAME} the length, but ${#:-x} is $# with a default.
+		// ${#} is the count and ${#NAME} the length, but ${#:-x} is $# with a default. A subscript belongs to the name.
 		var measured = name == "#" ? ReadName(inside, 1) : string.Empty;
+
+		measured += SubscriptText(inside, 1 + measured.Length, measured);
+
 		var length = measured.Length > 0 && measured.Length == inside.Length - 1;
 
-		name = length ? measured : name;
+		name = length ? measured : name + SubscriptText(inside, name.Length, name);
 
 		var operation = inside[((length ? 1 : 0) + name.Length)..];
-		var positional = name is "@" or "*";
-		var parameters = positional ? DeclareCommand.ReadPositional(variables) : null;
+
+		var close = end;
+		Action<Word>? spanned = unset is null ? null : missing => unset(missing with { Start = index, End = close + 1 });
+
+		name = ResolveSubscript(name, variables, spanned, substitute);
+
+		var parameters = name is "@" or "*" ? DeclareCommand.ReadPositional(variables) : ListedElements(variables, name);
 		var value = parameters is null ? Lookup(variables, name) : string.Join(' ', parameters);
 		var expansion = new BracedExpansion(line, index, end, name, value, parameters, quoted, separators, joiner, variables, unset, substitute);
 
 		// The default forms decide what an unset name gives, so set -u leaves them alone, as bash does.
-		if (!BracedExpansion.IsDefault(operation) && unset is not null && !positional && !IsSet(variables, name))
+		if (!BracedExpansion.IsDefault(operation) && unset is not null && parameters is null && !IsSet(variables, name))
 		{
 			unset(new Word(name, IsOperator: false, index, end + 1));
 		}
@@ -211,6 +225,15 @@ internal static partial class CommandLine
 		/// </returns>
 		public static bool IsDefault(string operation) =>
 			operation is [':', '-' or '=' or '?' or '+', ..] or ['-' or '=' or '?' or '+', ..];
+
+		/// <summary>
+		/// Gets a value indicating whether the name is <c>*</c> or <c>NAME[*]</c>, whose words join into one inside
+		/// double quotes.
+		/// </summary>
+		/// <value>
+		/// <see langword="true" /> for those names.
+		/// </value>
+		private bool Star => this.Name is "*" || this.Name.EndsWith("[*]", StringComparison.Ordinal);
 
 		/// <summary>
 		/// Gets what the operator gives.
@@ -271,8 +294,9 @@ internal static partial class CommandLine
 			{
 				case '-' or '=' or '?' when given:
 					return this.Map(value => value);
+				// "${@:+x}" with no parameters is no word at all, as "$@" is, though "${*:+x}" is an empty one.
 				case '+' when !given:
-					return [string.Empty];
+					return this.Parameters is not null && !this.Star ? [] : [string.Empty];
 				case '+' or '-' when this.Quoted:
 					return [this.Text(word)];
 				case '+' or '-':
@@ -285,12 +309,19 @@ internal static partial class CommandLine
 					quoting = words is [] ? [string.Empty] : [.. words.Select(part => part.Pattern!)];
 
 					return words is [] ? [string.Empty] : [.. words.Select(part => part.Text)];
-				case '=' when !DeclareCommand.IsIdentifier(this.Name):
+				case '=' when !DeclareCommand.IsIdentifier(this.Name) && !(DeclareCommand.TrySplitElement(this.Name, out _, out _) && this.Parameters is null):
 					throw this.Failure("sharpie::shell::bad_substitution", fatal: false, $"${this.Name}: cannot assign in this way", "not a variable name", "only a variable name can be given a value this way");
 				case '=':
 					var assigned = this.Text(word);
 
-					DeclareCommand.Assign(this.Variables, this.Name, assigned);
+					try
+					{
+						DeclareCommand.Assign(this.Variables, this.Name, assigned);
+					}
+					catch (ArithmeticExpression.Failure failure)
+					{
+						throw new ExpansionError(failure.Error, fatal: false);
+					}
 
 					return [assigned];
 				default:
@@ -359,7 +390,7 @@ internal static partial class CommandLine
 		/// </returns>
 		private string[] Map(Func<string, string> change) =>
 			this.Parameters is null ? [change(this.Value)]
-			: ListParts(this.Parameters.Select(change), this.Name == "*", this.Quoted, this.Separators, this.Joiner);
+			: ListParts(this.Parameters.Select(change), this.Star, this.Quoted, this.Separators, this.Joiner);
 
 		/// <summary>
 		/// Removes the shortest or longest start or end that a pattern matches, as <c>#</c>, <c>##</c>, <c>%</c> and
@@ -515,11 +546,12 @@ internal static partial class CommandLine
 				return [string.Concat(runes[start..stop])];
 			}
 
-			// Offset 0 is $0, as in bash.
-			string[] list = [Lookup(this.Variables, "0"), .. this.Parameters];
+			// For the positional parameters offset 0 is $0, as in bash. shortcut: an array's offset counts the elements
+			// there are, where bash counts indexes, which differs only for an array with gaps; count indexes if one matters.
+			string[] list = this.Name is "@" or "*" ? [Lookup(this.Variables, "0"), .. this.Parameters] : [.. this.Parameters];
 			var (from, to) = this.Range(rest, list.Length);
 
-			return ListParts(list[from..to], this.Name == "*", this.Quoted, this.Separators, this.Joiner);
+			return ListParts(list[from..to], this.Star, this.Quoted, this.Separators, this.Joiner);
 		}
 
 		/// <summary>
@@ -660,12 +692,14 @@ internal static partial class CommandLine
 	/// <param name="name">The name.</param>
 	/// <returns>
 	/// <see langword="true" /> when it's a shell or environment variable, or <c>?</c>, which is always set though it
-	/// isn't stored until the first command has run. <c>@</c> and <c>*</c> are set when there's a positional parameter.
+	/// isn't stored until the first command has run. <c>@</c> and <c>*</c> are set when there's a positional parameter,
+	/// and <c>NAME[@]</c> when the array has an element.
 	/// </returns>
 	internal static bool IsSet(IReadOnlyDictionary<string, string> variables, string name) => name switch
 	{
 		"?" => true,
 		"@" or "*" => DeclareCommand.ReadPositional(variables).Count > 0,
+		_ when IsList(name, out var array) => DeclareCommand.Elements(variables, array).Count > 0,
 		_ => variables.ContainsKey(name) || Environment.GetEnvironmentVariable(name) is not null,
 	};
 

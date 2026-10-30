@@ -184,6 +184,12 @@ internal static class ArithmeticExpression
 					end++;
 				}
 
+				// A subscript belongs to the name, as in a[i+1], and is worked out when the name is used.
+				if (!char.IsAsciiDigit(character) && end < text.Length && text[end] == '[' && DeclareCommand.SubscriptEnd(text, end) is var close and > 0)
+				{
+					end = close + 1;
+				}
+
 				return new Token(char.IsAsciiDigit(character) ? Kind.Number : Kind.Name, at, end, text[at..end]);
 			}
 
@@ -284,12 +290,13 @@ internal static class ArithmeticExpression
 				_ = this.Next();
 
 				// bash reads the old value before the right side, which may change it, and plain = never reads it.
-				var old = assign.Text == "=" ? 0 : this.Value(name);
+				var key = this.Key(name);
+				var old = assign.Text == "=" ? 0 : this.Value(name, key);
 				var start = this.Peek();
 				var right = this.Assignment();
 				var value = assign.Text == "=" ? right : this.Operate(assign.Text[..^1], old, right, start);
 
-				this.Assign(name, value);
+				this.Assign(key, value);
 
 				return value;
 			}
@@ -400,9 +407,10 @@ internal static class ArithmeticExpression
 			if (token.Text is "++" or "--")
 			{
 				var name = this.Next();
-				var value = unchecked(this.Value(name) + (token.Text == "++" ? 1 : -1));
+				var key = this.Key(name);
+				var value = unchecked(this.Value(name, key) + (token.Text == "++" ? 1 : -1));
 
-				this.Assign(name, value);
+				this.Assign(key, value);
 
 				return value;
 			}
@@ -433,12 +441,13 @@ internal static class ArithmeticExpression
 				case Kind.Number:
 					return this.Number(token);
 				case Kind.Name:
-					var value = this.Value(token);
+					var key = this.Key(token);
+					var value = this.Value(token, key);
 
 					if (this.Peek() is { Kind: Kind.Operator, Text: "++" or "--" } step)
 					{
 						_ = this.Next();
-						this.Assign(token, unchecked(value + (step.Text == "++" ? 1 : -1)));
+						this.Assign(key, unchecked(value + (step.Text == "++" ? 1 : -1)));
 					}
 
 					return value;
@@ -549,30 +558,52 @@ internal static class ArithmeticExpression
 		/// <summary>
 		/// Gets a variable's value, worked out as an expression in turn.
 		/// </summary>
-		/// <param name="name">The name.</param>
+		/// <param name="name">The name as typed, which an error points at.</param>
+		/// <param name="key">The name <see cref="Key" /> gives for it.</param>
 		/// <returns>
 		/// The value, 0 for an empty or unset variable and inside a skipped side.
 		/// </returns>
 		/// <exception cref="Failure">The value can't be worked out, or refers too deep.</exception>
 		/// <exception cref="CommandLine.ExpansionError">The variable isn't set, under <c>set -u</c>.</exception>
-		private long Value(Token name)
+		private long Value(Token name, string key)
 		{
 			return this.skip > 0 ? 0
-				: noUnset && !CommandLine.IsSet(variables, name.Text) ? throw new CommandLine.ExpansionError(CommandLine.UnsetError(text, new Word(name.Text, IsOperator: false, name.Start, name.End)), fatal: true)
+				: noUnset && !CommandLine.IsSet(variables, key) ? throw new CommandLine.ExpansionError(CommandLine.UnsetError(text, new Word(name.Text, IsOperator: false, name.Start, name.End)), fatal: true)
 				: depth >= MaxDepth ? throw this.Error("recursion", "Expression recursion level exceeded", name, "refers back to itself")
-				: new Parser(CommandLine.Lookup(variables, name.Text), variables, depth + 1, noUnset).Run();
+				: new Parser(CommandLine.Lookup(variables, key), variables, depth + 1, noUnset).Run();
+		}
+
+		/// <summary>
+		/// Works out the subscript of a name such as <c>a[i+1]</c>, once, so <c>a[i++] += 1</c> moves <c>i</c> only once.
+		/// </summary>
+		/// <param name="name">The name as typed.</param>
+		/// <returns>
+		/// The name with the number its subscript gives, as in <c>a[3]</c>, or the name as typed when it has no
+		/// subscript or sits on a skipped side.
+		/// </returns>
+		/// <exception cref="Failure">The subscript can't be worked out.</exception>
+		private string Key(Token name)
+		{
+			if (this.skip > 0 || !DeclareCommand.TrySplitElement(name.Text, out var array, out var subscript))
+			{
+				return name.Text;
+			}
+
+			var index = new Parser(subscript, variables, depth + 1, noUnset).Run();
+
+			return $"{array}[{index.ToString(CultureInfo.InvariantCulture)}]";
 		}
 
 		/// <summary>
 		/// Sets a variable to a number, outside a skipped side.
 		/// </summary>
-		/// <param name="name">The name.</param>
+		/// <param name="key">The name <see cref="Key" /> gives.</param>
 		/// <param name="value">The number.</param>
-		private void Assign(Token name, long value)
+		private void Assign(string key, long value)
 		{
 			if (this.skip == 0)
 			{
-				DeclareCommand.Assign(variables, name.Text, value.ToString(CultureInfo.InvariantCulture));
+				DeclareCommand.Assign(variables, key, value.ToString(CultureInfo.InvariantCulture));
 			}
 		}
 

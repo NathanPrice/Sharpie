@@ -118,6 +118,20 @@ public sealed class HighlighterTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that an array's list is part of its word, so the words in it aren't commands, and that the command after
+	/// it is still marked.
+	/// </summary>
+	[Fact]
+	public void Highlight_ArrayList_KeepsListInWord()
+	{
+		// Act
+		var tokens = Highlighter.Highlight("a=(ls \"x y\" ;) echo; b=(cd", Builtins);
+
+		// Assert
+		_ = tokens.Should().Equal(new Token(15, 4, TokenKind.Command));
+	}
+
+	/// <summary>
 	/// Checks that redirect operators are marked and a target in an existing folder isn't flagged.
 	/// </summary>
 	/// <param name="operator">The redirect operator.</param>

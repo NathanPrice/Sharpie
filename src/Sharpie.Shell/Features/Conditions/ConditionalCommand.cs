@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using DotNetTips.Spargine.Core;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Arithmetic;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Features.Conditions;
 
@@ -17,8 +18,9 @@ namespace Sharpie.Shell.Features.Conditions;
 /// <c>x</c> starts with <c>a</c> and a quoted <c>"a*"</c> only matches itself. <c>=~</c> matches a POSIX extended
 /// regular expression anywhere in the word. <c>&lt;</c> and <c>&gt;</c> sort in the locale's order. The number
 /// operators read each word as an arithmetic expression, as bash does, so <c>1+1</c> is 2. A test that <c>&amp;&amp;</c> or <c>||</c> skips doesn't run, so it can't fail, though
-/// the substitutions in it have already run. <c>BASH_REMATCH</c> isn't set, since the shell has no arrays, and
-/// <c>-o OPTION</c>, which checks a <c>set</c> option, isn't there. No redirect may follow <c>]]</c>.
+/// the substitutions in it have already run. A <c>=~</c> sets the array <c>BASH_REMATCH</c> to the match and its
+/// groups, or to no elements when it doesn't match, as in bash. <c>-o OPTION</c>, which checks a <c>set</c> option,
+/// isn't there. No redirect may follow <c>]]</c>.
 /// </remarks>
 internal static class ConditionalCommand
 {
@@ -387,7 +389,8 @@ internal static class ConditionalCommand
 		/// <param name="text">The word before <c>=~</c>.</param>
 		/// <param name="pattern">The word after it, whose <see cref="Word.Pattern" /> has its quoted text escaped.</param>
 		/// <returns>
-		/// <see langword="true" /> when the expression matches anywhere in the word.
+		/// <see langword="true" /> when the expression matches anywhere in the word. <c>BASH_REMATCH</c> gets the match,
+		/// then each group, empty for a group that matched nothing.
 		/// </returns>
 		/// <exception cref="Condition.Failure">The expression can't be read, or matching takes too long.</exception>
 		private bool Matches(string text, Word pattern)
@@ -401,7 +404,11 @@ internal static class ConditionalCommand
 
 			try
 			{
-				return Regex.IsMatch(text, expression, RegexOptions.CultureInvariant | RegexOptions.Singleline, MatchTimeout);
+				var match = Regex.Match(text, expression, RegexOptions.CultureInvariant | RegexOptions.Singleline, MatchTimeout);
+
+				DeclareCommand.AssignArray(variables, "BASH_REMATCH", match.Success ? [.. match.Groups.Values.Select(group => group.Value)] : []);
+
+				return match.Success;
 			}
 			catch (ArgumentException)
 			{

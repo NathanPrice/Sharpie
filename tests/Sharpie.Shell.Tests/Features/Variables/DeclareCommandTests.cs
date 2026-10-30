@@ -327,7 +327,8 @@ public sealed class DeclareCommandTests : IDisposable
 	{
 		// Arrange
 		this.sut.Set("kept", "old");
-		var saved = this.sut.Variables.ToDictionary();
+		var saved = this.sut.Save();
+		var names = this.sut.Variables.Keys.ToList();
 
 		this.sut.Set("kept", "new");
 		this.sut.Set("added", "x");
@@ -336,7 +337,7 @@ public sealed class DeclareCommandTests : IDisposable
 		this.sut.Restore(saved);
 
 		// Assert
-		_ = this.sut.Variables.Keys.Should().BeEquivalentTo(saved.Keys);
+		_ = this.sut.Variables.Keys.Should().BeEquivalentTo(names);
 		_ = this.sut.Variables["kept"].Should().Be("old");
 	}
 
@@ -768,7 +769,7 @@ public sealed class DeclareCommandTests : IDisposable
 			_ = this.sut.Localize("kept");
 			counts.Add(this.sut.LocalCount);
 
-			var saved = this.sut.Variables.ToDictionary();
+			var saved = this.sut.Save();
 
 			_ = this.sut.Localize("forgotten");
 			this.sut.Restore(saved, counts[0]);
@@ -799,7 +800,7 @@ public sealed class DeclareCommandTests : IDisposable
 	{
 		// Arrange
 		this.sut.Set("kept", "old");
-		var saved = this.sut.Variables.ToDictionary();
+		var saved = this.sut.Save();
 
 		this.sut.Set("kept", "new");
 		this.sut.Set("added", "x");

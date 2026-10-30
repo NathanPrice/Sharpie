@@ -95,6 +95,12 @@ internal static partial class CommandLine
 		private bool hasWord;
 
 		/// <summary>
+		/// <see langword="true" /> while the word being read holds a <c>NAME=(...)</c> list, which marks it
+		/// <see cref="Word.Compound" />.
+		/// </summary>
+		private bool compound;
+
+		/// <summary>
 		/// <see langword="true" /> when an expansion's blank ended the last word, so a separator such as <c>:</c> right
 		/// after it belongs to that blank and closes no empty field, as in bash.
 		/// </summary>
@@ -208,6 +214,12 @@ internal static partial class CommandLine
 					return tildeEnd;
 				case null when !this.braced && StartsComment(character, this.hasWord, index, this.afterExpansion):
 					return LineEnd(line, index) - 1;
+				case null when character == '(' && !this.braced && IsCompoundStart(line.AsSpan(this.wordStart, index - this.wordStart)) && CompoundEnd(line, index) is var listEnd and >= 0:
+					this.Append(this.expand is { } expand ? ExpandCompound(line, index, listEnd, expand, unset, this.run) : line[index..(listEnd + 1)], quoted: true);
+					this.hasWord = true;
+					this.compound = true;
+
+					return listEnd;
 				case null when character is '\'' or '"':
 					this.quote = character;
 					this.hasWord = true;
@@ -528,9 +540,17 @@ internal static partial class CommandLine
 			if (this.hasWord)
 			{
 				var text = this.TakeWord();
+				var first = this.words.Count;
 
 				this.words.AddRange(this.FormWords(text, end));
+
+				for (var added = first; this.compound && added < this.words.Count; added++)
+				{
+					this.words[added] = this.words[added] with { Compound = true };
+				}
 			}
+
+			this.compound = false;
 
 			_ = this.pattern.Clear();
 			_ = this.quoting.Clear();
