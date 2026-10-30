@@ -344,6 +344,7 @@ public sealed class CommandListTests : IDisposable
 	[Theory]
 	[InlineData("echo a; echo \"x", '"')]
 	[InlineData("echo 'x", '\'')]
+	[InlineData("echo $'it\\'s", '\'')]
 	public void Run_WithOpenQuote_RunsNothingAndReports(string line, char quote)
 	{
 		// Arrange

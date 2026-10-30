@@ -43,11 +43,7 @@ internal static partial class CommandLine
 		{
 			var character = line[end];
 
-			if (quote == '\'')
-			{
-				quote = character == '\'' ? null : quote;
-			}
-			else if (character == '\\')
+			if (character == '\\')
 			{
 				end++;
 			}
@@ -64,7 +60,16 @@ internal static partial class CommandLine
 			{
 				quote = character == '"' ? null : quote;
 			}
-			else if (character is '\'' or '"')
+			else if (character == '\'')
+			{
+				end = QuoteEnd(line, end);
+
+				if (end < 0)
+				{
+					return -1;
+				}
+			}
+			else if (character == '"')
 			{
 				quote = character;
 			}

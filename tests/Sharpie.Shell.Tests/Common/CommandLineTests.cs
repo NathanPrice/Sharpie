@@ -1391,6 +1391,8 @@ public sealed class CommandLineTests
 	[InlineData("$(echo \"$(a\")", 0, -1)]
 	[InlineData("$(echo \"`a\")", 0, -1)]
 	[InlineData("$(echo \"$((1+2))\")", 0, 17)]
+	[InlineData("$(echo $'a)\\'b')", 0, 15)]
+	[InlineData("$(echo $'a\\')", 0, -1)]
 	public void SubstitutionEnd_WithLine_FindsClose(string line, int index, int expected)
 	{
 		// Act
@@ -1427,6 +1429,9 @@ public sealed class CommandLineTests
 	[InlineData("$(( ${X ))", 0, -1)]
 	[InlineData("$(1)", 0, -1)]
 	[InlineData("(1)", 0, -1)]
+	[InlineData("$(( $'\\')' ))", 0, 12)]
+	[InlineData("$(( '\\')' ))", 0, -1)]
+	[InlineData("$(( $'\\' ))", 0, -1)]
 	public void ArithmeticEnd_WithLine_FindsClose(string line, int index, int expected)
 	{
 		// Act
@@ -1876,5 +1881,59 @@ public sealed class CommandLineTests
 		// Assert
 		_ = unset.Select(word => (word.Text, word.Start, word.End)).Should().Equal(("M", 41, 46), ("O", 47, 53), ("Q", 54, 60), ("B", 72, 80));
 		_ = words.Select(word => word.Text).Should().Equal("echo", "d", "d", "0", "0", "none", "none");
+	}
+
+	/// <summary>
+	/// Checks that <c>$'...'</c> gives the text its escapes stand for, quoted, and that a <c>$</c> that's escaped, in
+	/// double quotes or part of <c>$$</c> leaves a plain quote.
+	/// </summary>
+	/// <param name="line">The command line to split.</param>
+	/// <param name="expected">The words it should give.</param>
+	[Theory]
+	[InlineData("echo $'a\\tb' c", new[] { "echo", "a\tb", "c" })]
+	[InlineData("echo $'it\\'s'", new[] { "echo", "it's" })]
+	[InlineData("echo a$'\\n'b", new[] { "echo", "a\nb" })]
+	[InlineData("echo $'a b' $'*' $'#x'", new[] { "echo", "a b", "*", "#x" })]
+	[InlineData("echo $''", new[] { "echo", "" })]
+	[InlineData("echo ${u:-$''} x", new[] { "echo", "", "x" })]
+	[InlineData("echo \\$'a'", new[] { "echo", "$a" })]
+	[InlineData("echo \"$'a'\"", new[] { "echo", "$'a'" })]
+	[InlineData("echo $$'\\n'", new[] { "echo", "42\\n" })]
+	[InlineData("echo ${u:-$'}\\''}", new[] { "echo", "}'" })]
+	public void Split_WithAnsiQuote_DecodesEscapes(string line, string[] expected)
+	{
+		// Act
+		var words = CommandLine.Split(line, new Dictionary<string, string> { ["$"] = "42" });
+
+		// Assert
+		_ = words.Select(word => word.Text).Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that <see cref="CommandLine.QuoteEnd" /> finds the <c>'</c> that closes a single quote, past an escaped
+	/// <c>\'</c> only in a <c>$'...'</c> quote.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	/// <param name="index">The position of the opening <c>'</c>.</param>
+	/// <param name="expected">The position of the closing <c>'</c>, or -1.</param>
+	[Theory]
+	[InlineData("'abc'", 0, 4)]
+	[InlineData("'a\\'b'", 0, 3)]
+	[InlineData("$'a\\'b'", 1, 6)]
+	[InlineData("$$'a\\'b'", 2, 5)]
+	[InlineData("$$$'\\''", 3, 6)]
+	[InlineData("\\$'a\\'", 2, 5)]
+	[InlineData("\\\\$'a\\'b'", 3, 8)]
+	[InlineData("\\$$'a\\'b'", 3, 8)]
+	[InlineData("$'abc", 1, -1)]
+	[InlineData("$'ab\\'", 1, -1)]
+	[InlineData("'abc", 0, -1)]
+	public void QuoteEnd_WithText_FindsClose(string text, int index, int expected)
+	{
+		// Act
+		var close = CommandLine.QuoteEnd(text, index);
+
+		// Assert
+		_ = close.Should().Be(expected);
 	}
 }

@@ -512,11 +512,7 @@ internal static partial class CommandLine
 				continue;
 			}
 
-			if (quote == '\'')
-			{
-				quote = character == '\'' ? null : quote;
-			}
-			else if (character == '\\')
+			if (character == '\\')
 			{
 				end++;
 			}
@@ -544,7 +540,16 @@ internal static partial class CommandLine
 						end = line.IndexOf('\n', end) is var newline and >= 0 ? newline - 1 : line.Length;
 
 						break;
-					case '\'' or '"':
+					case '\'':
+						end = QuoteEnd(line, end);
+
+						if (end < 0)
+						{
+							return -1;
+						}
+
+						break;
+					case '"':
 						quote = character;
 
 						break;

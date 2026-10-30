@@ -976,10 +976,9 @@ internal sealed class CommandParser
 			{
 				var character = text[index];
 
-				if (this.escaped || this.quote == '\'')
+				if (this.escaped)
 				{
 					this.escaped = false;
-					this.quote = this.quote == '\'' && character == '\'' ? null : this.quote;
 					this.StartWord(index);
 				}
 				else if (character == '`' || text.AsSpan(index).StartsWith("$(", StringComparison.Ordinal))
@@ -1005,13 +1004,9 @@ internal sealed class CommandParser
 					this.StartWord(index);
 					index = brace;
 				}
-				else if (this.quote is null)
-				{
-					index = this.ReadUnquoted(index);
-				}
 				else
 				{
-					this.ReadWordCharacter(index);
+					index = this.quote is null ? this.ReadUnquoted(index) : this.ReadWordCharacter(index);
 				}
 			}
 
@@ -1059,9 +1054,7 @@ internal sealed class CommandParser
 			if (this.inCondition && character is not ('\n' or ';') && CommandLine.OperatorAt(text, index) is not null
 				&& !(this.wordStart >= 0 && text.AsSpan(this.wordStart, index - this.wordStart) is "]]"))
 			{
-				this.ReadWordCharacter(index);
-
-				return index;
+				return this.ReadWordCharacter(index);
 			}
 
 			if (character == '\n' || CommandLine.OperatorAt(text, index) is not null)
@@ -1071,14 +1064,12 @@ internal sealed class CommandParser
 				return this.ReadOperator(index);
 			}
 
-			if (character is ' ' or '\t')
+			if (character is not (' ' or '\t'))
 			{
-				this.EndWord(index, null);
+				return this.ReadWordCharacter(index);
 			}
-			else
-			{
-				this.ReadWordCharacter(index);
-			}
+
+			this.EndWord(index, null);
 
 			return index;
 		}
@@ -1116,7 +1107,11 @@ internal sealed class CommandParser
 		/// Adds the character at <paramref name="index" /> to the word, noting a backslash or quote.
 		/// </summary>
 		/// <param name="index">Its position.</param>
-		private void ReadWordCharacter(int index)
+		/// <returns>
+		/// The position of the last character used, which is the closing <c>'</c> of a single quote, or the end of the
+		/// text when it never closes.
+		/// </returns>
+		private int ReadWordCharacter(int index)
 		{
 			var character = text[index];
 
@@ -1126,7 +1121,18 @@ internal sealed class CommandParser
 			{
 				this.escaped = true;
 			}
-			else if (this.quote is null && character is '\'' or '"')
+			else if (this.quote is null && character == '\'')
+			{
+				if (CommandLine.QuoteEnd(text, index) is var close and >= 0)
+				{
+					return close;
+				}
+
+				this.quote = character;
+
+				return text.Length - 1;
+			}
+			else if (this.quote is null && character == '"')
 			{
 				this.quote = character;
 			}
@@ -1134,6 +1140,8 @@ internal sealed class CommandParser
 			{
 				this.quote = null;
 			}
+
+			return index;
 		}
 
 		/// <summary>

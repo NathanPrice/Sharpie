@@ -50,11 +50,7 @@ internal static partial class CommandLine
 		{
 			var character = text[index];
 
-			if (quote == '\'')
-			{
-				quote = character == '\'' ? null : quote;
-			}
-			else if (character == '\\')
+			if (character == '\\')
 			{
 				index++;
 			}
@@ -79,7 +75,13 @@ internal static partial class CommandLine
 			}
 			else if (quote is null && character == '\'')
 			{
-				quote = '\'';
+				// Nothing after a quote that never closes is outside it.
+				index = QuoteEnd(text, index);
+
+				if (index < 0)
+				{
+					return -1;
+				}
 			}
 			else if (quote is null && targets.Contains(character))
 			{
@@ -279,9 +281,10 @@ internal static partial class CommandLine
 					// it match file names. So each word keeps which of its characters were quoted.
 					var words = this.Nested(unset => SplitWords(Protect(word, split: true), this.Variables, unset, this.Substitute, this.Separators, out _, WordForm.Value));
 
-					quoting = [.. words.Select(part => part.Pattern!)];
+					// A word that reads as nothing, as in ${X-}, is still one empty unquoted part, which a condition keeps.
+					quoting = words is [] ? [string.Empty] : [.. words.Select(part => part.Pattern!)];
 
-					return [.. words.Select(part => part.Text)];
+					return words is [] ? [string.Empty] : [.. words.Select(part => part.Text)];
 				case '=' when !DeclareCommand.IsIdentifier(this.Name):
 					throw this.Failure("sharpie::shell::bad_substitution", fatal: false, $"${this.Name}: cannot assign in this way", "not a variable name", "only a variable name can be given a value this way");
 				case '=':

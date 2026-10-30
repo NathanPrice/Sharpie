@@ -214,7 +214,6 @@ internal static class Highlighter
 	/// </summary>
 	/// <param name="line">The command line.</param>
 	/// <param name="index">The position.</param>
-	/// <param name="quote">The quote that's open, or <see langword="null" />.</param>
 	/// <param name="inWord"><see langword="true" /> when a word has started.</param>
 	/// <returns>
 	/// The position of the last <c>)</c> of a <c>$((...))</c>, or of a <c>((...))</c> that starts a word, or of the
@@ -223,9 +222,8 @@ internal static class Highlighter
 	/// <remarks>
 	/// A quote inside <c>${...}</c> belongs to the expansion, as in <c>"${q/"'"/Q}"</c>, so it doesn't open or close one.
 	/// </remarks>
-	private static int SkipEnd(string line, int index, char? quote, bool inWord) =>
-		quote == '\'' ? -1
-		: line.AsSpan(index).StartsWith("${", StringComparison.Ordinal) ? CommandLine.BraceEnd(line, index)
+	private static int SkipEnd(string line, int index, bool inWord) =>
+		line.AsSpan(index).StartsWith("${", StringComparison.Ordinal) ? CommandLine.BraceEnd(line, index)
 		: inWord && line[index] != '$' ? -1 : CommandLine.ArithmeticEnd(line, index);
 
 	/// <summary>
@@ -263,7 +261,7 @@ internal static class Highlighter
 			}
 
 			// A ((...)), $((...)) or ${...} is part of its word, so what's inside isn't read as commands or quotes.
-			if (SkipEnd(line, index, quote, start >= 0) is var close and >= 0)
+			if (SkipEnd(line, index, start >= 0) is var close and >= 0)
 			{
 				start = start < 0 ? index : start;
 				index = close;
@@ -305,11 +303,18 @@ internal static class Highlighter
 				start = index;
 			}
 
-			if (character == '\\' && quote != '\'')
+			if (character == '\\')
 			{
 				escaped = true;
 			}
-			else if (quote is null && character is '\'' or '"')
+			else if (quote is null && character == '\'')
+			{
+				// A single quote, $'...' too, is read whole, so a \' in $'it\'s' doesn't end it.
+				var stop = CommandLine.QuoteEnd(line, index) is var closed and >= 0 ? closed + 1 : line.Length;
+				(strings ??= []).Add(new Token(index, stop - index, TokenKind.Quoted));
+				index = stop - 1;
+			}
+			else if (quote is null && character == '"')
 			{
 				quote = character;
 				quoteStart = index;

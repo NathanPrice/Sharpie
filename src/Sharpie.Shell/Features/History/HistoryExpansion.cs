@@ -57,24 +57,32 @@ internal static class HistoryExpansion
 		var changed = index > 0;
 		// Where the text after the last reference starts, so the $ of a !$ isn't read as the $ of a $! after it.
 		var from = index;
-		var inSingle = false;
 		var inDouble = false;
 
 		for (; index < line.Length; index++)
 		{
 			var character = line[index];
 
-			if (character == '\\' && !inSingle && index + 1 < line.Length)
+			if (character == '\\' && index + 1 < line.Length)
 			{
 				_ = output.Append(character).Append(line[++index]);
 
 				continue;
 			}
 
-			inSingle ^= character == '\'' && !inDouble;
-			inDouble ^= character == '"' && !inSingle;
+			// A ! in single quotes, $'...' too, is kept as typed, up to the end when the quote never closes.
+			if (character == '\'' && !inDouble)
+			{
+				var stop = CommandLine.QuoteEnd(line, index) is var close and >= 0 ? close + 1 : line.Length;
+				_ = output.Append(line, index, stop - index);
+				index = stop - 1;
 
-			if (character != '!' || inSingle || EventEnd(line, index, from, inDouble) is not (var end and >= 0))
+				continue;
+			}
+
+			inDouble ^= character == '"';
+
+			if (character != '!' || EventEnd(line, index, from, inDouble) is not (var end and >= 0))
 			{
 				_ = output.Append(character);
 

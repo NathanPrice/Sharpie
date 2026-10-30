@@ -82,6 +82,8 @@ public sealed class HistoryExpansionTests
 	[InlineData("echo !|cat")]
 	[InlineData(" ^a^b")]
 	[InlineData("echo a\\")]
+	[InlineData("echo $'\\'!!'")]
+	[InlineData("echo '!!")]
 	public void Expand_WithoutReference_ReturnsLine(string line)
 	{
 		// Act

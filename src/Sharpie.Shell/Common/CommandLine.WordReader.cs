@@ -177,6 +177,11 @@ internal static partial class CommandLine
 			{
 				case null when index == this.typedStart && !this.braced && this.ReadBraces(index) is var last and >= 0:
 					return last;
+				case null when character == '$' && index + 1 < line.Length && line[index + 1] == '\'' && QuoteEnd(line, index + 1) is var quoteEnd and >= 0:
+					this.Append(Escapes.Decode(line.AsSpan(index + 2, quoteEnd - index - 2), EscapeRules.AnsiC, out _), quoted: true);
+					this.hasWord = true;
+
+					return quoteEnd;
 				case null or '"' when character == '\\':
 					this.escaped = true;
 					this.hasWord = true;
@@ -461,6 +466,12 @@ internal static partial class CommandLine
 		/// <param name="separators">What the unquoted characters split on, or <see langword="null" />.</param>
 		private void AppendValue(string text, string quoting, int end, string? separators)
 		{
+			// A word with nothing in it, as in ${X-}, is an empty unquoted part, which a condition keeps as it keeps $X.
+			if (quoting.Length == 0)
+			{
+				this.AppendSplit(text, quoted: false, end, separators);
+			}
+
 			foreach (var (run, quoted) in QuotedRuns(text, quoting))
 			{
 				this.AppendSplit(run, quoted, end, quoted ? null : separators);

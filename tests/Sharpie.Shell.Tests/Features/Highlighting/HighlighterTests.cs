@@ -104,6 +104,20 @@ public sealed class HighlighterTests : IDisposable
 	}
 
 	/// <summary>
+	/// Checks that a <c>$'...'</c> quote is read whole, so its escaped <c>\'</c> doesn't end it and the word after it
+	/// isn't colored as a string.
+	/// </summary>
+	[Fact]
+	public void Highlight_AnsiQuote_MarksWholeQuote()
+	{
+		// Act
+		var tokens = Highlighter.Highlight("echo $'a\\'b' x 'c''d'", Builtins);
+
+		// Assert
+		_ = tokens.Should().Equal(new Token(0, 4, TokenKind.Command), new Token(6, 6, TokenKind.Quoted), new Token(15, 3, TokenKind.Quoted), new Token(18, 3, TokenKind.Quoted));
+	}
+
+	/// <summary>
 	/// Checks that redirect operators are marked and a target in an existing folder isn't flagged.
 	/// </summary>
 	/// <param name="operator">The redirect operator.</param>
