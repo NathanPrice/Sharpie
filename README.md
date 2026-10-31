@@ -76,6 +76,8 @@ and mouse reporting all work.
   subscript is an arithmetic expression, so `COMPREPLY[i++]=x` and `(( a[1] += 2 ))` work. `declare -a`, `local -a`
   and `declare -p` know them, a subshell's changes to them are put back, `local` keeps one inside a function, and
   `[[ $x =~ regex ]]` fills `BASH_REMATCH`. `NAME+=text` adds to a variable, `export PATH+=:/opt/bin` included.
+  `read -a list` reads a line's fields into an array, and `read -d ' ' x` reads up to a space instead of a newline,
+  or up to a NUL with `-d ''`.
 - **Redirects.** Bash's redirects work on builtins, programs and every stage of a pipeline: `<`, `>`, `>>`, `>|`,
   `&>`, `&>>`, any stream number as in `3> f`, copies and closes like `2>&1` and `2>&-`, here-documents
   (`<<EOF` and `<<-EOF`) and here-strings (`<<< text`). `ls /nope 2>&1 | wc -l` counts the error line, and
@@ -89,7 +91,8 @@ and mouse reporting all work.
   are `$1`, `$#` and `"$@"` while it runs, `local` keeps a variable's change inside it, and `return` ends it or a
   sourced file. A function takes over a builtin of the same name, and `command name` still runs the builtin, so
   `cd() { command cd "$@" && ls; }` works. A redirect after the body, as in `f() { ...; } > log`, applies to every
-  call, and a function in a pipeline runs in a copy of the shell like any compound stage.
+  call, and a function in a pipeline runs in a copy of the shell like any compound stage. `declare -F` lists the
+  functions and `declare -f name` prints one, so the `declare -f name >/dev/null` check completion scripts make works.
 - **Your existing setup.** The window copies the exported variables and aliases from your own `$SHELL`, so a `PATH`
   set in `~/.zshrc` works here too. After that it runs `~/.sharpierc`.
 - **Built-in pagers.** `man` pages open in a reader inside the window, and `dman` shows .NET API docs and C# or VB

@@ -49,4 +49,19 @@ public sealed class ReadProcessTests
 		// Assert
 		_ = run.Output.Should().Be("1 [abc]\n");
 	}
+
+	/// <summary>
+	/// Checks the loop bash completion scripts use to read space-separated items, where the last item has no space
+	/// after it, as bash gives.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithReadDelimiterLoop_ReadsEveryItem()
+	{
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", "printf 'one two three' | while read -r -d ' ' item || [[ -n $item ]]; do echo \"<$item>\"; done"]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("<one>\n<two>\n<three>\n");
+		_ = run.Error.Should().BeEmpty();
+	}
 }

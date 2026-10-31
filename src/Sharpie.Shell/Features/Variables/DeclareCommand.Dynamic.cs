@@ -58,9 +58,11 @@ internal partial class DeclareCommand
 	/// Initializes a new instance of the <see cref="DeclareCommand" /> class.
 	/// </summary>
 	/// <param name="settings">The shell options, which <c>$-</c> lists.</param>
-	public DeclareCommand(ShellSettings settings)
+	/// <param name="commands">The builtins and functions, by name, which <c>declare -f</c> lists the functions of.</param>
+	public DeclareCommand(ShellSettings settings, IReadOnlyDictionary<string, ICommand>? commands = null)
 	{
 		this.settings = settings;
+		this.commands = commands;
 		this.Variables = new View(this);
 	}
 

@@ -69,4 +69,31 @@ public sealed class DeclareProcessTests
 		_ = run.Output.Should().Be("$ $ hello world\n$ ");
 		_ = run.Exited.Should().BeTrue();
 	}
+
+	/// <summary>
+	/// Checks the test bash completion scripts make before calling a function, as git's does before
+	/// <c>_git_&lt;subcommand&gt;</c>, and that a printed definition defines the function again through <c>eval</c>.
+	/// </summary>
+	[Fact]
+	public async Task Shell_WithFunctionCheck_FindsOnlyFunctions()
+	{
+		// Arrange
+		const string Script = """
+			_sampletool_list() { echo listed; }
+			have() { declare -f -- "$1" >/dev/null 2>&1; }
+			have _sampletool_list && echo found
+			have _sampletool_missing || echo missing
+			declare -F _sampletool_list >/dev/null && echo named
+			definition=$(declare -f _sampletool_list)
+			eval "${definition/_sampletool_list/_sampletool_copy}"
+			_sampletool_copy
+			""";
+
+		// Act
+		var run = await ShellProcess.RunAsync(string.Empty, arguments: ["-c", Script]).ConfigureAwait(true);
+
+		// Assert
+		_ = run.Output.Should().Be("found\nmissing\nnamed\nlisted\n");
+		_ = run.Error.Should().BeEmpty();
+	}
 }

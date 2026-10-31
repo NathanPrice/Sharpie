@@ -86,37 +86,88 @@ internal partial class DeclareCommand : ICommand
 	public string Description => "Creates and inspects shell variables";
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// The options <c>-p</c>, <c>-a</c>, <c>-f</c> and <c>-F</c> can be joined, as in <c>-fF</c>, and <c>--</c> ends
+	/// them. Any other word starting with <c>-</c> is taken as a name, and reported as not a valid one.
+	/// </remarks>
 	public int Run(string[] args)
 	{
 		_ = args.ArgumentNotNull();
 
-		var status = 0;
+		var options = new HashSet<char>();
+		var first = 0;
 
-		if (args is ["-p", .. var names])
+		for (; first < args.Length && args[first] is ['-', _, ..] option; first++)
 		{
-			foreach (var name in names)
+			if (option == "--")
 			{
-				if (this.arrays.ContainsKey(name))
-				{
-					Console.WriteLine($"{this.Name} -a {name}={this.FormatArray(name)}");
-				}
-				else if (this.Variables.TryGetValue(name, out var value))
-				{
-					Console.WriteLine($@"{this.Name} -- {name}=""{value}""");
-				}
-				else
-				{
-					new ShellError("sharpie::declare::not_found", $"No variable named `{name}`").Write();
-					status = 1;
-				}
+				first++;
+
+				break;
 			}
 
-			return status;
+			if (!option[1..].All(letter => letter is 'p' or 'a' or 'f' or 'F'))
+			{
+				break;
+			}
+
+			options.UnionWith(option[1..]);
 		}
 
-		var array = args is ["-a", ..];
+		var names = args[first..];
 
-		foreach (var arg in array ? args[1..] : args)
+		// bash lets -F win over -f, and either over -p.
+		return options.Contains('F') ? this.PrintFunctions(names, definitions: false)
+			: options.Contains('f') ? this.PrintFunctions(names, definitions: true)
+			: options.Contains('p') ? this.Print(names)
+			: this.AssignAll(names, array: options.Contains('a'));
+	}
+
+	/// <summary>
+	/// Prints each variable in <paramref name="names" /> as a <c>declare</c> line that sets it again, as
+	/// <c>declare -p</c> does.
+	/// </summary>
+	/// <param name="names">The variable names.</param>
+	/// <returns>
+	/// 0, or 1 when any name isn't set.
+	/// </returns>
+	private int Print(string[] names)
+	{
+		var status = 0;
+
+		foreach (var name in names)
+		{
+			if (this.arrays.ContainsKey(name))
+			{
+				Console.WriteLine($"{this.Name} -a {name}={this.FormatArray(name)}");
+			}
+			else if (this.Variables.TryGetValue(name, out var value))
+			{
+				Console.WriteLine($@"{this.Name} -- {name}=""{value}""");
+			}
+			else
+			{
+				new ShellError("sharpie::declare::not_found", $"No variable named `{name}`").Write();
+				status = 1;
+			}
+		}
+
+		return status;
+	}
+
+	/// <summary>
+	/// Carries out the names and <c>NAME=VALUE</c> words of a <c>declare</c> with no printing option.
+	/// </summary>
+	/// <param name="args">The words after the options.</param>
+	/// <param name="array"><see langword="true" /> for <c>declare -a</c>, which makes each name an array.</param>
+	/// <returns>
+	/// 0, or 1 when any word isn't a valid name or assignment.
+	/// </returns>
+	private int AssignAll(string[] args, bool array)
+	{
+		var status = 0;
+
+		foreach (var arg in args)
 		{
 			if (!IsIdentifier(arg) && !IsAssignment(arg))
 			{

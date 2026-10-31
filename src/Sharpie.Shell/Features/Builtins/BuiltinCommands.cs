@@ -40,7 +40,7 @@ internal static class BuiltinCommands
 	{
 		var alias = new AliasCommand();
 		var settings = new ShellSettings();
-		var declare = new DeclareCommand(settings);
+		var declare = new DeclareCommand(settings, commands);
 
 		// Gets the live dictionary before it's filled, so type can see every builtin, itself included.
 		var type = new TypeCommand(commands, alias.Aliases);

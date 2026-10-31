@@ -187,9 +187,12 @@ public sealed class ReadCommandTests : IDisposable
 	/// <param name="help">The hint, or <see langword="null" /> for none.</param>
 	/// <param name="expected">The status.</param>
 	[Theory]
-	[InlineData(new[] { "-z", "a" }, "sharpie::read::invalid_option", "`-z` isn't an option of `read`", "read takes -r, -s and -p prompt", 2)]
-	[InlineData(new[] { "-rx" }, "sharpie::read::invalid_option", "`-x` isn't an option of `read`", "read takes -r, -s and -p prompt", 2)]
-	[InlineData(new[] { "-p" }, "sharpie::read::missing_prompt", "`-p` needs the prompt text after it", null, 2)]
+	[InlineData(new[] { "-z", "a" }, "sharpie::read::invalid_option", "`-z` isn't an option of `read`", "read takes -r, -s, -p prompt, -d delim and -a array", 2)]
+	[InlineData(new[] { "-rx" }, "sharpie::read::invalid_option", "`-x` isn't an option of `read`", "read takes -r, -s, -p prompt, -d delim and -a array", 2)]
+	[InlineData(new[] { "-p" }, "sharpie::read::missing_argument", "`-p` needs the prompt text after it", null, 2)]
+	[InlineData(new[] { "-rd" }, "sharpie::read::missing_argument", "`-d` needs a delimiter after it", null, 2)]
+	[InlineData(new[] { "-a" }, "sharpie::read::missing_argument", "`-a` needs an array name after it", null, 2)]
+	[InlineData(new[] { "-a", "1x", "a" }, "sharpie::read::invalid_identifier", "`1x` isn't a valid variable name", DeclareCommand.IdentifierHelp, 1)]
 	[InlineData(new[] { "a", "1b" }, "sharpie::read::invalid_identifier", "`1b` isn't a valid variable name", DeclareCommand.IdentifierHelp, 1)]
 	[InlineData(new[] { "--", "-a" }, "sharpie::read::invalid_identifier", "`-a` isn't a valid variable name", DeclareCommand.IdentifierHelp, 1)]
 	public void Run_WithBadArguments_ReportsThemWithoutReading(string[] args, string code, string message, string? help, int expected)
@@ -205,6 +208,137 @@ public sealed class ReadCommandTests : IDisposable
 		_ = this.environment.Error.Should().Be(new ShellError(code, message) { Help = help }.Render(color: false));
 		_ = Console.In.ReadToEnd().Should().Be("x\n");
 		_ = this.declare.Variables.Should().NotContainKey("a");
+	}
+
+	/// <summary>
+	/// Checks that <c>-d</c> reads up to its first character, or a NUL when it's empty, as bash 5.3 does: a backslash
+	/// keeps the delimiter as text, a backslash and newline drop out, and a newline is plain text.
+	/// </summary>
+	/// <param name="input">What standard input holds.</param>
+	/// <param name="args">The arguments.</param>
+	/// <param name="value">What <c>x</c> gets.</param>
+	/// <param name="expected">The status, 1 when the input ended before a delimiter.</param>
+	[Theory]
+	[InlineData(@"a\ b c", new[] { "-d", " ", "x" }, "a b", 0)]
+	[InlineData(@"a\ b c", new[] { "-rd", " ", "x" }, @"a\", 0)]
+	[InlineData("a\\\nb c", new[] { "-d", " ", "x" }, "ab", 0)]
+	[InlineData("a\nb c", new[] { "-d", " ", "x" }, "a\nb", 0)]
+	[InlineData("a b\0c", new[] { "-d", "", "x" }, "a b", 0)]
+	[InlineData("a:b", new[] { "-d:", "x" }, "a", 0)]
+	[InlineData("a b", new[] { "-rd", "", "x" }, "a b", 1)]
+	[InlineData("a bc", new[] { "-d", "bc", "x" }, "a", 0)]
+	public void Run_WithDelimiter_ReadsUpToIt(string input, string[] args, string value, int expected)
+	{
+		// Arrange
+		SetInput(input);
+
+		// Act
+		var status = this.Sut(terminal: false).Run(args);
+
+		// Assert
+		_ = status.Should().Be(expected);
+		_ = this.declare.Variables["x"].Should().Be(value);
+	}
+
+	/// <summary>
+	/// Checks that <c>-a</c> splits the whole line on <c>IFS</c> into elements from 0, with no empty element after a
+	/// separator at the end, and ignores any other name, as bash does.
+	/// </summary>
+	/// <param name="ifs">The value of <c>IFS</c>, or <see langword="null" /> for the default.</param>
+	/// <param name="input">What standard input holds.</param>
+	/// <param name="args">The arguments.</param>
+	/// <param name="expected">The elements of <c>arr</c>, as <c>index=value</c>.</param>
+	[Theory]
+	[InlineData(null, " x  y \n", new[] { "-a", "arr" }, new[] { "0=x", "1=y" })]
+	[InlineData(null, @"a\ b c" + "\n", new[] { "-a", "arr" }, new[] { "0=a b", "1=c" })]
+	[InlineData(null, @"a\ b c" + "\n", new[] { "-ra", "arr" }, new[] { @"0=a\", "1=b", "2=c" })]
+	[InlineData(null, "x y\n", new[] { "-aarr", "extra" }, new[] { "0=x", "1=y" })]
+	[InlineData(null, @"a\ b c", new[] { "-d", " ", "-a", "arr" }, new[] { "0=a b" })]
+	[InlineData(":", "a:b::c\n", new[] { "-a", "arr" }, new[] { "0=a", "1=b", "2=", "3=c" })]
+	[InlineData(":", "a:b:\n", new[] { "-a", "arr" }, new[] { "0=a", "1=b" })]
+	[InlineData(":", ":a\n", new[] { "-a", "arr" }, new[] { "0=", "1=a" })]
+	public void Run_WithArray_StoresEveryField(string? ifs, string input, string[] args, string[] expected)
+	{
+		// Arrange
+		if (ifs is not null)
+		{
+			_ = this.declare.Run([$"IFS={ifs}"]);
+		}
+
+		SetInput(input);
+
+		// Act
+		var status = this.Sut(terminal: false).Run(args);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = DeclareCommand.Elements(this.declare.Variables, "arr").Select(element => $"{element.Key}={element.Value}").Should().Equal(expected);
+		_ = this.declare.Variables.Should().NotContainKey("extra");
+	}
+
+	/// <summary>
+	/// Checks that <c>-a</c> replaces the whole array, and leaves it empty with status 1 when the input is empty.
+	/// </summary>
+	/// <param name="input">What standard input holds.</param>
+	/// <param name="expected">The elements of <c>arr</c> after.</param>
+	/// <param name="status">The status.</param>
+	[Theory]
+	[InlineData("a\n", new[] { "0=a" }, 0)]
+	[InlineData("", new string[0], 1)]
+	public void Run_WithArrayAlreadySet_ReplacesIt(string input, string[] expected, int status)
+	{
+		// Arrange
+		_ = this.declare.Run(["arr=(9 9 9)"]);
+		SetInput(input);
+
+		// Act
+		var result = this.Sut(terminal: false).Run(["-a", "arr"]);
+
+		// Assert
+		_ = result.Should().Be(status);
+		_ = this.declare.IsArray("arr").Should().BeTrue();
+		_ = DeclareCommand.Elements(this.declare.Variables, "arr").Select(element => $"{element.Key}={element.Value}").Should().Equal(expected);
+	}
+
+	/// <summary>
+	/// Checks that on a terminal, with a delimiter other than newline, Enter adds a newline to the text and the
+	/// delimiter key ends the read and is echoed.
+	/// </summary>
+	[Fact]
+	public void Run_OnTerminalWithDelimiter_EnterAddsNewline()
+	{
+		// Arrange
+		this.Type("a");
+		this.Press(ConsoleKey.Enter);
+		this.Type("b:");
+
+		// Act
+		var status = this.Sut(terminal: true).Run(["-d:", "x"]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = this.declare.Variables["x"].Should().Be("a\nb");
+		_ = this.environment.Error.Should().Be($"a{Environment.NewLine}b:");
+	}
+
+	/// <summary>
+	/// Checks that on a terminal a NUL delimiter ends the read only with Ctrl held, since an arrow key gives a NUL too.
+	/// </summary>
+	[Fact]
+	public void Run_OnTerminalWithNulDelimiter_NeedsControl()
+	{
+		// Arrange
+		this.Type("ab");
+		this.keys.Enqueue(new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, shift: false, alt: false, control: false));
+		this.keys.Enqueue(new ConsoleKeyInfo('\0', ConsoleKey.Spacebar, shift: false, alt: false, control: true));
+
+		// Act
+		var status = this.Sut(terminal: true).Run(["-d", "", "x"]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = this.declare.Variables["x"].Should().Be("ab");
+		_ = this.environment.Error.Should().Be("ab");
 	}
 
 	/// <summary>

@@ -5,7 +5,7 @@ using Sharpie.Shell.Common;
 namespace Sharpie.Shell.Features.Variables;
 
 /// <summary>
-/// Reads one line of standard input into shell variables.
+/// Reads one line of standard input, or up to a delimiter, into shell variables.
 /// </summary>
 /// <param name="declare">The <c>declare</c> builtin, which stores the variables.</param>
 /// <param name="readKey">
@@ -17,6 +17,8 @@ namespace Sharpie.Shell.Features.Variables;
 /// getting the rest of the line. With no names the whole line goes into <c>REPLY</c> untouched. Without <c>-r</c>, a
 /// backslash makes the next character plain text and a backslash at the end of the line joins the next line on.
 /// <c>-p</c> writes a prompt to standard error and <c>-s</c> stops the typing from showing, both only on a terminal.
+/// <c>-d DELIM</c> reads up to the first character of <c>DELIM</c> instead of a newline, or up to a NUL when it's
+/// empty, and <c>-a NAME</c> stores every field as an element of the array <c>NAME</c>.
 /// </remarks>
 internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? readKey) : ICommand
 {
@@ -54,12 +56,13 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 	{
 		_ = args.ArgumentNotNull();
 
-		if (this.ParseOptions(args, out var raw, out var silent, out var prompt) is not { } first)
+		if (this.ParseOptions(args) is not { } options)
 		{
 			return 2;
 		}
 
-		var names = args[first..];
+		// bash fills only the array with -a and ignores any other name.
+		var names = options.Array is { } array ? [array] : args[options.First..];
 
 		// Checked before reading, so a bad name leaves the line for whatever reads next, as bash does.
 		if (names.FirstOrDefault(name => !DeclareCommand.IsIdentifier(name)) is { } invalid)
@@ -69,9 +72,9 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 			return 1;
 		}
 
-		if (prompt is not null && readKey is not null && RedirectedInput is null)
+		if (options.Prompt is not null && readKey is not null && RedirectedInput is null)
 		{
-			Console.Error.Write(prompt);
+			Console.Error.Write(options.Prompt);
 		}
 
 		bool complete;
@@ -80,20 +83,25 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 
 		try
 		{
-			complete = this.ReadInput(raw, silent, text, escaped);
+			complete = this.ReadInput(options, text, escaped);
 		}
 		catch (OperationCanceledException)
 		{
 			return InterruptedStatus;
 		}
 
-		if (names is [])
+		var separators = CommandLine.FieldSeparators(declare.Variables);
+
+		if (options.Array is not null)
+		{
+			DeclareCommand.AssignArray(declare.Variables, options.Array, Split(text.ToString(), [.. escaped], separators, count: null));
+		}
+		else if (names is [])
 		{
 			declare.Set("REPLY", text.ToString());
 		}
 		else
 		{
-			var separators = CommandLine.FieldSeparators(declare.Variables);
 			var fields = Split(text.ToString(), [.. escaped], separators, names.Length);
 
 			for (var index = 0; index < names.Length; index++)
@@ -106,31 +114,48 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 	}
 
 	/// <summary>
-	/// Splits <paramref name="text" /> into <paramref name="count" /> fields the way bash's <c>read</c> does.
+	/// Splits <paramref name="text" /> into <paramref name="count" /> fields, or into every field, the way bash's
+	/// <c>read</c> does.
 	/// </summary>
 	/// <param name="text">The line, with the backslashes that escaped characters already taken out.</param>
 	/// <param name="escaped">For each character of <paramref name="text" />, whether a backslash made it plain text.</param>
 	/// <param name="separators">The value of <c>IFS</c>. Empty means the line isn't split or trimmed at all.</param>
-	/// <param name="count">How many names there are to fill, at least one.</param>
+	/// <param name="count">
+	/// How many names there are to fill, at least one, or <see langword="null" /> for every field, as <c>read -a</c>
+	/// takes them.
+	/// </param>
 	/// <returns>
 	/// One value per name. Names past the last field get an empty value. The last name gets the rest of the line with
 	/// its separators, less trailing spaces, except that a single field followed by one separator loses the separator,
-	/// as POSIX says.
+	/// as POSIX says. With no count, each field, so a separator at the end makes no empty field after it.
 	/// </returns>
 	/// <remarks>
 	/// Space, tab and newline in <c>IFS</c> run together, so <c>a  b</c> is two fields, and are trimmed from both ends.
 	/// Any other <c>IFS</c> character ends a field on its own, so <c>a::b</c> with <c>IFS=:</c> holds an empty field.
 	/// </remarks>
-	internal static string[] Split(string text, bool[] escaped, string separators, int count)
+	internal static string[] Split(string text, bool[] escaped, string separators, int? count)
 	{
 		_ = text.ArgumentNotNull();
 		_ = escaped.ArgumentNotNull();
 		_ = separators.ArgumentNotNull();
 
 		var position = 0;
-		var fields = new string[count];
 
-		for (var index = 0; index < count - 1; index++)
+		if (count is null)
+		{
+			var all = new List<string>();
+
+			while (position < text.Length)
+			{
+				all.Add(NextField());
+			}
+
+			return [.. all];
+		}
+
+		var fields = new string[count.Value];
+
+		for (var index = 0; index < fields.Length - 1; index++)
 		{
 			fields[index] = NextField();
 		}
@@ -210,91 +235,99 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 	/// Reads the options in front of the names.
 	/// </summary>
 	/// <param name="args">The arguments.</param>
-	/// <param name="raw">Set when <c>-r</c> is given, so backslashes stay as they are.</param>
-	/// <param name="silent">Set when <c>-s</c> is given, so the typing isn't shown.</param>
-	/// <param name="prompt">The text after <c>-p</c>, or <see langword="null" /> for none.</param>
 	/// <returns>
-	/// The index of the first name, or <see langword="null" /> after reporting a bad option.
+	/// The options, or <see langword="null" /> after reporting a bad one.
 	/// </returns>
 	/// <remarks>
-	/// Options can be joined, as in <c>-rs</c>, and the prompt can follow <c>-p</c> in the same word. <c>--</c> ends
-	/// the options.
+	/// Options can be joined, as in <c>-rs</c>, and the text of <c>-p</c>, <c>-d</c> or <c>-a</c> can follow it in the
+	/// same word, as in <c>-d:</c>, or be the next word, as in <c>-rd ''</c>. <c>--</c> ends the options.
 	/// </remarks>
-	private int? ParseOptions(string[] args, out bool raw, out bool silent, out string? prompt)
+	private Options? ParseOptions(string[] args)
 	{
-		raw = silent = false;
-		prompt = null;
-
+		var options = new Options(args.Length, Raw: false, Silent: false, Prompt: null, Delimiter: '\n', Array: null);
 		var index = 0;
 
 		for (; index < args.Length && args[index] is ['-', _, ..] option; index++)
 		{
 			if (option == "--")
 			{
-				return index + 1;
+				return options with { First = index + 1 };
 			}
 
 			for (var letter = 1; letter < option.Length; letter++)
 			{
-				switch (option[letter])
+				if (option[letter] is 'r' or 's')
 				{
-					case 'r':
-						raw = true;
-						break;
-					case 's':
-						silent = true;
-						break;
-					case 'p' when letter + 1 < option.Length:
-						prompt = option[(letter + 1)..];
-						letter = option.Length;
-						break;
-					case 'p' when index + 1 < args.Length:
-						prompt = args[++index];
-						break;
-					case 'p':
-						new ShellError("sharpie::read::missing_prompt", "`-p` needs the prompt text after it").Write();
+					options = option[letter] == 'r' ? options with { Raw = true } : options with { Silent = true };
 
-						return null;
-					default:
-						new ShellError("sharpie::read::invalid_option", $"`-{option[letter]}` isn't an option of `{this.Name}`") { Help = "read takes -r, -s and -p prompt" }.Write();
-
-						return null;
+					continue;
 				}
+
+				if (option[letter] is not ('p' or 'd' or 'a'))
+				{
+					new ShellError("sharpie::read::invalid_option", $"`-{option[letter]}` isn't an option of `{this.Name}`") { Help = "read takes -r, -s, -p prompt, -d delim and -a array" }.Write();
+
+					return null;
+				}
+
+				var value = letter + 1 < option.Length ? option[(letter + 1)..] : index + 1 < args.Length ? args[++index] : null;
+
+				if (value is null)
+				{
+					new ShellError("sharpie::read::missing_argument", $"`-{option[letter]}` needs {OptionValues[option[letter]]} after it").Write();
+
+					return null;
+				}
+
+				options = option[letter] switch
+				{
+					'p' => options with { Prompt = value },
+					'd' => options with { Delimiter = value is [] ? '\0' : value[0] },
+					_ => options with { Array = value },
+				};
+
+				letter = option.Length;
 			}
 		}
 
-		return index;
+		return options with { First = index };
 	}
 
 	/// <summary>
 	/// Reads one line, or more when a backslash ends a line, into <paramref name="text" />.
 	/// </summary>
-	/// <param name="raw"><see langword="true" /> to keep backslashes as they are.</param>
-	/// <param name="silent"><see langword="true" /> to hide the typing on a terminal.</param>
+	/// <param name="options">The options: raw backslashes, hidden typing, and the delimiter.</param>
 	/// <param name="text">Gets the characters read, less the backslashes taken as escapes.</param>
 	/// <param name="escaped">Gets, for each character in <paramref name="text" />, whether a backslash escaped it.</param>
 	/// <returns>
-	/// <see langword="true" /> when the input ended with a newline, <see langword="false" /> when it ended first.
+	/// <see langword="true" /> when the input ended with the delimiter, <see langword="false" /> when it ended first.
 	/// </returns>
 	/// <exception cref="OperationCanceledException">Ctrl+C was pressed on a terminal.</exception>
-	private bool ReadInput(bool raw, bool silent, StringBuilder text, List<bool> escaped)
+	/// <remarks>
+	/// Without <c>-r</c>, a backslash before a newline takes both out, as a line joined to the next. A backslash before
+	/// another delimiter keeps the delimiter as plain text and reads on past it, as bash does.
+	/// </remarks>
+	private bool ReadInput(Options options, StringBuilder text, List<bool> escaped)
 	{
 		while (true)
 		{
-			var complete = this.ReadLine(silent, out var line);
+			var complete = this.ReadLine(options.Silent, options.Delimiter, out var line);
 			var joined = false;
 
 			for (var index = 0; index < line.Length; index++)
 			{
-				if (raw || line[index] != '\\')
+				if (options.Raw || line[index] != '\\')
 				{
 					_ = text.Append(line[index]);
 					escaped.Add(false);
 				}
 				else if (index + 1 < line.Length)
 				{
-					_ = text.Append(line[++index]);
-					escaped.Add(true);
+					if (line[++index] != '\n')
+					{
+						_ = text.Append(line[index]);
+						escaped.Add(true);
+					}
 				}
 				else
 				{
@@ -306,16 +339,23 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 			{
 				return complete;
 			}
+
+			if (options.Delimiter != '\n')
+			{
+				_ = text.Append(options.Delimiter);
+				escaped.Add(true);
+			}
 		}
 	}
 
 	/// <summary>
-	/// Reads up to the next newline, from the keyboard on a terminal or from <see cref="Console.In" /> otherwise.
+	/// Reads up to the next delimiter, from the keyboard on a terminal or from <see cref="Console.In" /> otherwise.
 	/// </summary>
 	/// <param name="silent"><see langword="true" /> to hide the typing on a terminal.</param>
-	/// <param name="line">Gets the text read, without the newline.</param>
+	/// <param name="delimiter">The character that ends the line, a newline unless <c>-d</c> gave another.</param>
+	/// <param name="line">Gets the text read, without the delimiter.</param>
 	/// <returns>
-	/// <see langword="true" /> when a newline ended the line, <see langword="false" /> when the input ended first.
+	/// <see langword="true" /> when the delimiter ended the line, <see langword="false" /> when the input ended first.
 	/// </returns>
 	/// <exception cref="OperationCanceledException">Ctrl+C was pressed on a terminal.</exception>
 	/// <remarks>
@@ -323,7 +363,7 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 	/// a last line with no newline from a whole one. It's the same <see cref="Console.In" /> the shell reads its own
 	/// lines from, so when the shell's input is piped, <c>read</c> takes the line after its own.
 	/// </remarks>
-	private bool ReadLine(bool silent, out string line)
+	private bool ReadLine(bool silent, char delimiter, out string line)
 	{
 		var text = new StringBuilder();
 
@@ -332,14 +372,14 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 			var input = RedirectedInput ?? Console.In;
 			int character;
 
-			while ((character = input.Read()) is not -1 and not '\n')
+			while ((character = input.Read()) != -1 && character != delimiter)
 			{
 				_ = text.Append((char)character);
 			}
 
 			line = text.ToString();
 
-			return character == '\n';
+			return character == delimiter;
 		}
 
 		// The shell's SIGINT handler would otherwise swallow Ctrl+C and leave read waiting.
@@ -349,7 +389,7 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 
 		try
 		{
-			var complete = ReadKeys(readKey, silent, text);
+			var complete = ReadKeys(readKey, silent, delimiter, text);
 
 			line = text.ToString();
 
@@ -362,17 +402,24 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 	}
 
 	/// <summary>
-	/// Reads keys into <paramref name="text" /> until Enter, echoing them to standard error unless
+	/// Reads keys into <paramref name="text" /> until the delimiter, echoing them to standard error unless
 	/// <paramref name="silent" /> is set.
 	/// </summary>
 	/// <param name="readKey">Reads the next key.</param>
 	/// <param name="silent"><see langword="true" /> to show nothing, not even the newline, as <c>read -s</c> does.</param>
+	/// <param name="delimiter">
+	/// The character that ends the read. For a newline that's Enter. For any other, Enter adds a newline to the text.
+	/// </param>
 	/// <param name="text">Gets the characters typed.</param>
 	/// <returns>
-	/// <see langword="true" /> after Enter, <see langword="false" /> after Ctrl+D on an empty line.
+	/// <see langword="true" /> after the delimiter, <see langword="false" /> after Ctrl+D on an empty line.
 	/// </returns>
 	/// <exception cref="OperationCanceledException">Ctrl+C was pressed.</exception>
-	private static bool ReadKeys(Func<ConsoleKeyInfo> readKey, bool silent, StringBuilder text)
+	/// <remarks>
+	/// A NUL delimiter needs Ctrl held, as Ctrl+Space or Ctrl+@ type it, since keys with no character, like the arrows,
+	/// give a NUL too.
+	/// </remarks>
+	private static bool ReadKeys(Func<ConsoleKeyInfo> readKey, bool silent, char delimiter, StringBuilder text)
 	{
 		while (true)
 		{
@@ -391,6 +438,16 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 				return false;
 			}
 
+			if (key.Key != ConsoleKey.Enter && key.KeyChar == delimiter && (delimiter != '\0' || control))
+			{
+				if (!silent && !char.IsControl(delimiter))
+				{
+					Console.Error.Write(delimiter);
+				}
+
+				return true;
+			}
+
 			if (key.Key == ConsoleKey.Enter)
 			{
 				if (!silent)
@@ -398,7 +455,14 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 					Console.Error.WriteLine();
 				}
 
-				return true;
+				if (delimiter == '\n')
+				{
+					return true;
+				}
+
+				_ = text.Append('\n');
+
+				continue;
 			}
 
 			var echo = string.Empty;
@@ -420,4 +484,25 @@ internal sealed class ReadCommand(DeclareCommand declare, Func<ConsoleKeyInfo>? 
 			}
 		}
 	}
+
+	/// <summary>
+	/// The text each option that takes one needs, as the error for a missing one names it.
+	/// </summary>
+	private static readonly Dictionary<char, string> OptionValues = new()
+	{
+		['p'] = "the prompt text",
+		['d'] = "a delimiter",
+		['a'] = "an array name",
+	};
+
+	/// <summary>
+	/// The options a <c>read</c> was given.
+	/// </summary>
+	/// <param name="First">The index of the first name in the arguments.</param>
+	/// <param name="Raw">Set by <c>-r</c>, so backslashes stay as they are.</param>
+	/// <param name="Silent">Set by <c>-s</c>, so the typing isn't shown.</param>
+	/// <param name="Prompt">The text after <c>-p</c>, or <see langword="null" /> for none.</param>
+	/// <param name="Delimiter">The character that ends the input, a newline unless <c>-d</c> gave another.</param>
+	/// <param name="Array">The array <c>-a</c> fills, or <see langword="null" /> to fill the names.</param>
+	private sealed record Options(int First, bool Raw, bool Silent, string? Prompt, char Delimiter, string? Array);
 }
