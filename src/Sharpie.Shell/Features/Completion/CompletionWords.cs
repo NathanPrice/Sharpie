@@ -31,7 +31,7 @@ internal static class CompletionWords
 	/// <summary>
 	/// Bash's default <c>COMP_WORDBREAKS</c>: blanks plus the characters that end a word for completion.
 	/// </summary>
-	public const string DefaultBreaks = " \t\n\"'><=;|&(:";
+	public const string DefaultBreaks = " \t\n\"'@><=;|&(:";
 
 	/// <summary>
 	/// Splits <paramref name="line" /> into words.
@@ -83,6 +83,66 @@ internal static class CompletionWords
 
 		return words;
 	}
+
+	/// <summary>
+	/// Finds the command the cursor is in and its words, as bash hands them to a completion function.
+	/// </summary>
+	/// <param name="line">The whole line.</param>
+	/// <param name="cursor">Where the cursor is.</param>
+	/// <param name="breaks">The word-break characters, as in <c>COMP_WORDBREAKS</c>.</param>
+	/// <returns>
+	/// The command, or <see langword="null" /> when the cursor is on its first word, which names the command.
+	/// </returns>
+	/// <remarks>
+	/// The command starts after the last <c>;</c>, <c>|</c>, <c>&amp;</c> or <c>(</c> before the cursor and ends at
+	/// the next one after it. A word the cursor is inside counts whole, as in bash's <c>COMP_WORDS</c>.
+	/// </remarks>
+	public static CommandWords? ForCommand(string line, int cursor, string breaks)
+	{
+		_ = line.ArgumentNotNull();
+
+		var before = Split(line[..cursor], breaks);
+		var first = before.FindLastIndex(IsSeparator) + 1;
+
+		if (first >= before.Count - 1)
+		{
+			return null;
+		}
+
+		var words = before[first..].Select(word => line[word.Start..word.End]).ToList();
+		var end = cursor;
+
+		foreach (var word in Split(line[cursor..], breaks).Where(word => word.End > word.Start))
+		{
+			if (IsSeparator(word))
+			{
+				break;
+			}
+
+			// Text touching the cursor finishes the word it's in, unless one of the two is a break.
+			if (word.Start == 0 && !word.IsBreak && !before[^1].IsBreak && before[^1].End == cursor && before[^1].End > before[^1].Start)
+			{
+				words[^1] += line[cursor..(cursor + word.End)];
+			}
+			else
+			{
+				words.Add(line[(cursor + word.Start)..(cursor + word.End)]);
+			}
+
+			end = cursor + word.End;
+		}
+
+		return new CommandWords(words, before.Count - 1 - first, before[first].Value, before[first].Start, end);
+	}
+
+	/// <summary>
+	/// Checks whether a word ends one command and starts another.
+	/// </summary>
+	/// <param name="word">The word.</param>
+	/// <returns>
+	/// <see langword="true" /> for a break word of only <c>;</c>, <c>|</c>, <c>&amp;</c> and <c>(</c>.
+	/// </returns>
+	private static bool IsSeparator(CompletionWord word) => word.IsBreak && word.Value.All(character => character is ';' or '|' or '&' or '(');
 
 	/// <summary>
 	/// Reads one ordinary word starting at <paramref name="index" />.
@@ -167,3 +227,13 @@ internal static class CompletionWords
 	/// </returns>
 	private static bool IsBreak(char character, string breaks) => character is not ('\'' or '"') && breaks.Contains(character, StringComparison.Ordinal);
 }
+
+/// <summary>
+/// The words of the command the cursor is in.
+/// </summary>
+/// <param name="Words">Each word as typed, quotes included, as bash puts them in <c>COMP_WORDS</c>.</param>
+/// <param name="Current">The index of the word the cursor is in, for <c>COMP_CWORD</c>.</param>
+/// <param name="Name">The first word with its quotes taken out, which names the command.</param>
+/// <param name="Start">Where the command starts in the line.</param>
+/// <param name="End">Where it ends, for <c>COMP_LINE</c>.</param>
+internal sealed record CommandWords(List<string> Words, int Current, string Name, int Start, int End);

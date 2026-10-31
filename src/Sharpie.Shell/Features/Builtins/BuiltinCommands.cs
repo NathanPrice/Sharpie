@@ -51,7 +51,6 @@ internal static class BuiltinCommands
 			new UnaliasCommand(alias),
 			new EchoCommand(),
 			new ClearCommand(),
-			new CompleteCommand(),
 			new HistoryCommand(),
 			new StatusCommand(":", 0, "Does nothing and succeeds"),
 			new StatusCommand("true", 0, "Does nothing and succeeds"),
@@ -60,6 +59,7 @@ internal static class BuiltinCommands
 			new UmaskCommand(NativeMethods.SetFileMask),
 			new UlimitCommand(),
 			.. CreateVariableCommands(commands, declare, settings, runLine, inSubshell),
+			.. CreateCompletionCommands(commands, alias.Aliases, declare, runLine),
 			.. CreateFolderCommands(declare),
 			.. CreateJobCommands(),
 			new CommandCommand(type),
@@ -134,6 +134,44 @@ internal static class BuiltinCommands
 	/// rather than the end of a sourced file.
 	/// </remarks>
 	internal static ICommand CreateScriptRunner(DeclareCommand declare, Func<string, int> runLine) => new SourceCommand(".", declare, runLine);
+
+	/// <summary>
+	/// Creates the builtins of programmable completion, which share one engine that Tab runs too.
+	/// </summary>
+	/// <param name="commands">The builtins and functions, by name, which completion functions are found in.</param>
+	/// <param name="aliases">The aliases, by name, for <c>compgen -a</c>.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the variables completion functions use.</param>
+	/// <param name="runLine">Runs a completion function or sources a completion script.</param>
+	/// <returns>
+	/// <c>complete</c>, <c>compgen</c> and <c>compopt</c>.
+	/// </returns>
+	/// <remarks>
+	/// <c>COMP_WORDBREAKS</c> starts at bash's default here, so a script can read and change it, as git's adds a
+	/// <c>:</c> when it's missing.
+	/// </remarks>
+	private static ICommand[] CreateCompletionCommands(Dictionary<string, ICommand> commands, IReadOnlyDictionary<string, string> aliases, DeclareCommand declare, Func<string, int> runLine)
+	{
+		var engine = new CompletionEngine(declare, commands, aliases, runLine);
+
+		declare.Set("COMP_WORDBREAKS", CompletionWords.DefaultBreaks);
+
+		return [new CompleteCommand(engine), new CompgenCommand(engine), new CompoptCommand(engine)];
+	}
+
+	/// <summary>
+	/// Creates what Tab completes with, running the specs <c>complete</c> sets.
+	/// </summary>
+	/// <param name="commands">The builtins, <c>complete</c> among them.</param>
+	/// <param name="names">The command names Tab completes in a command's place.</param>
+	/// <param name="declare">The <c>declare</c> builtin, which holds the shell variables.</param>
+	/// <returns>
+	/// The completer.
+	/// </returns>
+	/// <remarks>
+	/// Here rather than in <see cref="Program" />, for the same cap on what it depends on.
+	/// </remarks>
+	internal static TabCompleter CreateTabCompleter(Dictionary<string, ICommand> commands, IReadOnlyCollection<string> names, DeclareCommand declare) =>
+		new(names, ((CompleteCommand)commands["complete"]).Engine, declare.Variables);
 
 	/// <summary>
 	/// Creates the builtins that show or change the current folder.

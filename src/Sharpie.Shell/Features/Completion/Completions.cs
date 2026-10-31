@@ -165,7 +165,7 @@ internal static class Completions
 	/// The names in the working directory, or in the folder named by the word up to its last <c>/</c>, with that folder
 	/// kept at the front of each match as typed, in ordinal order. Directory names end in <c>/</c>.
 	/// </returns>
-	private static List<string> FindFiles(string value, IReadOnlyDictionary<string, string> variables)
+	internal static List<string> FindFiles(string value, IReadOnlyDictionary<string, string> variables)
 	{
 		var folder = value[..(value.LastIndexOf('/') + 1)];
 		var prefix = value[folder.Length..];

@@ -39,7 +39,9 @@ and mouse reporting all work.
 - **Line editor.** The prompt header shows the folder, git branch and how long the last command took. Commands are
   colored as you type, <kbd>Tab</kbd> completes commands, files, `$VAR` names and `~user` at the cursor, quoting names
   that need it, <kbd>↑</kbd>/<kbd>↓</kbd> walk the history, and a gray suggestion from
-  the history fills in as you type. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>R</kbd> searches the history as in
+  the history fills in as you type. bash completion scripts run unchanged: `complete`, `compgen` and `compopt` work as
+  in bash, and the first <kbd>Tab</kbd> after a command such as `git` or `dotnet` loads its script from the
+  bash-completion folders. A script that needs bash-completion's own helper library falls back to the usual completion. <kbd>→</kbd> accepts it. <kbd>Ctrl</kbd>+<kbd>R</kbd> searches the history as in
   bash. bash's usual editing keys work too, among them <kbd>Ctrl</kbd>+<kbd>W</kbd>/<kbd>U</kbd>/<kbd>K</kbd> to cut and
   <kbd>Ctrl</kbd>+<kbd>Y</kbd> to paste back, <kbd>Alt</kbd>+<kbd>B</kbd>/<kbd>F</kbd>/<kbd>D</kbd>/<kbd>Backspace</kbd>
   for words, <kbd>Ctrl</kbd>+<kbd>T</kbd> to swap two characters, <kbd>Alt</kbd>+<kbd>.</kbd> for the last command's
@@ -102,11 +104,11 @@ and mouse reporting all work.
   keyword docs as man pages.
 - **Encrypted history.** History is saved encrypted, with the key kept in the operating system's secret store.
 
-**Builtins:** `:`, `alias`, `bg`, `break`, `cd`, `clear`, `command`, `complete`, `continue`, `declare`, `dirs`,
-`disown`, `dman`, `echo`, `eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `local`, `popd`,
-`printf`, `pushd`, `pwd`, `read`, `return`, `set`, `shift`, `source` / `.`, `test` / `[`, `trap`, `true`, `type`,
-`ulimit`, `umask`, `unalias`, `unset`, `wait`. Being built in, `printf` gives scripts bash's formats on Windows too,
-`%q`, `%b` and `-v name` included.
+**Builtins:** `:`, `alias`, `bg`, `break`, `cd`, `clear`, `command`, `compgen`, `complete`, `compopt`, `continue`,
+`declare`, `dirs`, `disown`, `dman`, `echo`, `eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`,
+`kill`, `local`, `popd`, `printf`, `pushd`, `pwd`, `read`, `return`, `set`, `shift`, `source` / `.`, `test` / `[`,
+`trap`, `true`, `type`, `ulimit`, `umask`, `unalias`, `unset`, `wait`. Being built in, `printf` gives scripts bash's
+formats on Windows too, `%q`, `%b` and `-v name` included.
 
 ## Getting started
 

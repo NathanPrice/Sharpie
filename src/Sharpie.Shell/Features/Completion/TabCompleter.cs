@@ -1,9 +1,4 @@
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Globalization;
-using System.Text;
 using DotNetTips.Spargine.Core;
-using Serilog;
 
 namespace Sharpie.Shell.Features.Completion;
 
@@ -12,15 +7,15 @@ namespace Sharpie.Shell.Features.Completion;
 /// list the matches on the next Tab, then cycle through them.
 /// </summary>
 /// <param name="names">The builtin command names. Executables on <c>PATH</c> are added to these.</param>
-/// <param name="findCompleter">
-/// Gives the completer script registered with <c>complete -C</c> for a command name, or <see langword="null" />. Left
-/// out by callers that have no <c>complete</c> registrations, like tests.
+/// <param name="engine">
+/// The completion engine, which runs the spec <c>complete</c> set for the command. Left out by callers that have no
+/// specs, like tests.
 /// </param>
 /// <param name="variables">
 /// The shell variables, for completing <c>$NAME</c>, expanding a <c>$NAME/</c> folder and reading
 /// <c>COMP_WORDBREAKS</c>. Left out by callers that have none, like tests, which then see only the environment.
 /// </param>
-internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<string, string?>? findCompleter = null, IReadOnlyDictionary<string, string>? variables = null)
+internal sealed class TabCompleter(IReadOnlyCollection<string> names, CompletionEngine? engine = null, IReadOnlyDictionary<string, string>? variables = null)
 {
 	private readonly IReadOnlyCollection<string> names = names.ArgumentNotNull();
 	private readonly IReadOnlyDictionary<string, string> variables = variables ?? new Dictionary<string, string>();
@@ -58,22 +53,29 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 		}
 
 		var before = line[..cursor];
-		var words = CompletionWords.Split(before, this.variables.TryGetValue("COMP_WORDBREAKS", out var breaks) ? breaks : CompletionWords.DefaultBreaks);
+		var words = CompletionWords.Split(before, CompletionEngine.Breaks(this.variables));
 		var word = words[^1];
 		var raw = before[word.ReplaceFrom..];
 		var after = line[cursor..];
 
 		List<string>? candidates = null;
+		var finish = " ";
 
-		if (words.Count > 1 && findCompleter?.Invoke(Text(words[0])) is { } script)
+		if (engine?.Complete(line, cursor, this.tabbedOnce) is { } programmed)
 		{
-			var found = RunCompleter(script, line, cursor, Text(words[0]), raw, Text(words[^2]));
-			candidates = found.Count > 0 ? found : null;
+			candidates = this.Programmed(programmed, raw, word.Quote, out finish);
+
+			if (candidates is [])
+			{
+				this.tabbedOnce = true;
+
+				return new TabResult(line, cursor, null, Bell: true);
+			}
 		}
 
 		if (candidates is [var only])
 		{
-			return Replace(only, " ");
+			return Replace(only, only.EndsWith('/') ? "" : finish);
 		}
 
 		// No trailing space, because the shared part isn't a finished word. When it adds nothing to what was typed,
@@ -83,16 +85,13 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 			return Replace(shared, "");
 		}
 
-		var matches = new Completions.Found(candidates ?? [], 0);
+		var matches = candidates is null
+			? Completions.FindMatches(raw, word.Value, word.Quote, command: words.Count == 1, this.names, this.variables)
+			: new Completions.Found(candidates, 0);
 
-		if (candidates is null)
+		if (candidates is null && Completions.Complete(word.Value, matches.Matches) is (var value, var finished))
 		{
-			matches = Completions.FindMatches(raw, word.Value, word.Quote, command: words.Count == 1, this.names, this.variables);
-
-			if (Completions.Complete(word.Value, matches.Matches) is (var value, var finished))
-			{
-				return Replace(Insert(value), finished ? $"{word.Quote} " : "");
-			}
+			return Replace(Insert(value), finished ? $"{word.Quote} " : "");
 		}
 
 		if (this.tabbedOnce && matches.Matches.Count > 1)
@@ -120,9 +119,6 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 			return new TabResult(before[..word.ReplaceFrom] + text + after, word.ReplaceFrom + text.Length, null, Bell: false);
 		}
 
-		// The word's text as typed, quotes included.
-		string Text(CompletionWord other) => before[other.Start..other.End];
-
 		// The stem was typed as is, so it's kept from the line, and only the rest is quoted for the shell.
 		string Insert(string match)
 		{
@@ -134,65 +130,52 @@ internal sealed class TabCompleter(IReadOnlyCollection<string> names, Func<strin
 	}
 
 	/// <summary>
-	/// Runs the completer script at <paramref name="script" /> and waits for it to exit.
+	/// Turns what a completion spec gave into the text Tab inserts.
 	/// </summary>
-	/// <param name="script">The path registered with <c>complete -C</c>.</param>
-	/// <param name="line">The whole line, passed in <c>COMP_LINE</c>.</param>
-	/// <param name="cursor">Where the cursor is, passed in <c>COMP_POINT</c> as a count of UTF-8 bytes.</param>
-	/// <param name="command">The command name, passed to the script as its first argument.</param>
-	/// <param name="current">The partial word at the cursor, passed as the second argument. Empty after a space.</param>
-	/// <param name="previous">The word before <paramref name="current" />, passed as the third argument.</param>
+	/// <param name="programmed">The spec's words and options.</param>
+	/// <param name="raw">The word as typed, from just after a quote that is still open.</param>
+	/// <param name="quote">The quote still open, or <see langword="null" />.</param>
+	/// <param name="finish">
+	/// Gets what goes after a single finished word: the quote left open, if any, and a space unless <c>nospace</c> is on.
+	/// </param>
 	/// <returns>
-	/// Each non-empty line the script printed, in ordinal order, or an empty list when it printed nothing or couldn't
-	/// be started.
+	/// The words to insert, sorted and each once unless <c>nosort</c> is on; empty when Tab has nothing to offer; or
+	/// <see langword="null" /> to fall back to the usual completion, as <c>default</c> and <c>bashdefault</c> ask
+	/// when there are none, and as a function that failed does.
 	/// </returns>
-	private static List<string> RunCompleter(string script, string line, int cursor, string command, string current, string previous)
+	/// <remarks>
+	/// <c>dirnames</c> gives folder names when there are no words, and <c>plusdirs</c> adds them anyway. With
+	/// <c>filenames</c>, or folder names from either, a folder gets a <c>/</c> and each word is quoted as a file name,
+	/// unless <c>noquote</c> is on.
+	/// </remarks>
+	private List<string>? Programmed(CompletionResult programmed, string raw, char? quote, out string finish)
 	{
-		try
+		var options = programmed.Options;
+		var words = programmed.Matches.ToList();
+		var folders = new CompletionSpec { Actions = new HashSet<string> { "directory" } };
+
+		var filenames = options.Contains("filenames");
+
+		if ((words.Count == 0 && options.Contains("dirnames")) || options.Contains("plusdirs"))
 		{
-			var startInfo = new ProcessStartInfo(script, [command, current, previous])
-			{
-				UseShellExecute = false,
-
-				// All three are redirected. .NET treats a child with any of them on the terminal as one that uses it,
-				// and its terminal handling for that child stops the shell ignoring SIGTTOU. The shell is then stopped
-				// when it takes the terminal back from the next program, and the next prompt crashes.
-				RedirectStandardInput = true,
-				RedirectStandardOutput = true,
-				RedirectStandardError = true,
-			};
-
-			// Set on the child only, so the shell's own environment never gets these. COMP_POINT is a byte index.
-			startInfo.Environment["COMP_LINE"] = line;
-			startInfo.Environment["COMP_POINT"] = Encoding.UTF8.GetByteCount(line.AsSpan(0, cursor)).ToString(CultureInfo.InvariantCulture);
-
-			using var process = Process.Start(startInfo);
-
-			if (process is null)
-			{
-				return [];
-			}
-
-			process.StandardInput.Close();
-
-			// Errors are drained and dropped, or a script that writes many could fill the pipe and hang Tab.
-			var errors = process.StandardError.ReadToEndAsync();
-
-			// Read to the end before inserting anything, so a slow script can't leave a partial line.
-			var output = process.StandardOutput.ReadToEnd();
-
-			errors.Wait();
-			process.WaitForExit();
-
-			return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal)];
+			words.AddRange(engine!.Generate(folders, raw));
+			filenames = true;
 		}
-		// A missing or non-executable script must not end the shell, so Tab falls back to normal completion.
-		catch (Win32Exception exception)
+
+		// readline closes a quote left open whatever the options, and nospace only drops the space.
+		finish = $"{quote}{(options.Contains("nospace") ? "" : " ")}";
+
+		if (words.Count == 0)
 		{
-			Log.Warning(exception, "Can't start completion script {Script}", script);
-
-			return [];
+			return programmed.Failed || options.Contains("default") || options.Contains("bashdefault") ? null : [];
 		}
+
+		if (filenames)
+		{
+			words = [.. words.Select(path => (options.Contains("noquote") ? path : Completions.QuoteWord(path, quote, atStart: true)) + (Directory.Exists(path) && !path.EndsWith('/') ? "/" : ""))];
+		}
+
+		return options.Contains("nosort") ? [.. words.Distinct()] : [.. words.Distinct().Order(StringComparer.Ordinal)];
 	}
 
 	/// <summary>

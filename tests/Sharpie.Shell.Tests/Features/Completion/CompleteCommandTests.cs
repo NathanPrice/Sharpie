@@ -1,176 +1,194 @@
 using FluentAssertions;
-using Sharpie.Shell.Features.Completion;
 using Sharpie.Shell.Common;
+using Sharpie.Shell.Features.Completion;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Features.Completion;
 
 /// <summary>
-/// Tests for <see cref="CompleteCommand" />.
+/// Tests for <see cref="CompleteCommand" />. Each printed line was checked against bash 5.3.
 /// </summary>
 [Collection(GlobalState.Name)]
 public sealed class CompleteCommandTests : IDisposable
 {
 	private readonly ShellEnvironment environment = new();
-	private readonly CompleteCommand sut = new();
+	private readonly CompletionEngine engine = new(new DeclareCommand(new ShellSettings()), new Dictionary<string, ICommand>(), new Dictionary<string, string>(), _ => 0);
+	private readonly CompleteCommand sut;
 
 	/// <summary>
-	/// Checks that <see cref="CompleteCommand.Run" /> with <c>-p</c> reports that the named command has no
-	/// completion specification.
+	/// Initializes a new instance of the <see cref="CompleteCommandTests" /> class.
 	/// </summary>
-	/// <param name="command">The command name passed after <c>-p</c>.</param>
+	public CompleteCommandTests() => this.sut = new CompleteCommand(this.engine);
+
+	/// <summary>
+	/// Checks that a spec set with any mix of options prints back with <c>-p</c> in bash's order and quoting.
+	/// </summary>
+	/// <param name="args">The arguments that set the spec for <c>sampletool</c>.</param>
+	/// <param name="expected">What <c>complete -p sampletool</c> prints.</param>
 	[Theory]
-	[InlineData("git")]
-	[InlineData("foo")]
-	public void Run_WithPFlag_PrintsNoSpecificationError(string command)
+	[InlineData(new[] { "-o", "bashdefault", "-o", "default", "-o", "nospace", "-F", "_sampletool", "sampletool" }, "complete -o bashdefault -o default -o nospace -F _sampletool sampletool")]
+	[InlineData(new[] { "-f", "-F", "_sampletool", "sampletool" }, "complete -f -F _sampletool sampletool")]
+	[InlineData(new[] { "-W", "a b", "-P", "p", "-S", "s", "-X", "!x*", "sampletool" }, "complete -W 'a b' -P 'p' -S 's' -X '!x*' sampletool")]
+	[InlineData(new[] { "-A", "user", "-A", "function", "-d", "-c", "sampletool" }, "complete -c -d -u -A function sampletool")]
+	[InlineData(new[] { "-C", "/x y", "sampletool" }, "complete -C '/x y' sampletool")]
+	[InlineData(new[] { "-o", "filenames", "-G", "*.c", "sampletool" }, "complete -o filenames -G '*.c' sampletool")]
+	[InlineData(new[] { "-onospace", "-Wa", "-fd", "--", "sampletool" }, "complete -o nospace -d -f -W 'a' sampletool")]
+	[InlineData(new[] { "-A", "arrayvar", "-v", "-A", "setopt", "sampletool" }, "complete -v -A arrayvar -A setopt sampletool")]
+	[InlineData(new[] { "-A", "group", "-A", "job", "-A", "service", "-A", "binding", "-A", "disabled", "-A", "enabled", "-A", "helptopic", "-A", "hostname", "-A", "running", "-A", "shopt", "-A", "signal", "-A", "stopped", "sampletool" }, "complete -g -j -s -A binding -A disabled -A enabled -A helptopic -A hostname -A running -A shopt -A signal -A stopped sampletool")]
+	[InlineData(new[] { "-A", "alias", "-A", "builtin", "-A", "command", "-A", "directory", "-A", "export", "-A", "file", "-A", "keyword", "-A", "user", "-A", "variable", "sampletool" }, "complete -a -b -c -d -e -f -k -u -v sampletool")]
+	[InlineData(new[] { "-o", "bashdefault", "-o", "default", "-o", "dirnames", "-o", "filenames", "-o", "noquote", "-o", "nosort", "-o", "nospace", "-o", "plusdirs", "sampletool" }, "complete -o bashdefault -o default -o dirnames -o filenames -o noquote -o nosort -o nospace -o plusdirs sampletool")]
+	public void Run_ThenPrint_GivesSpecAsBash(string[] args, string expected)
 	{
+		// Arrange
+		var status = this.sut.Run(args);
+
 		// Act
-		_ = this.sut.Run(["-p", command]);
+		var printed = this.sut.Run(["-p", "sampletool"]);
 
 		// Assert
-		_ = this.environment.Error.Should().Be(new ShellError("sharpie::complete::not_found", $"No completion is set for `{command}`").Render(color: false));
+		_ = (status, printed).Should().Be((0, 0));
+		_ = this.environment.Output.Should().Be(expected + Environment.NewLine);
 	}
 
 	/// <summary>
-	/// Checks that <see cref="CompleteCommand.Run" /> prints nothing when there's no <c>-p</c> with a command name.
+	/// Checks that <c>complete</c> with no arguments, or <c>-p</c> alone, lists every spec in name order, and that a
+	/// later spec for a command replaces the earlier one.
 	/// </summary>
-	/// <param name="arguments">The words passed to the command.</param>
+	/// <param name="args">The listing arguments.</param>
 	[Theory]
 	[InlineData([new string[0]])]
 	[InlineData([new[] { "-p" }])]
-	public void Run_WithoutPFlagAndCommand_PrintsNothing(string[] arguments)
+	public void Run_WithoutNames_ListsEverySpec(string[] args)
 	{
+		// Arrange
+		_ = this.sut.Run(["-W", "x", "sampletool"]);
+		_ = this.sut.Run(["-F", "_old", "othertool"]);
+		_ = this.sut.Run(["-F", "_new", "othertool"]);
+
 		// Act
-		_ = this.sut.Run(arguments);
+		var status = this.sut.Run(args);
 
 		// Assert
-		_ = this.environment.Output.Should().BeEmpty();
+		_ = status.Should().Be(0);
+		_ = this.environment.Output.Should().Be($"complete -F _new othertool{Environment.NewLine}complete -W 'x' sampletool{Environment.NewLine}");
 	}
 
 	/// <summary>
-	/// Checks that <see cref="CompleteCommand.Run" /> with <c>-C</c> registers silently.
+	/// Checks that <c>-p</c> and <c>-r</c> report a command with no spec and give 1, still handling the others.
 	/// </summary>
-	[Fact]
-	public void Run_WithCFlag_PrintsNothing()
-	{
-		// Act
-		_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
-
-		// Assert
-		_ = this.environment.Output.Should().BeEmpty();
-	}
-
-	/// <summary>
-	/// Checks that <see cref="CompleteCommand.Run" /> with <c>-p</c> prints a registered completer in the
-	/// normalized <c>complete -C '&lt;path&gt;' &lt;command&gt;</c> form.
-	/// </summary>
-	/// <param name="script">The completer script path registered with <c>-C</c>.</param>
-	/// <param name="command">The command the script completes.</param>
+	/// <param name="flag">The flag.</param>
 	[Theory]
-	[InlineData("/path/to/git/completer", "git")]
-	[InlineData("/path/to/docker/completer", "docker")]
-	public void Run_WithPFlagAfterCFlag_PrintsNormalizedSpecification(string script, string command)
+	[InlineData("-p")]
+	[InlineData("-r")]
+	public void Run_WithMissingName_ReportsIt(string flag)
 	{
 		// Arrange
-		_ = this.sut.Run(["-C", script, command]);
+		_ = this.sut.Run(["-W", "x", "sampletool"]);
 
 		// Act
-		_ = this.sut.Run(["-p", command]);
+		var status = this.sut.Run([flag, "sampletool", "nope"]);
 
 		// Assert
-		_ = this.environment.Output.Should().Be($"complete -C '{script}' {command}" + Environment.NewLine);
+		_ = status.Should().Be(1);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::complete::not_found", "No completion is set for `nope`").Render(color: false));
+		_ = this.engine.Specs.ContainsKey("sampletool").Should().Be(flag == "-p");
 	}
 
 	/// <summary>
-	/// Checks that registering a command again with <c>-C</c> replaces the earlier script.
+	/// Checks that <c>-r</c> with no names removes every spec.
 	/// </summary>
 	[Fact]
-	public void Run_WithCFlagTwice_PrintsLatestScript()
+	public void Run_WithRemoveAlone_RemovesEverySpec()
 	{
 		// Arrange
-		_ = this.sut.Run(["-C", "/old", "git"]);
-		_ = this.sut.Run(["-C", "/new", "git"]);
+		_ = this.sut.Run(["-W", "x", "sampletool", "othertool"]);
 
 		// Act
-		_ = this.sut.Run(["-p", "git"]);
+		var status = this.sut.Run(["-r"]);
 
 		// Assert
-		_ = this.environment.Output.Should().Be("complete -C '/new' git" + Environment.NewLine);
+		_ = status.Should().Be(0);
+		_ = this.engine.Specs.Should().BeEmpty();
 	}
 
 	/// <summary>
-	/// Checks that <see cref="CompleteCommand.FindCompleter" /> gives the script registered with <c>-C</c>, and
-	/// <see langword="null" /> for a command with none.
+	/// Checks that <c>-D</c> sets the spec for commands with none, which <see cref="CompletionEngine.Find" /> then
+	/// gives for any name.
 	/// </summary>
 	[Fact]
-	public void FindCompleter_AfterCFlag_ReturnsScriptOnlyForThatCommand()
+	public void Run_WithDefault_SetsSpecForEveryCommand()
 	{
-		// Arrange
-		_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
-
-		// Act / Assert
-		_ = this.sut.FindCompleter("git").Should().Be("/path/to/git/completer");
-		_ = this.sut.FindCompleter("docker").Should().BeNull();
-	}
-
-	/// <summary>
-	/// Checks that <c>-p</c> reports no completion specification once <c>-r</c> has removed the command's completer.
-	/// </summary>
-	[Fact]
-	public void Run_WithRFlagAfterCFlag_PrintsNoSpecification()
-	{
-		// Arrange
-		_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
-		_ = this.sut.Run(["-r", "git"]);
-
 		// Act
-		_ = this.sut.Run(["-p", "git"]);
+		var status = this.sut.Run(["-D", "-F", "_loader"]);
 
 		// Assert
-		_ = this.environment.Error.Should().Be(new ShellError("sharpie::complete::not_found", "No completion is set for `git`").Render(color: false));
+		_ = status.Should().Be(0);
+		_ = this.engine.Find("sampletool")!.Function.Should().Be("_loader");
+		_ = this.engine.Specs.Should().BeEmpty();
 	}
 
 	/// <summary>
-	/// Checks that <see cref="CompleteCommand.Run" /> with <c>-r</c> prints nothing, whether or not the command had a
-	/// completer registered.
+	/// Checks that a bad option, option value or action gives 2 and sets nothing.
 	/// </summary>
-	/// <param name="registerFirst">Whether to register a completer with <c>-C</c> before removing it.</param>
+	/// <param name="args">The arguments.</param>
+	/// <param name="code">The error code.</param>
+	/// <param name="summary">The error summary.</param>
 	[Theory]
-	[InlineData(true)]
-	[InlineData(false)]
-	public void Run_WithRFlag_PrintsNothing(bool registerFirst)
+	[InlineData(new[] { "-z", "sampletool" }, "sharpie::complete::invalid_option", "`-z` isn't an option of `complete`")]
+	[InlineData(new[] { "-o", "bogus", "sampletool" }, "sharpie::complete::invalid_option", "`bogus` isn't a completion option")]
+	[InlineData(new[] { "-A", "bogus", "sampletool" }, "sharpie::complete::invalid_action", "`bogus` isn't an action name")]
+	[InlineData(new[] { "-F" }, "sharpie::complete::missing_argument", "`-F` needs a value after it")]
+	public void Run_WithBadOption_GivesTwo(string[] args, string code, string summary)
 	{
-		// Arrange
-		if (registerFirst)
+		// Act
+		var status = this.sut.Run(args);
+
+		// Assert
+		_ = status.Should().Be(2);
+		_ = this.engine.Specs.Should().BeEmpty();
+		_ = this.environment.Error.Should().Be(new ShellError(code, summary)
 		{
-			_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
-		}
-
-		// Act
-		_ = this.sut.Run(["-r", "git"]);
-
-		// Assert
-		_ = this.environment.Output.Should().BeEmpty();
+			Help = "complete takes -abcdefgjksuv, -o option, -A action, -G pattern, -W words, -F function, -C command, -X filter, -P prefix and -S suffix",
+		}.Render(color: false));
 	}
 
 	/// <summary>
-	/// Checks that <see cref="CompleteCommand.FindCompleter" /> gives <see langword="null" /> after <c>-r</c>, so Tab
-	/// no longer runs the removed script.
+	/// Checks that a spec with no command to set it for gives 2, as bash's usage error does.
 	/// </summary>
 	[Fact]
-	public void FindCompleter_AfterRFlag_ReturnsNull()
+	public void Run_WithoutName_GivesTwo()
 	{
-		// Arrange
-		_ = this.sut.Run(["-C", "/path/to/git/completer", "git"]);
-
 		// Act
-		_ = this.sut.Run(["-r", "git"]);
+		var status = this.sut.Run(["-F", "_sampletool"]);
 
 		// Assert
-		_ = this.sut.FindCompleter("git").Should().BeNull();
+		_ = status.Should().Be(2);
+		_ = this.environment.Error.Should().Be(new ShellError("sharpie::complete::missing_name", "`complete` needs the commands to set it for")
+		{
+			Help = "complete [-abcdefgjksuv] [-o option] [-A action] [-W words] [-F function] [-C command] name...",
+		}.Render(color: false));
 	}
 
 	/// <summary>
-	/// Restores the console and <c>PATH</c> after each test.
+	/// Checks that <c>-E</c> and <c>-I</c> are taken without a name and set nothing.
+	/// </summary>
+	/// <param name="flag">The flag.</param>
+	[Theory]
+	[InlineData("-E")]
+	[InlineData("-I")]
+	public void Run_WithEmptyOrInitial_IsTaken(string flag)
+	{
+		// Act
+		var status = this.sut.Run([flag, "-F", "_sampletool"]);
+
+		// Assert
+		_ = status.Should().Be(0);
+		_ = this.engine.Specs.Should().BeEmpty();
+		_ = this.environment.Error.Should().BeEmpty();
+	}
+
+	/// <summary>
+	/// Restores the console after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();
 }

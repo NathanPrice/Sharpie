@@ -1,5 +1,7 @@
 using FluentAssertions;
+using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Completion;
+using Sharpie.Shell.Features.Variables;
 
 namespace Sharpie.Shell.Tests.Features.Completion;
 
@@ -156,7 +158,7 @@ public sealed class TabCompleterTests : IDisposable
 	{
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\necho run\n");
-		var sut = new TabCompleter(["echo"], command => command == "docker" ? script : null);
+		var sut = WithCompleters(["echo"], ("docker", script));
 
 		// Act
 		var result = sut.Press("docker ", 7);
@@ -174,7 +176,7 @@ public sealed class TabCompleterTests : IDisposable
 	{
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\nprintf 'push\\nadd\\ncommit\\n'\n");
-		var sut = new TabCompleter(["echo"], command => command == "git" ? script : null);
+		var sut = WithCompleters(["echo"], ("git", script));
 
 		// Act
 		var bell = sut.Press("git ", 4);
@@ -196,7 +198,7 @@ public sealed class TabCompleterTests : IDisposable
 	{
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\nprintf 'checkout\\ncherry-pick\\n'\n");
-		var sut = new TabCompleter(["echo"], command => command == "git" ? script : null);
+		var sut = WithCompleters(["echo"], ("git", script));
 
 		// Act
 		var result = sut.Press("git c", 5);
@@ -213,7 +215,7 @@ public sealed class TabCompleterTests : IDisposable
 	{
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\nprintf 'checkout\\ncherry-pick\\n'\n");
-		var sut = new TabCompleter(["echo"], command => command == "git" ? script : null);
+		var sut = WithCompleters(["echo"], ("git", script));
 
 		// Act
 		var bell = sut.Press("git che", 7);
@@ -239,7 +241,7 @@ public sealed class TabCompleterTests : IDisposable
 	{
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\necho \"$1|$2|$3\"\n");
-		var sut = new TabCompleter(["echo"], command => command == "git" ? script : null);
+		var sut = WithCompleters(["echo"], ("git", script));
 
 		// Act
 		var result = sut.Press(line, line.Length);
@@ -257,12 +259,13 @@ public sealed class TabCompleterTests : IDisposable
 	[Theory]
 	[InlineData("git ad", "git git ad|6 ")]
 	[InlineData("git é", "git git é|6 ")]
+	[InlineData("ls | git ad", "ls | git git ad|6 ")]
 	public void Press_AfterCommandWithCompleter_SetsLineAndPointVariables(string line, string expected)
 	{
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true,
 			"#!/bin/sh\necho \"$COMP_LINE|$COMP_POINT\"\n");
-		var sut = new TabCompleter(["echo"], command => command == "git" ? script : null);
+		var sut = WithCompleters(["echo"], ("git", script));
 
 		// Act
 		var result = sut.Press(line, line.Length);
@@ -280,7 +283,7 @@ public sealed class TabCompleterTests : IDisposable
 	{
 		// Arrange
 		Directory.SetCurrentDirectory(this.environment.CreateFolder());
-		var sut = new TabCompleter(["echo"], _ => "/no/such/completer");
+		var sut = WithCompleters(["echo"], ("", "/no/such/completer"));
 
 		// Act
 		var result = sut.Press("docker ", 7);
@@ -304,7 +307,7 @@ public sealed class TabCompleterTests : IDisposable
 		var folder = this.environment.CreateFolder();
 		var docker = ShellEnvironment.CreateFile(folder, "docker-completer", executable: true, "#!/bin/sh\necho run\n");
 		var git = ShellEnvironment.CreateFile(folder, "git-completer", executable: true, "#!/bin/sh\nprintf 'checkout\\ncherry-pick\\n'\n");
-		var sut = new TabCompleter(["echo", "exit"], command => command switch { "docker" => docker, "git" => git, _ => null });
+		var sut = WithCompleters(["echo", "exit"], ("docker", docker), ("git", git));
 		_ = sut.Press("mytool", 6);
 		_ = sut.Press(completing, completing.Length);
 
@@ -323,7 +326,7 @@ public sealed class TabCompleterTests : IDisposable
 	{
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\ncat > /dev/null\necho run\n");
-		var sut = new TabCompleter(["echo"], command => command == "docker" ? script : null);
+		var sut = WithCompleters(["echo"], ("docker", script));
 
 		// Act
 		var result = sut.Press("docker ", 7);
@@ -494,7 +497,7 @@ public sealed class TabCompleterTests : IDisposable
 
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\necho \"p$COMP_POINT\"\n");
-		var sut = new TabCompleter(["echo"], command => command == "sampletool" ? script : null);
+		var sut = WithCompleters(["echo"], ("sampletool", script));
 
 		// Act
 		var result = sut.Press("sampletool  tail", 11);
@@ -658,7 +661,7 @@ public sealed class TabCompleterTests : IDisposable
 	{
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\necho run\n");
-		var sut = new TabCompleter(["echo"], command => command == "sampletool" ? script : null);
+		var sut = WithCompleters(["echo"], ("sampletool", script));
 
 		// Act
 		var result = sut.Press("sampletool", 10);
@@ -681,7 +684,7 @@ public sealed class TabCompleterTests : IDisposable
 
 		// Arrange
 		var script = ShellEnvironment.CreateFile(this.environment.CreateFolder(), "completer", executable: true, "#!/bin/sh\necho 'a b'\necho 'c d'\n");
-		var sut = new TabCompleter(["echo"], command => command == "sampletool" ? script : null);
+		var sut = WithCompleters(["echo"], ("sampletool", script));
 
 		// Act
 		var presses = Enumerable.Range(0, 3).Select(_ => sut.Press("sampletool ", 11)).ToList();
@@ -694,4 +697,32 @@ public sealed class TabCompleterTests : IDisposable
 	/// Restores the console and <c>PATH</c> after each test.
 	/// </summary>
 	public void Dispose() => this.environment.Dispose();
+
+	/// <summary>
+	/// Creates a completer with a <c>complete -C</c> program set for each command, as <c>complete</c> would set it.
+	/// </summary>
+	/// <param name="names">The builtin names.</param>
+	/// <param name="completers">Each command and its program; an empty command sets the program for every command, as <c>-D</c> does.</param>
+	/// <returns>
+	/// The completer.
+	/// </returns>
+	private static TabCompleter WithCompleters(string[] names, params (string Command, string Program)[] completers)
+	{
+		var declare = new DeclareCommand(new ShellSettings());
+		var engine = new CompletionEngine(declare, new Dictionary<string, ICommand>(), new Dictionary<string, string>(), _ => 0);
+
+		foreach (var (command, program) in completers)
+		{
+			if (command.Length == 0)
+			{
+				engine.Default = new CompletionSpec { Command = program };
+			}
+			else
+			{
+				engine.Set(command, new CompletionSpec { Command = program });
+			}
+		}
+
+		return new TabCompleter(names, engine, declare.Variables);
+	}
 }

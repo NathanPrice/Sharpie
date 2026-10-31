@@ -7,7 +7,6 @@ using Serilog;
 using Sharpie.Shell.Common;
 using Sharpie.Shell.Features.Aliases;
 using Sharpie.Shell.Features.Builtins;
-using Sharpie.Shell.Features.Completion;
 using Sharpie.Shell.Features.Conditions;
 using Sharpie.Shell.Features.DotNetDocs;
 using Sharpie.Shell.Features.Functions;
@@ -616,14 +615,13 @@ internal static class Program
 	/// </returns>
 	private static LineEditor CreateEditor(Dictionary<string, ICommand> commands, AliasCommand aliases, DeclareCommand declare, HistoryCommand history)
 	{
-		var completions = (CompleteCommand)commands["complete"];
 		var names = new CommandNames(commands, aliases.Aliases);
 
 		return new LineEditor(
 			() => Console.ReadKey(intercept: true),
 			Console.Out,
 			() => Console.WindowWidth,
-			new TabCompleter(names, completions.FindCompleter, declare.Variables),
+			BuiltinCommands.CreateTabCompleter(commands, names, declare),
 			history.Lines,
 			names,
 			line => EditInEditor(commands, aliases, declare, line));
