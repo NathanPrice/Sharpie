@@ -228,7 +228,7 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 			if (background)
 			{
 				starting?.Invoke(command.Start);
-				status = hooks.Run(IsSimple(command) ? text : hooks.CopyCommand(command.Text, false) + " &", false);
+				status = ProcessSubstitution.Scoped(() => hooks.Run(IsSimple(command) ? text : hooks.CopyCommand(command.Text, false) + " &", false));
 				hooks.SetStatus(status);
 
 				continue;
@@ -346,7 +346,7 @@ internal sealed class CommandRunner(ShellHooks hooks, Action<int>? starting = nu
 		tested |= pipeline.Negated;
 
 		var clock = pipeline.Time == Timing.None ? null : ProcessTimes.Start();
-		var status = pipeline.Stages is [var only] ? this.RunCommand(only, tested) : this.RunJoined(pipeline, tested);
+		var status = ProcessSubstitution.Scoped(() => pipeline.Stages is [var only] ? this.RunCommand(only, tested) : this.RunJoined(pipeline, tested));
 
 		if (clock is not null)
 		{

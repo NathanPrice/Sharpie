@@ -76,15 +76,7 @@ internal static partial class ExternalProgram
 		if (detached)
 		{
 			Detached.Add((output ?? Stream.Null, plumbing.Detach()));
-
-			// Collected on its own thread, since the shell never waits on it and it would stay a zombie otherwise.
-			// The shell's own waits only take a foreground job's group or given ids, so they can't take this one.
-			_ = Task.Run(() =>
-			{
-				while (NativeMethods.WaitPid(pid, out _, 0) < 0 && Marshal.GetLastPInvokeError() == NativeMethods.Interrupted)
-				{
-				}
-			});
+			CollectInBackground(pid);
 
 			return 0;
 		}
@@ -213,6 +205,21 @@ internal static partial class ExternalProgram
 		// The killed programs' statuses would otherwise stand in for the one that never ran.
 		return failed ? CannotRun : PipelineStatus(job!.ExitCodes, pipeFail);
 	}
+
+	/// <summary>
+	/// Collects the exit of program <paramref name="pid" /> on its own thread, for one the shell never waits on, which
+	/// would stay a zombie otherwise.
+	/// </summary>
+	/// <param name="pid">The program's process id.</param>
+	/// <remarks>
+	/// The shell's own waits only take a foreground job's group or given ids, so they can't take this one.
+	/// </remarks>
+	internal static void CollectInBackground(int pid) => _ = Task.Run(() =>
+	{
+		while (NativeMethods.WaitPid(pid, out _, 0) < 0 && Marshal.GetLastPInvokeError() == NativeMethods.Interrupted)
+		{
+		}
+	});
 
 	/// <summary>
 	/// Works out which of the shell's open files each of a program's descriptors gets.

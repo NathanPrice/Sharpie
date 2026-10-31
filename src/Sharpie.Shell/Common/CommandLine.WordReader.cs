@@ -299,7 +299,8 @@ internal static partial class CommandLine
 		}
 
 		/// <summary>
-		/// Reads a character that isn't a quote opening, an escape or an expansion.
+		/// Reads a character that isn't a quote opening, an escape or an expansion, or a process substitution in place of
+		/// a redirect.
 		/// </summary>
 		/// <param name="character">The character.</param>
 		/// <param name="index">Its position.</param>
@@ -311,6 +312,14 @@ internal static partial class CommandLine
 			if (character == this.quote)
 			{
 				this.quote = null;
+			}
+			else if (this.quote is null && ProcessSubstitutionEnd(line, index) is var close and >= 0)
+			{
+				// Kept as typed where nothing runs, as a $(...) is.
+				this.Append(this.run is null ? line[index..(close + 1)] : ProcessSubstitution.Start(line[(index + 2)..close], writes: character == '>'), quoted: true);
+				this.hasWord = true;
+
+				return close;
 			}
 			else if (this.quote is null && this.condition.OperatorAt(line, index) is { } typed)
 			{

@@ -71,6 +71,9 @@ and mouse reporting all work.
   number tests of `[[ ]]` are expressions too. Brace expansion comes first, as in bash: `cp file{,.bak}`,
   `mkdir -p src/{a,b,c}`, `{1..10}`, `{01..10..2}` and `{a..e}` give one word each, in order. `$'...'` quotes text
   with backslash escapes, as in bash, so `IFS=$'\n'` splits on line breaks and `$'it\'s'` keeps its quote.
+  `<(...)` and `>(...)` run a command list beside the command and stand for a pipe to it, so
+  `diff <(sort a) <(sort b)` compares two outputs and `while read l; do ...; done < <(cmd)` reads one in the shell
+  itself. The path is `/dev/fd/N` on Linux and macOS and a named pipe on Windows.
 - **Arrays.** Indexed arrays work as in bash: `a=(x "y z")`, `a+=(w)`, `a[5]=v` and `unset 'a[1]'` set them, and
   `"${a[@]}"`, `${a[i]}`, `${a[-1]}`, `${#a[@]}` and `${!a[@]}` read them, with the same operators as `"$@"`. A
   subscript is an arithmetic expression, so `COMPREPLY[i++]=x` and `(( a[1] += 2 ))` work. `declare -a`, `local -a`

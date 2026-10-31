@@ -298,6 +298,11 @@ public sealed class HighlighterTests : IDisposable
 	[InlineData("a((b)) x", "0,1,UnknownCommand;3,1,UnknownCommand;7,1,UnknownCommand")]
 	[InlineData("echo \"${q#\"'\"}\" x", "0,4,Command;5,10,Quoted")]
 	[InlineData("echo '${' 'x}' z", "0,4,Command;5,4,Quoted;10,4,Quoted")]
+	[InlineData("echo <(prog x)", "0,4,Command;7,4,Command")]
+	[InlineData("echo >(nope)", "0,4,Command;7,4,UnknownCommand")]
+	[InlineData("echo < <(nope x)", "0,4,Command;5,1,Redirect;9,4,UnknownCommand")]
+	[InlineData("echo a<(prog)", "0,4,Command;8,4,Command")]
+	[InlineData("echo '<(' nope", "0,4,Command;5,4,Quoted")]
 	public void Highlight_EdgeCaseLine_GivesExactTokens(string line, string expected)
 	{
 		// Arrange

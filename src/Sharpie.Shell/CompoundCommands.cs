@@ -118,6 +118,8 @@ internal static class CompoundCommands
 	{
 		var settings = ((SetCommand)commands["set"]).Settings;
 
+		ProcessSubstitution.CopyCommandLine ??= list => [Environment.ProcessPath!, .. CopyArguments(commands, aliases, declare, settings, list, tested: false)];
+
 		return hooks ??= new ShellHooks((command, tested) =>
 		{
 			settings.TestDepth += tested ? 1 : 0;

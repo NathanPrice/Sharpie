@@ -103,8 +103,16 @@ internal static class Highlighter
 			var value = word.Text;
 			TokenKind? kind;
 
+			// A <( or >( starts a list, whose first word is a command, even right after a redirect, as in < <(cmd).
+			if (line.AsSpan(start, end - start) is "<(" or ">(")
+			{
+				kind = null;
+				command = null;
+				target = null;
+				argumentCount = 0;
+			}
 			// Only a file name is checked, so the delimiter in <<EOF, the text in <<< x and the 1 in 2>&1 aren't flagged.
-			if (target is { } redirected)
+			else if (target is { } redirected)
 			{
 				kind = redirected == TargetKind.File && !FolderExists(value) ? TokenKind.MissingPath : null;
 				target = null;
@@ -286,7 +294,8 @@ internal static class Highlighter
 				continue;
 			}
 
-			if (quote is null && CommandLine.OperatorAt(line, index) is { } typed)
+			// A <( or >( is one entry, so its < or > isn't taken for a redirect.
+			if (quote is null && (CommandLine.IsProcessSubstitutionStart(line, index) ? line.Substring(index, 2) : CommandLine.OperatorAt(line, index)) is { } typed)
 			{
 				var number = start >= 0 && CommandLine.IsStreamNumber(line.AsSpan(start, index - start), typed);
 

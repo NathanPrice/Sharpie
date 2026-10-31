@@ -48,6 +48,9 @@ public sealed class CommandParserTests
 	[InlineData("a=(x\n y) b+=(); c", "'a=(x\n y) b+=()', 'c'")]
 	[InlineData("a=(\")\" $(echo ')')) && b", "'a=(\")\" $(echo ')'))' && 'b'")]
 	[InlineData("a#b;c", "'a#b', 'c'")]
+	[InlineData("while a; do b; done < <(c; d)", "while('a'; 'b') > '< <(c; d)'")]
+	[InlineData("diff <(a) >(b x)|c", "'diff <(a) >(b x)|c'")]
+	[InlineData("cat <(a\n b) x", "'cat <(a\n b) x'")]
 	[InlineData("cat <<", "'cat <<'")]
 	[InlineData("cat << ; b\nx", "'cat <<', 'b', 'x'")]
 	[InlineData("<<EOF cat\nx\nEOF", "'<<EOF cat\nx\nEOF'")]
@@ -371,6 +374,31 @@ public sealed class CommandParserTests
 
 		// Assert
 		_ = (parsed.Error!.Summary, parsed.Error.Start, parsed.Error.End).Should().Be(("Unexpected `(`", start, start + 1));
+	}
+
+	/// <summary>
+	/// Checks that a process substitution left open is refused where it starts, so the reader asks for the next line,
+	/// as for an open <c>$(</c>, with a report that names what's open.
+	/// </summary>
+	/// <param name="text">The text.</param>
+	[Theory]
+	[InlineData("cat <(echo")]
+	[InlineData("tee >(echo")]
+	public void Parse_WithOpenProcessSubstitution_RefusesItsStart(string text)
+	{
+		// Act
+		var parsed = CommandParser.Parse(text);
+
+		// Assert
+		_ = parsed.Refused.Should().Be(4);
+		_ = parsed.Error.Should().Be(new ShellError("sharpie::parser::unclosed_substitution", $"`{text[4..6]}` is never closed")
+		{
+			Source = text,
+			Start = 4,
+			End = 6,
+			Label = "runs a command joined to a pipe",
+			Help = "add the missing `)`",
+		});
 	}
 
 	/// <summary>

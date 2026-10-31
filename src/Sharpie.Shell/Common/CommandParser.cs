@@ -143,12 +143,12 @@ internal sealed class CommandParser
 				Label = "starts the list of elements",
 				Help = "add the missing `)`",
 			}
-			: new ShellError("sharpie::parser::unclosed_substitution", backquote ? "The backquote is never closed" : "`$(` is never closed")
+			: new ShellError("sharpie::parser::unclosed_substitution", backquote ? "The backquote is never closed" : $"`{text[refused..(refused + 2)]}` is never closed")
 			{
 				Source = text,
 				Start = refused,
 				End = refused + (backquote ? 1 : 2),
-				Label = "runs a command for its output",
+				Label = text[refused] is '<' or '>' ? "runs a command joined to a pipe" : "runs a command for its output",
 				Help = backquote ? "add the closing backquote" : "add the missing `)`",
 			};
 	}
@@ -1000,9 +1000,9 @@ internal sealed class CommandParser
 
 					index = listEnd;
 				}
-				else if (character == '`' || text.AsSpan(index).StartsWith("$(", StringComparison.Ordinal))
+				else if (character == '`' || text.AsSpan(index).StartsWith("$(", StringComparison.Ordinal) || (this.quote is null && CommandLine.IsProcessSubstitutionStart(text, index)))
 				{
-					if (CommandLine.SubstitutionEnd(text, index) is not (var close and >= 0))
+					if ((character is '<' or '>' ? CommandLine.ProcessSubstitutionEnd(text, index) : CommandLine.SubstitutionEnd(text, index)) is not (var close and >= 0))
 					{
 						// A backquote's text loses each backslash before a line break before it's read, even in quotes,
 						// so only the run of backslashes counts. A $( is read by the usual rules, so its text is scanned.

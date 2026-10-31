@@ -90,8 +90,9 @@ internal static unsafe class PosixSpawn
 			_ = NativeMethods.AttributesInit(attributes);
 
 			// The sources are pipes and files the shell opened, which .NET marks close-on-exec. dup2 clears that flag on
-			// the copy, so the program keeps exactly these and nothing else of the shell's.
-			var spare = streams.Count == 0 ? 0 : streams.Max(pair => Math.Max(pair.Source, pair.Target)) + 1;
+			// the copy, so the program keeps exactly these and the process substitutions' pipes, which the spare copies
+			// stay above so they don't replace one.
+			var spare = Math.Max(streams.Count == 0 ? -1 : streams.Max(pair => Math.Max(pair.Source, pair.Target)), ProcessSubstitution.HighestDescriptor) + 1;
 
 			for (var index = 0; index < streams.Count; index++)
 			{
