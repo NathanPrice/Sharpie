@@ -104,8 +104,9 @@ and mouse reporting all work.
 
 **Builtins:** `:`, `alias`, `bg`, `break`, `cd`, `clear`, `command`, `complete`, `continue`, `declare`, `dirs`,
 `disown`, `dman`, `echo`, `eval`, `exec`, `exit`, `export`, `false`, `fg`, `history`, `jobs`, `kill`, `local`, `popd`,
-`pushd`, `pwd`, `read`, `return`, `set`, `shift`, `source` / `.`, `test` / `[`, `trap`, `true`, `type`, `ulimit`,
-`umask`, `unalias`, `unset`, `wait`.
+`printf`, `pushd`, `pwd`, `read`, `return`, `set`, `shift`, `source` / `.`, `test` / `[`, `trap`, `true`, `type`,
+`ulimit`, `umask`, `unalias`, `unset`, `wait`. Being built in, `printf` gives scripts bash's formats on Windows too,
+`%q`, `%b` and `-v name` included.
 
 ## Getting started
 

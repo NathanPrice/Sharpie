@@ -18,6 +18,17 @@ internal enum EscapeRules
 	/// give the character.
 	/// </summary>
 	AnsiC,
+
+	/// <summary>
+	/// A <c>printf</c> format: as <see cref="AnsiC" />, except that <c>\c</c> stays as written.
+	/// </summary>
+	PrintfFormat,
+
+	/// <summary>
+	/// A <c>printf</c> argument for <c>%b</c>: as <see cref="Echo" />, except that octal can also be <c>\nnn</c>
+	/// without the 0.
+	/// </summary>
+	PrintfArgument,
 }
 
 /// <summary>
@@ -36,7 +47,8 @@ internal static class Escapes
 	/// <param name="text">The text to decode.</param>
 	/// <param name="rules">Which escapes to understand.</param>
 	/// <param name="stopped">
-	/// Set to <see langword="true" /> when a <c>\c</c> cut the text short under <see cref="EscapeRules.Echo" />.
+	/// Set to <see langword="true" /> when a <c>\c</c> cut the text short under <see cref="EscapeRules.Echo" /> or
+	/// <see cref="EscapeRules.PrintfArgument" />.
 	/// </param>
 	/// <returns>
 	/// The decoded text, ending just before the <c>\c</c> when there is one. Unknown escapes, escapes with no digits
@@ -76,11 +88,11 @@ internal static class Escapes
 
 			switch (escape)
 			{
-				case 'c' when rules == EscapeRules.Echo:
+				case 'c' when rules is EscapeRules.Echo or EscapeRules.PrintfArgument:
 					stopped = true;
 
 					return result.ToString();
-				case 'c' when i + 1 < text.Length:
+				case 'c' when rules == EscapeRules.AnsiC && i + 1 < text.Length:
 					// As bash's TOCTRL: \c? is DEL, and any other letter gives its control character.
 					var control = text[++i];
 					_ = result.Append(control == '?' ? '\x7f' : (char)(char.ToUpperInvariant(control) & 0x1F));
@@ -90,7 +102,7 @@ internal static class Escapes
 					_ = code is <= 0x10FFFF and not (>= 0xD800 and <= 0xDFFF) ? result.Append(char.ConvertFromUtf32(code)) : result.Append('\uFFFD');
 
 					break;
-				case '\'' or '"' or '?' when rules == EscapeRules.AnsiC:
+				case '\'' or '"' or '?' when rules is EscapeRules.AnsiC or EscapeRules.PrintfFormat:
 					_ = result.Append(escape);
 
 					break;
@@ -123,8 +135,8 @@ internal static class Escapes
 		var value = escape switch
 		{
 			'x' => ReadNumber(text, ref index, 16, 2),
-			'0' when rules == EscapeRules.Echo => ReadNumber(text, ref index, 8, 3) ?? 0,
-			>= '0' and <= '7' when rules == EscapeRules.AnsiC => ReadNumber(text, ref index, 8, 2, escape - '0'),
+			'0' when rules is EscapeRules.Echo or EscapeRules.PrintfArgument => ReadNumber(text, ref index, 8, 3) ?? 0,
+			>= '0' and <= '7' when rules is not EscapeRules.Echo => ReadNumber(text, ref index, 8, 2, escape - '0'),
 			_ => null,
 		};
 

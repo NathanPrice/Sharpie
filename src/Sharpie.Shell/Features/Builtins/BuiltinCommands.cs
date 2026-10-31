@@ -94,6 +94,7 @@ internal static class BuiltinCommands
 			new SetCommand(declare, settings),
 			new ShiftCommand(declare),
 			new ReadCommand(declare, Console.IsInputRedirected ? null : () => Console.ReadKey(intercept: true)),
+			new PrintfCommand(declare),
 			dot,
 			source,
 			new EvalCommand(runLine),

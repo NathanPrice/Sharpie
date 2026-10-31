@@ -60,4 +60,30 @@ public sealed class EscapesTests
 		_ = decoded.Should().Be(expected);
 		_ = stopped.Should().Be(stops);
 	}
+
+	/// <summary>
+	/// Checks the escapes of a <c>printf</c> format and of a <c>%b</c> argument, as bash 5.3 decodes them: the format
+	/// reads octal as <c>$'...'</c> does and keeps <c>\c</c>, and <c>%b</c> takes both octal forms and stops at
+	/// <c>\c</c>.
+	/// </summary>
+	/// <param name="argument"><see langword="true" /> for a <c>%b</c> argument, <see langword="false" /> for a format.</param>
+	/// <param name="text">The text.</param>
+	/// <param name="expected">What it decodes to.</param>
+	/// <param name="stops">Whether a <c>\c</c> cut it short.</param>
+	[Theory]
+	[InlineData(false, @"\101\0101\400\E", "A\b1\0\e", false)]
+	[InlineData(false, @"\'\""\?\q", "'\"?\\q", false)]
+	[InlineData(false, @"a\cb\cA", "a\\cb\\cA", false)]
+	[InlineData(true, @"\101\0101\08\400\8", "AA\08\0\\8", false)]
+	[InlineData(true, @"\'\""\?", "\\'\\\"\\?", false)]
+	[InlineData(true, @"a\cb", "a", true)]
+	public void Decode_Printf_GivesCharacters(bool argument, string text, string expected, bool stops)
+	{
+		// Act
+		var decoded = Escapes.Decode(text, argument ? EscapeRules.PrintfArgument : EscapeRules.PrintfFormat, out var stopped);
+
+		// Assert
+		_ = decoded.Should().Be(expected);
+		_ = stopped.Should().Be(stops);
+	}
 }
